@@ -16,16 +16,4 @@ export default defineConfig({
   // Aman untuk build Lovable: platform Lovable memaksa preset cloudflare
   // via LOVABLE_NITRO_PRESET, sehingga override ini hanya berlaku di luar Lovable.
   nitro: { preset: "node-server" },
-  // ARENA MODE: dev server bisa diakses lewat proxy preview (host eksternal)
-  // dan meneruskan panggilan Supabase ke mock server lokal (arena/mock-supabase.mjs).
-  vite: {
-    server: {
-      host: "0.0.0.0",
-      allowedHosts: true,
-      proxy: {
-        "/auth/v1": { target: "http://127.0.0.1:54321", changeOrigin: true },
-        "/rest/v1": { target: "http://127.0.0.1:54321", changeOrigin: true },
-      },
-    },
-  },
 });

@@ -31,15 +31,7 @@ function createSupabaseFetch(supabaseKey: string): typeof fetch {
 function createSupabaseClient() {
   // Use import.meta.env for client-side (Vite build-time replacement)
   // Fall back to process.env for SSR (server-side rendering)
-  // ARENA MODE: arahkan client ke origin yang sama (proxy Vite meneruskan
-  // /auth/v1 dan /rest/v1 ke arena/mock-supabase.mjs) supaya bisa dipakai
-  // lewat live preview tanpa akses ke Lovable Cloud.
-  const ARENA_MODE = import.meta.env.VITE_ARENA_MODE === "true";
-  const SUPABASE_URL = ARENA_MODE
-    ? typeof window !== "undefined"
-      ? window.location.origin
-      : process.env.SUPABASE_URL || "http://127.0.0.1:54321"
-    : import.meta.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+  const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
   const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_PUBLISHABLE_KEY;
 
   if (!SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {
