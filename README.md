@@ -1,8 +1,8 @@
 # FiberOps Arena
 
 Aplikasi manajemen fiber optik (OLT → ODC → ODP) yang **dibangun dari nol**
-untuk lingkungan Arena. Fitur dipelajari dari aplikasi asli di root repo
-(tanpa memakai kodenya): manajemen OLT + card + port GPON, ODC/ODC dengan
+untuk lingkungan Arena. Fitur dipelajari dari aplikasi aslinya
+(tanpa memakai kode aplikasi lama): manajemen OLT + card + port GPON, ODC/ODC dengan
 tipe kabel standar, penugasan core berwarna TIA/EIA-598, topologi, laporan
 CSV, dan manajemen user berbasis peran.
 

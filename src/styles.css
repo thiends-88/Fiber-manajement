@@ -1,83 +1,61 @@
-@import "tailwindcss" source(none);
-@source "../src";
-@import "tw-animate-css";
+@import "tailwindcss";
 
-@custom-variant dark (&:is(.dark *));
-
-@theme inline {
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --color-card: var(--card);
-  --color-card-foreground: var(--card-foreground);
-  --color-popover: var(--popover);
-  --color-popover-foreground: var(--popover-foreground);
-  --color-primary: var(--primary);
-  --color-primary-foreground: var(--primary-foreground);
-  --color-secondary: var(--secondary);
-  --color-secondary-foreground: var(--secondary-foreground);
-  --color-muted: var(--muted);
-  --color-muted-foreground: var(--muted-foreground);
-  --color-accent: var(--accent);
-  --color-accent-foreground: var(--accent-foreground);
-  --color-destructive: var(--destructive);
-  --color-destructive-foreground: var(--destructive-foreground);
-  --color-border: var(--border);
-  --color-input: var(--input);
-  --color-ring: var(--ring);
-  --color-ring-offset-background: var(--background);
-  --color-sidebar: var(--sidebar);
-  --color-sidebar-foreground: var(--sidebar-foreground);
-  --color-sidebar-primary: var(--sidebar-primary);
-  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
-  --color-sidebar-accent: var(--sidebar-accent);
-  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
-  --color-sidebar-border: var(--sidebar-border);
-  --color-sidebar-ring: var(--sidebar-ring);
+@theme {
+  --color-bg: #0b1220;
+  --color-panel: #111a2e;
+  --color-panel2: #16213a;
+  --color-line: #1f2c47;
+  --color-ink: #e6edf7;
+  --color-mut: #8fa0bd;
+  --color-acc: #22d3ee;
+  --color-acc2: #34d399;
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
 }
 
-:root {
-  --radius: 0.625rem;
-  /* Cyan-tinted dark theme, telco / network ops vibe */
-  --background: oklch(0.16 0.02 240);
-  --foreground: oklch(0.97 0.005 240);
-  --card: oklch(0.21 0.025 240);
-  --card-foreground: oklch(0.97 0.005 240);
-  --popover: oklch(0.21 0.025 240);
-  --popover-foreground: oklch(0.97 0.005 240);
-  --primary: oklch(0.75 0.15 195);
-  --primary-foreground: oklch(0.15 0.03 240);
-  --secondary: oklch(0.27 0.03 240);
-  --secondary-foreground: oklch(0.97 0.005 240);
-  --muted: oklch(0.24 0.025 240);
-  --muted-foreground: oklch(0.68 0.02 240);
-  --accent: oklch(0.32 0.06 195);
-  --accent-foreground: oklch(0.97 0.005 240);
-  --destructive: oklch(0.62 0.22 22);
-  --destructive-foreground: oklch(0.98 0.005 240);
-  --border: oklch(0.3 0.02 240);
-  --input: oklch(0.28 0.02 240);
-  --ring: oklch(0.75 0.15 195);
-  --sidebar: oklch(0.19 0.025 240);
-  --sidebar-foreground: oklch(0.97 0.005 240);
-  --sidebar-primary: oklch(0.75 0.15 195);
-  --sidebar-primary-foreground: oklch(0.15 0.03 240);
-  --sidebar-accent: oklch(0.27 0.03 240);
-  --sidebar-accent-foreground: oklch(0.97 0.005 240);
-  --sidebar-border: oklch(0.3 0.02 240);
-  --sidebar-ring: oklch(0.75 0.15 195);
+html,
+body,
+#root {
+  height: 100%;
 }
 
-@layer base {
-  * {
-    border-color: var(--color-border);
-  }
-  body {
-    background-color: var(--color-background);
-    color: var(--color-foreground);
-    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
-  }
+body {
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+.card {
+  @apply rounded-xl border border-line bg-panel shadow-sm;
+}
+.btn {
+  @apply inline-flex items-center justify-center gap-2 rounded-lg border border-line bg-panel2 px-3 py-2 text-sm font-medium text-ink transition hover:border-acc/60 hover:text-white disabled:cursor-not-allowed disabled:opacity-50;
+}
+.btn-primary {
+  @apply border-transparent bg-acc text-slate-900 hover:bg-cyan-300;
+}
+.btn-danger {
+  @apply border-transparent bg-red-500/90 text-white hover:bg-red-500;
+}
+.input {
+  @apply w-full rounded-lg border border-line bg-panel2 px-3 py-2 text-sm text-ink placeholder:text-mut/60 focus:border-acc focus:outline-none;
+}
+.label {
+  @apply mb-1 block text-xs font-medium text-mut;
+}
+.th {
+  @apply px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-mut;
+}
+.td {
+  @apply px-3 py-2 text-sm;
+}
+.badge {
+  @apply inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium;
+}
+.navlink {
+  @apply flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-mut transition hover:bg-panel2 hover:text-ink;
+}
+.navlink-active {
+  @apply bg-panel2 text-white;
+  box-shadow: inset 2px 0 0 var(--color-acc);
 }
