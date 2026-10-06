@@ -6,11 +6,12 @@ import { getCableInfo } from "../lib/fiber.js";
 
 export default function Topologi() {
   const [tree, setTree] = useState(null);
-  const [open, setOpen] = useState({});
+  const [links, setLinks] = useState([]);
 
   useEffect(() => {
-    Promise.all([api("/api/olts"), api("/api/odcs"), api("/api/odps")])
-      .then(([olts, odcs, odps]) => {
+    Promise.all([api("/api/olts"), api("/api/odcs"), api("/api/odps"), api("/api/links")])
+      .then(([olts, odcs, odps, lk]) => {
+        setLinks(lk);
         setTree(
           olts.map((o) => ({
             ...o,
@@ -29,7 +30,7 @@ export default function Topologi() {
 
   return (
     <div>
-      <PageHeader title="Topologi Jaringan" desc="Struktur OLT → ODC → ODP." />
+      <PageHeader title="Topologi Jaringan" desc="Struktur OLT → ODC → ODP lengkap dengan port feeder, power, dan core tersambung." />
       {tree.length === 0 && <Empty text="Belum ada data jaringan." />}
       <div className="space-y-4">
         {tree.map((olt) => (
@@ -68,6 +69,11 @@ export default function Topologi() {
                           <Cable size={10} className="mr-1 inline" />
                           {getCableInfo(odc.cable_type)?.label ?? odc.cable_type} · {odc.location || "tanpa lokasi"}
                         </div>
+                        <div className="text-[11px] text-mut/80">
+                          Feeder: {odc.feeder_card_label ? `${odc.feeder_card_label} ` : ""}{odc.feeder_port ? `port ${odc.feeder_port}` : "belum diatur"}
+                          {" · "}Power: {odc.power_source || "belum diatur"}
+                          {" · "}Core ⇄ ODP: {links.filter((l) => l.odc_id === odc.id).length} sambungan
+                        </div>
                       </div>
                       <div className="text-xs text-mut">{odc.odps.length} ODP</div>
                     </button>
@@ -84,6 +90,11 @@ export default function Topologi() {
                               <div className="text-sm">{odp.name}</div>
                               <div className="text-xs text-mut">
                                 {getCableInfo(odp.cable_type)?.label ?? odp.cable_type} · {odp.location || "tanpa lokasi"}
+                              </div>
+                              <div className="text-[11px] text-mut/80">
+                                Power: {odp.power_source || "belum diatur"}
+                                {links.filter((l) => l.odp_id === odp.id).length > 0 &&
+                                  ` · Core dari ${odc.name}: ${links.filter((l) => l.odp_id === odp.id).map((l) => `C${l.odc_core}→C${l.odp_core}`).join(", ")}`}
                               </div>
                             </div>
                           </div>

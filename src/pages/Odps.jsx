@@ -4,9 +4,9 @@ import { api } from "../lib/api.js";
 import { useAuth } from "../lib/auth.jsx";
 import { Card, Field, Modal, PageHeader, Toast, useToast } from "../components/ui.jsx";
 import CoreManager from "../components/CoreManager.jsx";
-import { CABLE_TYPES, getCableInfo } from "../lib/fiber.js";
+import { CABLE_TYPES, POWER_SOURCES, getCableInfo } from "../lib/fiber.js";
 
-const empty = { name: "", odc_id: "", location: "", cable_type: CABLE_TYPES[4].value, notes: "" };
+const empty = { name: "", odc_id: "", location: "", cable_type: CABLE_TYPES[4].value, power_source: "", notes: "" };
 
 export default function Odps() {
   const { user } = useAuth();
@@ -81,6 +81,7 @@ export default function Odps() {
               <th className="th">Nama</th>
               <th className="th">Induk ODC</th>
               <th className="th">Kabel</th>
+              <th className="th">Power</th>
               <th className="th">Lokasi</th>
               <th className="th">Core</th>
               {canWrite && <th className="th">Aksi</th>}
@@ -99,6 +100,7 @@ export default function Odps() {
                 </td>
                 <td className="td text-mut">{d.odc_name}</td>
                 <td className="td text-mut">{getCableInfo(d.cable_type)?.label ?? d.cable_type}</td>
+                <td className="td text-mut">{d.power_source || "-"}</td>
                 <td className="td text-mut">{d.location || "-"}</td>
                 <td className="td">{d.core_count}</td>
                 {canWrite && (
@@ -107,7 +109,7 @@ export default function Odps() {
                       <button
                         className="btn px-2 py-1"
                         onClick={() => {
-                          setForm({ name: d.name, odc_id: d.odc_id, location: d.location || "", cable_type: d.cable_type, notes: d.notes || "" });
+                          setForm({ name: d.name, odc_id: d.odc_id, location: d.location || "", cable_type: d.cable_type, power_source: d.power_source || "", notes: d.notes || "" });
                           setModal({ mode: "edit", odp: d });
                         }}
                       >
@@ -123,7 +125,7 @@ export default function Odps() {
             ))}
             {odps.length === 0 && (
               <tr>
-                <td className="td py-8 text-center text-mut" colSpan={6}>Belum ada ODP.</td>
+                <td className="td py-8 text-center text-mut" colSpan={7}>Belum ada ODP.</td>
               </tr>
             )}
           </tbody>
@@ -155,6 +157,12 @@ export default function Odps() {
           <Field label="Tipe Kabel">
             <select className="input" value={form.cable_type} onChange={(e) => setForm({ ...form, cable_type: e.target.value })}>
               {CABLE_TYPES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+            </select>
+          </Field>
+          <Field label="Sumber Power">
+            <select className="input" value={form.power_source} onChange={(e) => setForm({ ...form, power_source: e.target.value })}>
+              <option value="">Belum diatur</option>
+              {POWER_SOURCES.map((p) => <option key={p} value={p}>{p}</option>)}
             </select>
           </Field>
           <Field label="Lokasi">

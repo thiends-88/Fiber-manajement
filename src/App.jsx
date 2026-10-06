@@ -8,6 +8,7 @@ import Olts from "./pages/Olts.jsx";
 import Odcs from "./pages/Odcs.jsx";
 import Odps from "./pages/Odps.jsx";
 import Topologi from "./pages/Topologi.jsx";
+import Mapping from "./pages/Mapping.jsx";
 import Laporan from "./pages/Laporan.jsx";
 import Users from "./pages/Users.jsx";
 
@@ -52,6 +53,14 @@ export default function App() {
         element={
           <Protected>
             <Odps />
+          </Protected>
+        }
+      />
+      <Route
+        path="/mapping"
+        element={
+          <Protected>
+            <Mapping />
           </Protected>
         }
       />

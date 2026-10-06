@@ -8,6 +8,7 @@ import {
   Network,
   Server,
   Users as UsersIcon,
+  Workflow,
   Zap,
 } from "lucide-react";
 import { useAuth } from "../lib/auth.jsx";
@@ -18,6 +19,7 @@ const NAV = [
   { to: "/olt", label: "OLT", icon: Server },
   { to: "/odc", label: "ODC", icon: Boxes },
   { to: "/odp", label: "ODP", icon: Network },
+  { to: "/mapping", label: "Mapping Core", icon: Workflow },
   { to: "/topologi", label: "Topologi", icon: Cable },
   { to: "/laporan", label: "Laporan", icon: FileText },
 ];

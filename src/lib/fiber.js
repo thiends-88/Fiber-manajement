@@ -81,3 +81,6 @@ export const CARD_TYPES = [
   { value: "GPBD", label: "GPBD (8 port GPON)", defaultPorts: 8 },
   { value: "OTHER", label: "Lainnya", defaultPorts: 8 },
 ];
+
+// Sumber power perangkat lapangan
+export const POWER_SOURCES = ["PLN", "Baterai", "PLN + Baterai", "Solar Hybrid"];

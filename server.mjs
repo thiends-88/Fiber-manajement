@@ -146,11 +146,61 @@ db.exec(`
     status TEXT NOT NULL DEFAULT 'idle' CHECK (status IN ('idle','used','reserved','damaged')),
     customer TEXT,
     destination TEXT,
+    power_dbm TEXT,
     notes TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 `);
+
+// ---------------------------------------------------------------------------
+// Migrasi ringan: database lama otomatis mendapat kolom/tabel baru
+// ---------------------------------------------------------------------------
+const MIGRATIONS = [
+  "ALTER TABLE core_assignments ADD COLUMN power_dbm TEXT",
+  "ALTER TABLE olt_ports ADD COLUMN tx_power TEXT",
+  "ALTER TABLE olt_ports ADD COLUMN rx_power TEXT",
+  "ALTER TABLE odcs ADD COLUMN power_source TEXT",
+  "ALTER TABLE odcs ADD COLUMN feeder_port_id INTEGER REFERENCES olt_ports(id) ON DELETE SET NULL",
+  "ALTER TABLE odps ADD COLUMN power_source TEXT",
+  `CREATE TABLE IF NOT EXISTS core_links (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    odc_id INTEGER NOT NULL REFERENCES odcs(id) ON DELETE CASCADE,
+    odc_core INTEGER NOT NULL,
+    odp_id INTEGER NOT NULL REFERENCES odps(id) ON DELETE CASCADE,
+    odp_core INTEGER NOT NULL,
+    loss_db REAL,
+    notes TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(odc_id, odc_core),
+    UNIQUE(odp_id, odp_core)
+  )`,
+];
+for (const stmt of MIGRATIONS) {
+  try { db.exec(stmt); } catch { /* kolom/tabel sudah ada */ }
+}
+
+// Lengkapi database demo lama dengan info feeder/power/sambungan (hanya baris demo)
+(function backfillDemoExtras() {
+  const odc1 = db.prepare("SELECT id FROM odcs WHERE name='ODC-001'").get();
+  const odc2 = db.prepare("SELECT id FROM odcs WHERE name='ODC-002'").get();
+  const odp1 = db.prepare("SELECT id FROM odps WHERE name='ODP-001'").get();
+  if (!odc1 || !odc2 || !odp1) return;
+  db.prepare("UPDATE odps SET power_source=COALESCE(power_source,'PLN') WHERE name='ODP-001'").run();
+  db.prepare("UPDATE odps SET power_source=COALESCE(power_source,'PLN + Baterai') WHERE name='ODP-002'").run();
+  db.prepare("UPDATE odcs SET power_source=COALESCE(power_source,'PLN + Baterai'), feeder_port_id=COALESCE(feeder_port_id,(SELECT p.id FROM olt_ports p WHERE p.notes LIKE '%Feeder ODC-001%' LIMIT 1)) WHERE id=?").run(odc1.id);
+  db.prepare("UPDATE odcs SET power_source=COALESCE(power_source,'PLN'), feeder_port_id=COALESCE(feeder_port_id,(SELECT p.id FROM olt_ports p WHERE p.notes LIKE '%Feeder ODC-002%' LIMIT 1)) WHERE id=?").run(odc2.id);
+  if (db.prepare("SELECT COUNT(*) n FROM core_links").get().n === 0) {
+    const ins = db.prepare("INSERT INTO core_links (odc_id, odc_core, odp_id, odp_core, loss_db, notes) VALUES (?,?,?,?,?,?)");
+    ins.run(odc1.id, 1, odp1.id, 1, 0.15, "Closure Perempatan");
+    ins.run(odc1.id, 2, odp1.id, 2, 0.2, null);
+  }
+  db.prepare("UPDATE core_assignments SET power_dbm=COALESCE(power_dbm,'-19.5') WHERE odc_id=? AND core=1 AND source='olt_to_odc'").run(odc1.id);
+  db.prepare("UPDATE core_assignments SET power_dbm=COALESCE(power_dbm,'-20.2') WHERE odc_id=? AND core=2 AND source='olt_to_odc'").run(odc1.id);
+  db.prepare("UPDATE olt_ports SET tx_power=COALESCE(tx_power,'2.5'), rx_power=COALESCE(rx_power,'-18.4') WHERE notes LIKE '%Feeder ODC-001%'").run();
+  db.prepare("UPDATE olt_ports SET tx_power=COALESCE(tx_power,'2.6'), rx_power=COALESCE(rx_power,'-19.1') WHERE notes LIKE '%Feeder ODC-002%'").run();
+})();
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -253,14 +303,14 @@ function seedIfEmpty() {
   const card3 = insCard.run(olt2, 1, "GPFA", null, 8, ts, ts).lastInsertRowid;
 
   const insPort = db.prepare(
-    "INSERT INTO olt_ports (card_id, port, sfp, serial, status, notes, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
+    "INSERT INTO olt_ports (card_id, port, sfp, serial, status, notes, tx_power, rx_power, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
   );
-  const p1 = insPort.run(card1, 1, "XGS-PON", "ZTE23A0001", "active", "Feeder ODC-001", ts, ts).lastInsertRowid;
-  insPort.run(card1, 2, "XGS-PON", "ZTE23A0002", "active", null, ts, ts);
-  insPort.run(card1, 3, null, null, "inactive", null, ts, ts);
-  insPort.run(card2, 1, "GPON", "ZTE23B0001", "active", null, ts, ts);
-  insPort.run(card2, 2, null, null, "reserved", "Rencana ODC-003", ts, ts);
-  insPort.run(card3, 1, "GPON", "HW23C0001", "active", "Feeder ODC-002", ts, ts);
+  const p1 = insPort.run(card1, 1, "XGS-PON", "ZTE23A0001", "active", "Feeder ODC-001", "2.5", "-18.4", ts, ts).lastInsertRowid;
+  insPort.run(card1, 2, "XGS-PON", "ZTE23A0002", "active", null, "2.3", "-19.0", ts, ts);
+  insPort.run(card1, 3, null, null, "inactive", null, null, null, ts, ts);
+  insPort.run(card2, 1, "GPON", "ZTE23B0001", "active", null, "2.1", "-20.3", ts, ts);
+  insPort.run(card2, 2, null, null, "reserved", "Rencana ODC-003", null, null, ts, ts);
+  const p6 = insPort.run(card3, 1, "GPON", "HW23C0001", "active", "Feeder ODC-002", "2.6", "-19.1", ts, ts).lastInsertRowid;
 
   const insOdc = db.prepare(
     "INSERT INTO odcs (olt_id, name, location, cable_type, notes, created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
@@ -269,10 +319,10 @@ function seedIfEmpty() {
   const odc2 = insOdc.run(olt2, "ODC-002", "Kawasan Industri", "48_core_8_tube", null, ts, ts).lastInsertRowid;
 
   const insOdp = db.prepare(
-    "INSERT INTO odps (odc_id, name, location, cable_type, notes, created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
+    "INSERT INTO odps (odc_id, name, location, cable_type, power_source, notes, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
   );
-  const odp1 = insOdp.run(odc1, "ODP-001", "Jl. Melati RT 03", "12_core_2_tube", null, ts, ts).lastInsertRowid;
-  const odp2 = insOdp.run(odc2, "ODP-002", "Perum Griya Asri", "24_core_2_tube", null, ts, ts).lastInsertRowid;
+  const odp1 = insOdp.run(odc1, "ODP-001", "Jl. Melati RT 03", "12_core_2_tube", "PLN", null, ts, ts).lastInsertRowid;
+  const odp2 = insOdp.run(odc2, "ODP-002", "Perum Griya Asri", "24_core_2_tube", "PLN + Baterai", null, ts, ts).lastInsertRowid;
 
   const FIBER_COLORS = ["Biru","Jingga","Hijau","Coklat","Abu-abu","Putih","Merah","Hitam","Kuning","Ungu","Pink","Aqua"];
   const insCore = db.prepare(
@@ -293,6 +343,19 @@ function seedIfEmpty() {
   core("odc_to_odp", null, odp1, 2, "used", "Pelanggan Siti", "ODP-001");
   core("odc_to_odp", null, odp1, 3, "idle");
   core("odc_to_odp", null, odp2, 1, "idle");
+
+  // Sambungan core end-to-end (mapping ODC core <-> ODP core)
+  const insLink = db.prepare(
+    "INSERT INTO core_links (odc_id, odc_core, odp_id, odp_core, loss_db, notes, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
+  );
+  insLink.run(odc1, 1, odp1, 1, 0.15, "Closure Perempatan", ts, ts);
+  insLink.run(odc1, 2, odp1, 2, 0.2, null, ts, ts);
+
+  // Sumber power & port feeder ODC
+  db.prepare("UPDATE odcs SET power_source=?, feeder_port_id=? WHERE id=?").run("PLN + Baterai", p1, odc1);
+  db.prepare("UPDATE odcs SET power_source=?, feeder_port_id=? WHERE id=?").run("PLN", p6, odc2);
+  db.prepare("UPDATE core_assignments SET power_dbm='-19.5' WHERE odc_id=? AND core=1 AND source='olt_to_odc'").run(odc1);
+  db.prepare("UPDATE core_assignments SET power_dbm='-20.2' WHERE odc_id=? AND core=2 AND source='olt_to_odc'").run(odc1);
 
   console.log("[arena-api] Database di-seed dengan data demo. Login: admin@arena.test / Arena123!");
 }
@@ -361,6 +424,7 @@ const server = http.createServer(async (req, res) => {
         odcs: c("SELECT COUNT(*) n FROM odcs"),
         odps: c("SELECT COUNT(*) n FROM odps"),
         cores: c("SELECT COUNT(*) n FROM core_assignments"),
+        links: c("SELECT COUNT(*) n FROM core_links"),
         coresUsed: byStatus.used ?? 0,
         coresIdle: byStatus.idle ?? 0,
         coresReserved: byStatus.reserved ?? 0,
@@ -430,14 +494,17 @@ const server = http.createServer(async (req, res) => {
       const cardId = url.searchParams.get("card_id");
       const rows = cardId
         ? db.prepare("SELECT * FROM olt_ports WHERE card_id=? ORDER BY port").all(Number(cardId))
-        : db.prepare("SELECT * FROM olt_ports ORDER BY card_id, port").all();
+        : db.prepare(`
+            SELECT p.*, c.slot, c.label AS card_label, c.olt_id, o.name AS olt_name
+            FROM olt_ports p JOIN olt_cards c ON c.id=p.card_id JOIN olts o ON o.id=c.olt_id
+            ORDER BY p.card_id, p.port`).all();
       return send(req, res, 200, rows);
     }
     if (p === "/api/ports" && method === "POST") {
       const b = await readBody(req);
       if (!b.card_id || !b.port) return send(req, res, 400, { error: "card_id dan nomor port wajib diisi" });
-      const r = db.prepare("INSERT INTO olt_ports (card_id, port, sfp, serial, status, notes) VALUES (?,?,?,?,?,?)")
-        .run(b.card_id, b.port, b.sfp || null, b.serial || null, b.status || "inactive", b.notes || null);
+      const r = db.prepare("INSERT INTO olt_ports (card_id, port, sfp, serial, status, tx_power, rx_power, notes) VALUES (?,?,?,?,?,?,?,?)")
+        .run(b.card_id, b.port, b.sfp || null, b.serial || null, b.status || "inactive", b.tx_power || null, b.rx_power || null, b.notes || null);
       return send(req, res, 201, db.prepare("SELECT * FROM olt_ports WHERE id=?").get(r.lastInsertRowid));
     }
     m = p.match(/^\/api\/ports\/(\d+)$/);
@@ -445,8 +512,8 @@ const server = http.createServer(async (req, res) => {
       const id = Number(m[1]);
       if (method === "PATCH") {
         const b = await readBody(req);
-        db.prepare("UPDATE olt_ports SET port=?, sfp=?, serial=?, status=?, notes=?, updated_at=? WHERE id=?")
-          .run(b.port, b.sfp || null, b.serial || null, b.status || "inactive", b.notes || null, now(), id);
+        db.prepare("UPDATE olt_ports SET port=?, sfp=?, serial=?, status=?, tx_power=?, rx_power=?, notes=?, updated_at=? WHERE id=?")
+          .run(b.port, b.sfp || null, b.serial || null, b.status || "inactive", b.tx_power || null, b.rx_power || null, b.notes || null, now(), id);
         return send(req, res, 200, db.prepare("SELECT * FROM olt_ports WHERE id=?").get(id));
       }
       if (method === "DELETE") {
@@ -460,15 +527,20 @@ const server = http.createServer(async (req, res) => {
       const rows = db.prepare(`
         SELECT d.*, o.name AS olt_name,
           (SELECT COUNT(*) FROM odps p WHERE p.odc_id=d.id) AS odp_count,
-          (SELECT COUNT(*) FROM core_assignments ca WHERE ca.odc_id=d.id AND ca.source='olt_to_odc') AS core_count
-        FROM odcs d JOIN olts o ON o.id=d.olt_id ORDER BY d.name`).all();
+          (SELECT COUNT(*) FROM core_assignments ca WHERE ca.odc_id=d.id AND ca.source='olt_to_odc') AS core_count,
+          fp.port AS feeder_port, fc.slot AS feeder_slot, fc.label AS feeder_card_label
+        FROM odcs d
+        JOIN olts o ON o.id=d.olt_id
+        LEFT JOIN olt_ports fp ON fp.id=d.feeder_port_id
+        LEFT JOIN olt_cards fc ON fc.id=fp.card_id
+        ORDER BY d.name`).all();
       return send(req, res, 200, rows);
     }
     if (p === "/api/odcs" && method === "POST") {
       const b = await readBody(req);
       if (!b.name?.trim() || !b.olt_id || !b.cable_type) return send(req, res, 400, { error: "Nama, OLT, dan tipe kabel wajib diisi" });
-      const r = db.prepare("INSERT INTO odcs (olt_id, name, location, cable_type, notes) VALUES (?,?,?,?,?)")
-        .run(b.olt_id, b.name.trim(), b.location || null, b.cable_type, b.notes || null);
+      const r = db.prepare("INSERT INTO odcs (olt_id, name, location, cable_type, power_source, feeder_port_id, notes) VALUES (?,?,?,?,?,?,?)")
+        .run(b.olt_id, b.name.trim(), b.location || null, b.cable_type, b.power_source || null, b.feeder_port_id || null, b.notes || null);
       return send(req, res, 201, db.prepare("SELECT * FROM odcs WHERE id=?").get(r.lastInsertRowid));
     }
     m = p.match(/^\/api\/odcs\/(\d+)$/);
@@ -476,8 +548,8 @@ const server = http.createServer(async (req, res) => {
       const id = Number(m[1]);
       if (method === "PATCH") {
         const b = await readBody(req);
-        db.prepare("UPDATE odcs SET olt_id=?, name=?, location=?, cable_type=?, notes=?, updated_at=? WHERE id=?")
-          .run(b.olt_id, b.name, b.location || null, b.cable_type, b.notes || null, now(), id);
+        db.prepare("UPDATE odcs SET olt_id=?, name=?, location=?, cable_type=?, power_source=?, feeder_port_id=?, notes=?, updated_at=? WHERE id=?")
+          .run(b.olt_id, b.name, b.location || null, b.cable_type, b.power_source || null, b.feeder_port_id || null, b.notes || null, now(), id);
         return send(req, res, 200, db.prepare("SELECT * FROM odcs WHERE id=?").get(id));
       }
       if (method === "DELETE") {
@@ -497,8 +569,8 @@ const server = http.createServer(async (req, res) => {
     if (p === "/api/odps" && method === "POST") {
       const b = await readBody(req);
       if (!b.name?.trim() || !b.odc_id || !b.cable_type) return send(req, res, 400, { error: "Nama, ODC, dan tipe kabel wajib diisi" });
-      const r = db.prepare("INSERT INTO odps (odc_id, name, location, cable_type, notes) VALUES (?,?,?,?,?)")
-        .run(b.odc_id, b.name.trim(), b.location || null, b.cable_type, b.notes || null);
+      const r = db.prepare("INSERT INTO odps (odc_id, name, location, cable_type, power_source, notes) VALUES (?,?,?,?,?,?)")
+        .run(b.odc_id, b.name.trim(), b.location || null, b.cable_type, b.power_source || null, b.notes || null);
       return send(req, res, 201, db.prepare("SELECT * FROM odps WHERE id=?").get(r.lastInsertRowid));
     }
     m = p.match(/^\/api\/odps\/(\d+)$/);
@@ -506,8 +578,8 @@ const server = http.createServer(async (req, res) => {
       const id = Number(m[1]);
       if (method === "PATCH") {
         const b = await readBody(req);
-        db.prepare("UPDATE odps SET odc_id=?, name=?, location=?, cable_type=?, notes=?, updated_at=? WHERE id=?")
-          .run(b.odc_id, b.name, b.location || null, b.cable_type, b.notes || null, now(), id);
+        db.prepare("UPDATE odps SET odc_id=?, name=?, location=?, cable_type=?, power_source=?, notes=?, updated_at=? WHERE id=?")
+          .run(b.odc_id, b.name, b.location || null, b.cable_type, b.power_source || null, b.notes || null, now(), id);
         return send(req, res, 200, db.prepare("SELECT * FROM odps WHERE id=?").get(id));
       }
       if (method === "DELETE") {
@@ -524,6 +596,12 @@ const server = http.createServer(async (req, res) => {
         rows = db.prepare("SELECT * FROM core_assignments WHERE source='olt_to_odc' AND odc_id=? ORDER BY core").all(Number(odc_id));
       } else if (source === "odc_to_odp" && odp_id) {
         rows = db.prepare("SELECT * FROM core_assignments WHERE source='odc_to_odp' AND odp_id=? ORDER BY core").all(Number(odp_id));
+      } else if (source === "odc_to_odp" && odc_id) {
+        rows = db.prepare(`
+          SELECT ca.*, pd.name AS odp_name
+          FROM core_assignments ca JOIN odps pd ON pd.id = ca.odp_id
+          WHERE ca.source='odc_to_odp' AND pd.odc_id=?
+          ORDER BY pd.name, ca.core`).all(Number(odc_id));
       } else {
         rows = db.prepare("SELECT * FROM core_assignments ORDER BY source, core").all();
       }
@@ -532,8 +610,8 @@ const server = http.createServer(async (req, res) => {
     if (p === "/api/cores" && method === "POST") {
       const b = await readBody(req);
       if (!b.source || !b.core) return send(req, res, 400, { error: "source dan nomor core wajib diisi" });
-      const r = db.prepare("INSERT INTO core_assignments (source, odc_id, odp_id, core, status, customer, destination, notes) VALUES (?,?,?,?,?,?,?,?)")
-        .run(b.source, b.odc_id || null, b.odp_id || null, b.core, b.status || "idle", b.customer || null, b.destination || null, b.notes || null);
+      const r = db.prepare("INSERT INTO core_assignments (source, odc_id, odp_id, core, status, customer, destination, power_dbm, notes) VALUES (?,?,?,?,?,?,?,?,?)")
+        .run(b.source, b.odc_id || null, b.odp_id || null, b.core, b.status || "idle", b.customer || null, b.destination || null, b.power_dbm || null, b.notes || null);
       return send(req, res, 201, db.prepare("SELECT * FROM core_assignments WHERE id=?").get(r.lastInsertRowid));
     }
     m = p.match(/^\/api\/cores\/(\d+)$/);
@@ -541,12 +619,56 @@ const server = http.createServer(async (req, res) => {
       const id = Number(m[1]);
       if (method === "PATCH") {
         const b = await readBody(req);
-        db.prepare("UPDATE core_assignments SET status=?, customer=?, destination=?, notes=?, updated_at=? WHERE id=?")
-          .run(b.status || "idle", b.customer || null, b.destination || null, b.notes || null, now(), id);
+        db.prepare("UPDATE core_assignments SET status=?, customer=?, destination=?, power_dbm=?, notes=?, updated_at=? WHERE id=?")
+          .run(b.status || "idle", b.customer || null, b.destination || null, b.power_dbm || null, b.notes || null, now(), id);
         return send(req, res, 200, db.prepare("SELECT * FROM core_assignments WHERE id=?").get(id));
       }
       if (method === "DELETE") {
         db.prepare("DELETE FROM core_assignments WHERE id=?").run(id);
+        return send(req, res, 200, { ok: true });
+      }
+    }
+
+    // ---------------- Sambungan core (mapping ODC core <-> ODP core) ----------------
+    if (p === "/api/links" && method === "GET") {
+      const odcId = url.searchParams.get("odc_id");
+      const rows = odcId
+        ? db.prepare(`
+            SELECT l.*, pd.name AS odp_name
+            FROM core_links l JOIN odps pd ON pd.id = l.odp_id
+            WHERE l.odc_id=? ORDER BY l.odc_core`).all(Number(odcId))
+        : db.prepare(`
+            SELECT l.*, d.name AS odc_name, pd.name AS odp_name
+            FROM core_links l JOIN odcs d ON d.id=l.odc_id JOIN odps pd ON pd.id=l.odp_id
+            ORDER BY d.name, l.odc_core`).all();
+      return send(req, res, 200, rows);
+    }
+    if (p === "/api/links" && method === "POST") {
+      const b = await readBody(req);
+      if (!b.odc_id || !b.odc_core || !b.odp_id || !b.odp_core) {
+        return send(req, res, 400, { error: "odc_id, odc_core, odp_id, dan odp_core wajib diisi" });
+      }
+      if (db.prepare("SELECT id FROM core_links WHERE odc_id=? AND odc_core=?").get(b.odc_id, b.odc_core)) {
+        return send(req, res, 409, { error: `Core ${b.odc_core} di ODC ini sudah tersambung ke ODP lain` });
+      }
+      if (db.prepare("SELECT id FROM core_links WHERE odp_id=? AND odp_core=?").get(b.odp_id, b.odp_core)) {
+        return send(req, res, 409, { error: `Core ${b.odp_core} di ODP tersebut sudah terpakai sambungan lain` });
+      }
+      const r = db.prepare("INSERT INTO core_links (odc_id, odc_core, odp_id, odp_core, loss_db, notes) VALUES (?,?,?,?,?,?)")
+        .run(b.odc_id, b.odc_core, b.odp_id, b.odp_core, b.loss_db ?? null, b.notes || null);
+      return send(req, res, 201, db.prepare("SELECT * FROM core_links WHERE id=?").get(r.lastInsertRowid));
+    }
+    m = p.match(/^\/api\/links\/(\d+)$/);
+    if (m) {
+      const id = Number(m[1]);
+      if (method === "PATCH") {
+        const b = await readBody(req);
+        db.prepare("UPDATE core_links SET loss_db=?, notes=?, updated_at=? WHERE id=?")
+          .run(b.loss_db ?? null, b.notes || null, now(), id);
+        return send(req, res, 200, db.prepare("SELECT * FROM core_links WHERE id=?").get(id));
+      }
+      if (method === "DELETE") {
+        db.prepare("DELETE FROM core_links WHERE id=?").run(id);
         return send(req, res, 200, { ok: true });
       }
     }

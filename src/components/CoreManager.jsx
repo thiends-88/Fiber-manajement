@@ -14,7 +14,7 @@ export default function CoreManager({ source, parentId, cableType, title }) {
 
   const [cores, setCores] = useState([]);
   const [modal, setModal] = useState(null); // { core, assign }
-  const [form, setForm] = useState({ status: "idle", customer: "", destination: "", notes: "" });
+  const [form, setForm] = useState({ status: "idle", customer: "", destination: "", power_dbm: "", notes: "" });
   const [toastState, setToastState] = useState(null);
   const toast = useToast(setToastState);
 
@@ -36,6 +36,7 @@ export default function CoreManager({ source, parentId, cableType, title }) {
       status: assign?.status ?? "idle",
       customer: assign?.customer ?? "",
       destination: assign?.destination ?? "",
+      power_dbm: assign?.power_dbm ?? "",
       notes: assign?.notes ?? "",
     });
     setModal({ core: n, assign });
@@ -122,7 +123,7 @@ export default function CoreManager({ source, parentId, cableType, title }) {
                 key={n}
                 disabled={!canWrite}
                 onClick={() => openCore(n)}
-                title={`Core ${n} · Tube ${tube} · ${fc.name}${assign ? ` · ${STATUS[assign.status].label}${assign.customer ? ` · ${assign.customer}` : ""}` : " · belum dicatat"}`}
+                title={`Core ${n} · Tube ${tube} · ${fc.name}${assign ? ` · ${STATUS[assign.status].label}${assign.customer ? ` · ${assign.customer}` : ""}${assign.power_dbm ? ` · ${assign.power_dbm} dBm` : ""}` : " · belum dicatat"}`}
                 className={`flex flex-col items-center gap-1 rounded-lg border bg-panel2 p-2 transition hover:border-acc/70 ${border}`}
               >
                 <span
@@ -130,7 +131,7 @@ export default function CoreManager({ source, parentId, cableType, title }) {
                   style={{ background: fc.hex }}
                 />
                 <span className="text-[11px] font-semibold">{n}</span>
-                <span className="text-[9px] text-mut">T{tube}</span>
+                <span className="text-[9px] text-mut">T{tube}{assign?.power_dbm ? ` · ${assign.power_dbm}dBm` : ""}</span>
               </button>
             );
           })}
@@ -157,6 +158,12 @@ export default function CoreManager({ source, parentId, cableType, title }) {
             </Field>
             <Field label="Tujuan">
               <input className="input" value={form.destination} onChange={(e) => setForm({ ...form, destination: e.target.value })} />
+            </Field>
+            <Field label="Daya optik terukur (dBm) — opsional">
+              <input
+                className="input" type="number" step="0.1" placeholder="mis. -19.5"
+                value={form.power_dbm} onChange={(e) => setForm({ ...form, power_dbm: e.target.value })}
+              />
             </Field>
             <Field label="Catatan">
               <textarea className="input" rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />

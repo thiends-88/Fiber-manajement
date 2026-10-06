@@ -7,7 +7,7 @@ import { CARD_TYPES, OLT_TYPES, PORT_STATUS } from "../lib/fiber.js";
 
 const emptyOlt = { name: "", olt_type: OLT_TYPES[0], location: "", ip: "", notes: "" };
 const emptyCard = { slot: "", card_type: "GTGO", label: "", port_count: 8, notes: "" };
-const emptyPort = { port: "", sfp: "", serial: "", status: "inactive", notes: "" };
+const emptyPort = { port: "", sfp: "", serial: "", status: "inactive", tx_power: "", rx_power: "", notes: "" };
 
 export default function Olts() {
   const { user } = useAuth();
@@ -271,7 +271,7 @@ export default function Olts() {
                           title={pr ? `Port ${n}: ${st.label}${pr.sfp ? ` · ${pr.sfp}` : ""}` : `Port ${n}: belum tercatat`}
                           onClick={() => {
                             if (pr) {
-                              setPortForm({ port: pr.port, sfp: pr.sfp || "", serial: pr.serial || "", status: pr.status, notes: pr.notes || "" });
+                              setPortForm({ port: pr.port, sfp: pr.sfp || "", serial: pr.serial || "", status: pr.status, tx_power: pr.tx_power || "", rx_power: pr.rx_power || "", notes: pr.notes || "" });
                               setPortModal({ mode: "edit", port: pr });
                             } else {
                               setPortForm({ ...emptyPort, port: n });
@@ -302,6 +302,7 @@ export default function Olts() {
                           <th className="th">Port</th>
                           <th className="th">SFP</th>
                           <th className="th">Serial</th>
+                          <th className="th">Daya TX/RX</th>
                           <th className="th">Status</th>
                           {canWrite && <th className="th" />}
                         </tr>
@@ -312,6 +313,7 @@ export default function Olts() {
                             <td className="td font-semibold">{pr.port}</td>
                             <td className="td text-mut">{pr.sfp || "-"}</td>
                             <td className="td text-mut">{pr.serial || "-"}</td>
+                            <td className="td text-mut">{pr.tx_power || pr.rx_power ? `${pr.tx_power || "-"} / ${pr.rx_power || "-"} dBm` : "-"}</td>
                             <td className="td">
                               <Badge cls={PORT_STATUS[pr.status].cls}>{PORT_STATUS[pr.status].label}</Badge>
                             </td>
@@ -404,6 +406,14 @@ export default function Olts() {
           <Field label="Serial SFP">
             <input className="input" value={portForm.serial} onChange={(e) => setPortForm({ ...portForm, serial: e.target.value })} />
           </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Daya TX (dBm)">
+              <input className="input" type="number" step="0.1" value={portForm.tx_power} onChange={(e) => setPortForm({ ...portForm, tx_power: e.target.value })} placeholder="mis. 2.5" />
+            </Field>
+            <Field label="Daya RX (dBm)">
+              <input className="input" type="number" step="0.1" value={portForm.rx_power} onChange={(e) => setPortForm({ ...portForm, rx_power: e.target.value })} placeholder="mis. -18.4" />
+            </Field>
+          </div>
           <Field label="Catatan">
             <textarea className="input" rows={2} value={portForm.notes} onChange={(e) => setPortForm({ ...portForm, notes: e.target.value })} />
           </Field>
