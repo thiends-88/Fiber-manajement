@@ -17,13 +17,18 @@ CSV, dan manajemen user berbasis peran.
 4. **Core** — penugasan core per kabel dengan warna standar TIA/EIA-598
    (12 warna per tube), status idle/terpakai/reserved/rusak, pelanggan,
    tujuan, dan **daya optik terukur (dBm)** per core.
-5. **Mapping Core** — peta jalur **end-to-end**: dari port feeder OLT →
+5. **Splitter bertingkat (baru)** — pilih rasio **1:2 / 1:4 / 1:8 / 1:16 / 1:32**,
+   ditempatkan **di dalam ODC maupun di dalam ODP**. Setiap output splitter bisa
+   diarahkan **ke ODP** atau **di-cascade ke splitter lain**, sehingga topologi
+   bertingkat seperti **4:8:8** (OLT → SPL 1:4 → SPL 1:8 → ODP dengan SPL 1:8)
+   bisa dimodelkan penuh. Aplikasi otomatis membaca rantainya sebagai "Topologi 4:8:8".
+6. **Mapping Core** — peta jalur **end-to-end**: dari port feeder OLT →
    core ODC → core ODP → pelanggan, lengkap dengan redaman (dB), daya per titik,
    dan penanda core mana yang sudah/belum tersambung. Satu core hanya boleh
    memiliki satu sambungan (dijaga di sisi server).
-6. **Topologi** — struktur pohon OLT → ODC → ODP dengan info port feeder
-   (bisa banyak per ODC) dan pasangan core yang tersambung.
-7. **Laporan** — ekspor CSV + manajemen user berbasis peran (admin/operator/user).
+7. **Topologi** — struktur pohon OLT → ODC → ODP dengan info port feeder
+   (bisa banyak per ODC), splitter, dan pasangan core yang tersambung.
+8. **Laporan** — ekspor CSV + manajemen user berbasis peran (admin/operator/user).
 
 **Database sederhana versi Arena:** SQLite bawaan Node (`node:sqlite`) dalam
 satu file `data/fiberops.db`. Tidak ada Supabase, tidak ada koneksi keluar.
@@ -67,7 +72,8 @@ lihat **[DEPLOY-PROXMOX.md](DEPLOY-PROXMOX.md)**. Tersedia juga `Dockerfile`.
 | --- | --- |
 | `server.mjs` | API HTTP + skema & seed SQLite (tanpa dependensi npm), termasuk migrasi otomatis DB lama |
 | `src/lib/fiber.js` | Konstanta kabel, warna core TIA/EIA-598, status |
-| `src/pages/Mapping.jsx` | Peta jalur core OLT → ODC → ODP + editor sambungan core |
+| `src/pages/Mapping.jsx` | Peta jalur core OLT → ODC → ODP + jalur splitter bertingkat |
+| `src/components/SplitterManager.jsx` | Kelola splitter (rasio, input core) & arah tiap output (ODP / cascade) |
 | `src/lib/api.js` | Klien fetch + sesi token |
 | `src/components/CoreManager.jsx` | Grid core interaktif (dipakai ODC & ODP) |
 | `src/pages/*` | Dashboard, OLT, ODC, ODP, Topologi, Laporan, Users |

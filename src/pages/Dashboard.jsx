@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Boxes, Cable, Network, Server, Wifi, Workflow } from "lucide-react";
+import { Boxes, Cable, GitBranch, Network, Server, Wifi, Workflow } from "lucide-react";
 import { api } from "../lib/api.js";
 import { Card, PageHeader } from "../components/ui.jsx";
 import { STATUS } from "../lib/fiber.js";
@@ -40,7 +40,7 @@ export default function Dashboard() {
   return (
     <div>
       <PageHeader title="Dashboard" desc="Ringkasan jaringan OLT → ODC → ODP." />
-      <div className="grid grid-cols-2 gap-4 xl:grid-cols-5">
+      <div className="grid grid-cols-2 gap-4 xl:grid-cols-6">
         <StatCard icon={Server} label="OLT" value={d.olts} tint="bg-cyan-500/15 text-cyan-300" />
         <StatCard icon={Boxes} label="ODC" value={d.odcs} tint="bg-emerald-500/15 text-emerald-300" />
         <StatCard icon={Network} label="ODP" value={d.odps} tint="bg-amber-500/15 text-amber-300" />
@@ -51,6 +51,13 @@ export default function Dashboard() {
           value={d.links ?? 0}
           hint="lihat menu Mapping Core"
           tint="bg-violet-500/15 text-violet-300"
+        />
+        <StatCard
+          icon={GitBranch}
+          label="Splitter"
+          value={d.splitters ?? 0}
+          hint="bertahap / cascade"
+          tint="bg-sky-500/15 text-sky-300"
         />
       </div>
 

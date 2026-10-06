@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowRight, Link2, Pencil, Plus, Trash2, Workflow } from "lucide-react";
+import { ArrowRight, GitBranch, Link2, Pencil, Plus, Trash2, Workflow } from "lucide-react";
 import { api } from "../lib/api.js";
 import { useAuth } from "../lib/auth.jsx";
 import { Badge, Card, Empty, Field, Modal, PageHeader, Toast, useToast } from "../components/ui.jsx";
@@ -32,6 +32,7 @@ export default function Mapping() {
   const [olts, setOlts] = useState([]);
   const [allCores, setAllCores] = useState([]);
   const [feederPorts, setFeederPorts] = useState([]);
+  const [splitters, setSplitters] = useState([]);
   const [odcId, setOdcId] = useState("");
   const [links, setLinks] = useState([]);
   const [modal, setModal] = useState(null);
@@ -40,10 +41,12 @@ export default function Mapping() {
   const toast = useToast(setToastState);
 
   const load = useCallback(async () => {
-    const [d, p, o, c, pt] = await Promise.all([
+    const [d, p, o, c, pt, spl] = await Promise.all([
       api("/api/odcs"), api("/api/odps"), api("/api/olts"), api("/api/cores"), api("/api/feeder-ports"),
+      api("/api/splitters"),
     ]);
     setFeederPorts(pt);
+    setSplitters(spl);
     setOdcs(d);
     setOdps(p);
     setOlts(o);
@@ -225,10 +228,16 @@ export default function Mapping() {
                         <div className="text-mut">{l.odp_name} · {odp?.location || "lokasi belum diisi"}</div>
                       </div>
                       <Arrow />
-                      {/* 4. Titik pelanggan / tujuan */}
+                      {/* 4. Tujuan / splitter di ODP */}
                       <div className="rounded-lg border border-line bg-panel px-2.5 py-1.5 text-xs">
-                        <div className="font-semibold">{feeder?.customer || "Belum ada pelanggan"}</div>
-                        <div className="text-mut">{feeder?.destination || "Tujuan belum diisi"}</div>
+                        <div className="font-semibold">{feeder?.destination || "Belum ada tujuan"}</div>
+                        <div className="text-mut">
+                          {(() => {
+                            const sp = splitters.filter((x) => x.odp_id === l.odp_id);
+                            if (sp.length === 0) return "belum ada splitter di ODP";
+                            return sp.map((x) => `${x.name} (${x.ratio})`).join(" · ");
+                          })()}
+                        </div>
                       </div>
                       <div className="ml-auto flex items-center gap-1">
                         {canWrite && (
@@ -260,6 +269,104 @@ export default function Mapping() {
             </div>
           </Card>
 
+          {/* Jalur splitter bertingkat */}
+          <Card>
+            <div className="mb-3 flex items-center gap-2">
+              <GitBranch size={16} className="text-violet-400" />
+              <h2 className="font-semibold">Jalur Splitter (Topologi)</h2>
+              <span className="text-xs text-mut">— contoh pembacaan bertingkat: 1:4 → 1:8 → 1:8 (4:8:8)</span>
+            </div>
+
+            {(() => {
+              const mySplitters = splitters.filter((x) => x.odc_id === Number(odcId));
+              const odpSplitters = splitters.filter((x) => x.odp_id);
+              // Rantai dari splitter ODC yang di-cascade sampai splitter di dalam ODP
+              const chainParts = (start) => {
+                const parts = [start.ratio];
+                let cur = start;
+                for (let depth = 0; depth < 4; depth++) {
+                  const toSplitter = (cur.outputs || []).find((o) => o.target_type === "splitter" && o.target_splitter_id);
+                  const toOdp = (cur.outputs || []).find((o) => o.target_type === "odp" && o.target_odp_id);
+                  const next = toSplitter
+                    ? splitters.find((x) => x.id === toSplitter.target_splitter_id)
+                    : toOdp
+                      ? null
+                      : null;
+                  if (!next) {
+                    if (toOdp) {
+                      const inOdp = odpSplitters.filter((x) => x.odp_id === toOdp.target_odp_id);
+                      if (inOdp[0]) parts.push(inOdp[0].ratio);
+                    }
+                    break;
+                  }
+                  parts.push(next.ratio);
+                  cur = next;
+                }
+                return parts;
+              };
+
+              if (mySplitters.length === 0) return <Empty text="ODC ini belum punya splitter." />;
+              return (
+                <div className="space-y-3">
+                  {mySplitters.map((sp) => {
+                    const chain = chainParts(sp);
+                    const outs = sp.outputs || [];
+                    return (
+                      <div key={sp.id} className="rounded-xl border border-line bg-panel2/50 p-3 text-xs">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-semibold">{sp.name}</span>
+                          <Badge cls="bg-violet-500/15 text-violet-300">Splitter {sp.ratio}</Badge>
+                          {sp.input_core && <Badge cls="bg-slate-500/15 text-slate-300">Input core {sp.input_core}</Badge>}
+                          {chain.length > 1 && (
+                            <Badge cls="bg-emerald-500/15 text-emerald-400">Topologi {chain.map((r) => r.split(":")[1]).join(":")}</Badge>
+                          )}
+                          <span className="text-mut">{outs.filter((o) => o.target_type).length}/{outs.length} output terarah</span>
+                        </div>
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          {outs.map((o) => {
+                            const label = o.target_type === "odp"
+                              ? o.target_odp_name
+                              : o.target_type === "splitter"
+                                ? `⇄ ${o.target_splitter_name}`
+                                : "kosong";
+                            const cls = o.target_type === "odp"
+                              ? "border-emerald-500/50 text-emerald-300"
+                              : o.target_type === "splitter"
+                                ? "border-violet-500/50 text-violet-300"
+                                : "border-dashed border-line text-mut";
+                            return (
+                              <span key={o.id} className={`rounded-md border px-2 py-0.5 text-[11px] ${cls}`}>
+                                out {o.port}: {label}
+                              </span>
+                            );
+                          })}
+                        </div>
+                        {sp.input_note && <div className="mt-1 text-[11px] text-mut">Input: {sp.input_note}</div>}
+                      </div>
+                    );
+                  })}
+                  {(() => {
+                    const myOdps = odcsOdps;
+                    const withSpl = myOdps.filter((p) => odpSplitters.some((x) => x.odp_id === p.id));
+                    if (withSpl.length === 0) return null;
+                    return (
+                      <div className="rounded-xl border border-line bg-panel2/30 p-3 text-xs">
+                        <div className="mb-1 font-semibold">Splitter di dalam ODP</div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {withSpl.map((p) => (
+                            <span key={p.id} className="rounded-md border border-amber-500/40 px-2 py-0.5 text-[11px] text-amber-300">
+                              {p.name}: {odpSplitters.filter((x) => x.odp_id === p.id).map((x) => `${x.name} (${x.ratio})`).join(", ")}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+              );
+            })()}
+          </Card>
+
           {/* Ringkasan core per ODC + ODP */}
           <div className="grid gap-5 lg:grid-cols-2">
             <Card>
@@ -274,7 +381,7 @@ export default function Mapping() {
                       <th className="th">Core</th>
                       <th className="th">Status</th>
                       <th className="th">Daya</th>
-                      <th className="th">Pelanggan / Tujuan</th>
+                      <th className="th">Tujuan</th>
                       <th className="th">Sambungan ODP</th>
                     </tr>
                   </thead>
@@ -286,7 +393,7 @@ export default function Mapping() {
                           <td className="td"><CoreChip core={c.core} cableType={cable} small /></td>
                           <td className="td"><Badge cls={st.cls}>{st.label}</Badge></td>
                           <td className="td text-mut">{c.power_dbm ? `${c.power_dbm} dBm` : "-"}</td>
-                          <td className="td text-mut">{c.customer || c.destination || "-"}</td>
+                          <td className="td text-mut">{c.destination || "-"}</td>
                           <td className="td text-mut">
                             {linkedOdcCores.has(c.core)
                               ? (() => {

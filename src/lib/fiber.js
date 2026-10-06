@@ -46,6 +46,12 @@ export function coresPerTube(cableType) {
   return Math.ceil(info.cores / info.tubes);
 }
 
+// Rasio splitter yang umum dipakai di FTTH (bisa ditambah bila perlu)
+export const SPLITTER_RATIOS = ["1:2", "1:4", "1:8", "1:16", "1:32"];
+
+// Jumlah output dari rasio splitter, mis. "1:8" -> 8
+export const splitterPorts = (ratio) => Number(String(ratio ?? "").split(":")[1]) || 0;
+
 export const STATUS = {
   idle: { label: "Idle", cls: "bg-slate-500/15 text-slate-300" },
   used: { label: "Terpakai", cls: "bg-emerald-500/15 text-emerald-400" },

@@ -2,7 +2,7 @@
 /**
  * FiberOps Arena — server API sederhana.
  *
- * Database: SQLite bawaan Node (node:sqlite), tersimpan di arena-app/data/fiberops.db.
+ * Database: SQLite bawaan Node (node:sqlite), default data/fiberops.db (bisa diubah via ARENA_DB_PATH).
  * Satu file, tanpa dependensi eksternal, bisa di-reset dengan menghapus file-nya.
  *
  * Port default: 4500 (env: ARENA_API_PORT)
@@ -15,8 +15,9 @@ import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DATA_DIR = path.join(__dirname, "data");
-const DB_FILE = path.join(DATA_DIR, "fiberops.db");
+// Lokasi database bisa diatur lewat ARENA_DB_PATH (berguna untuk uji coba / multi-instance)
+const DB_FILE = process.env.ARENA_DB_PATH || path.join(__dirname, "data", "fiberops.db");
+const DATA_DIR = path.dirname(DB_FILE);
 const PORT = Number(process.env.ARENA_API_PORT || 4500);
 const HOST = process.env.ARENA_API_HOST || "0.0.0.0";
 const DIST_DIR = path.join(__dirname, "dist");
@@ -160,6 +161,28 @@ const MIGRATIONS = [
   "ALTER TABLE core_assignments ADD COLUMN power_dbm TEXT",
   "ALTER TABLE olt_ports ADD COLUMN tx_power TEXT",
   "ALTER TABLE olt_ports ADD COLUMN rx_power TEXT",
+  `CREATE TABLE IF NOT EXISTS splitters (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    odc_id INTEGER REFERENCES odcs(id) ON DELETE CASCADE,
+    odp_id INTEGER REFERENCES odps(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    ratio TEXT NOT NULL,
+    input_core INTEGER,
+    input_note TEXT,
+    notes TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`,
+  `CREATE TABLE IF NOT EXISTS splitter_outputs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    splitter_id INTEGER NOT NULL REFERENCES splitters(id) ON DELETE CASCADE,
+    port INTEGER NOT NULL,
+    target_type TEXT CHECK (target_type IS NULL OR target_type IN ('odp','splitter')),
+    target_odp_id INTEGER REFERENCES odps(id) ON DELETE SET NULL,
+    target_splitter_id INTEGER REFERENCES splitters(id) ON DELETE SET NULL,
+    notes TEXT,
+    UNIQUE(splitter_id, port)
+  )`,
   `CREATE TABLE IF NOT EXISTS core_links (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     odc_id INTEGER NOT NULL REFERENCES odcs(id) ON DELETE CASCADE,
@@ -236,6 +259,36 @@ function checkFeederPorts(oltId, ids) {
   }
   return null;
 }
+const SPLITTER_RATIO_RE = /^1:(\d+)$/;
+// Hanya rasio 1:N yang sah (mis. 1:8); mengembalikan 0 bila tidak valid
+const splitterPorts = (ratio) => {
+  const m = SPLITTER_RATIO_RE.exec(String(ratio ?? ""));
+  const n = m ? Number(m[1]) : 0;
+  return n >= 2 && n <= 64 ? n : 0;
+};
+const SPLITTER_SQL = `SELECT s.*, d.name AS odc_name, p.name AS odp_name
+  FROM splitters s LEFT JOIN odcs d ON d.id = s.odc_id LEFT JOIN odps p ON p.id = s.odp_id`;
+const SPLITTER_OUT_SQL = `SELECT o.*,
+    CASE WHEN o.target_odp_id IS NOT NULL THEN 'odp'
+         WHEN o.target_splitter_id IS NOT NULL THEN 'splitter' ELSE NULL END AS target_type,
+    od.name AS target_odp_name, ts.name AS target_splitter_name
+  FROM splitter_outputs o
+  LEFT JOIN odps od ON od.id = o.target_odp_id
+  LEFT JOIN splitters ts ON ts.id = o.target_splitter_id
+  WHERE o.splitter_id = ? ORDER BY o.port`;
+function getSplitter(id) {
+  const row = db.prepare(SPLITTER_SQL + " WHERE s.id=?").get(id);
+  if (!row) return null;
+  return { ...row, outputs: db.prepare(SPLITTER_OUT_SQL).all(id) };
+}
+function syncSplitterPorts(splitterId, ratio) {
+  const n = splitterPorts(ratio);
+  db.prepare("DELETE FROM splitter_outputs WHERE splitter_id=? AND port>?").run(splitterId, n);
+  const ins = db.prepare("INSERT OR IGNORE INTO splitter_outputs (splitter_id, port) VALUES (?,?)");
+  for (let i = 1; i <= n; i++) ins.run(splitterId, i);
+  return n;
+}
+
 function syncFeederPorts(odcId, ids) {
   db.prepare("DELETE FROM odc_feeder_ports WHERE odc_id=?").run(odcId);
   const ins = db.prepare("INSERT OR IGNORE INTO odc_feeder_ports (odc_id, port_id) VALUES (?,?)");
@@ -357,26 +410,29 @@ function seedIfEmpty() {
   );
   const odp1 = insOdp.run(odc1, "ODP-001", "Jl. Melati RT 03", "12_core_2_tube", null, ts, ts).lastInsertRowid;
   const odp2 = insOdp.run(odc2, "ODP-002", "Perum Griya Asri", "24_core_2_tube", null, ts, ts).lastInsertRowid;
+  const odp3 = insOdp.run(odc1, "ODP-003", "Jl. Kenanga", "12_core_2_tube", null, ts, ts).lastInsertRowid;
 
   const FIBER_COLORS = ["Biru","Jingga","Hijau","Coklat","Abu-abu","Putih","Merah","Hitam","Kuning","Ungu","Pink","Aqua"];
   const insCore = db.prepare(
-    "INSERT INTO core_assignments (source, odc_id, odp_id, core, status, customer, destination, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+    "INSERT INTO core_assignments (source, odc_id, odp_id, core, status, destination, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
   );
-  const core = (source, odcId, odpId, n, status, customer = null, destination = null) =>
-    insCore.run(source, odcId, odpId, n, status, customer, destination, ts, ts);
+  const core = (source, odcId, odpId, n, status, destination = null) =>
+    insCore.run(source, odcId, odpId, n, status, destination, ts, ts);
 
-  core("olt_to_odc", odc1, null, 1, "used", "Backbone ISP", "ODC-001");
-  core("olt_to_odc", odc1, null, 2, "used", "Backbone ISP", "ODC-001");
-  core("olt_to_odc", odc1, null, 3, "reserved", null, "ODC-001");
+  core("olt_to_odc", odc1, null, 1, "used", "ODC-001");
+  core("olt_to_odc", odc1, null, 2, "used", "ODC-001");
+  core("olt_to_odc", odc1, null, 3, "reserved", "ODC-001");
   core("olt_to_odc", odc1, null, 4, "idle");
   core("olt_to_odc", odc1, null, 5, "idle");
-  core("olt_to_odc", odc1, null, 6, "damaged", null, "ODC-001");
-  core("olt_to_odc", odc2, null, 1, "used", "Link Pabrik A", "ODC-002");
+  core("olt_to_odc", odc1, null, 6, "damaged", "ODC-001");
+  core("olt_to_odc", odc2, null, 1, "used", "ODC-002");
   core("olt_to_odc", odc2, null, 2, "idle");
-  core("odc_to_odp", null, odp1, 1, "used", "Pelanggan Budi", "ODP-001");
-  core("odc_to_odp", null, odp1, 2, "used", "Pelanggan Siti", "ODP-001");
+  core("odc_to_odp", null, odp1, 1, "used", "ODP-001");
+  core("odc_to_odp", null, odp1, 2, "used", "ODP-001");
   core("odc_to_odp", null, odp1, 3, "idle");
   core("odc_to_odp", null, odp2, 1, "idle");
+  core("odc_to_odp", null, odp3, 1, "used", "ODP-003");
+  core("odc_to_odp", null, odp3, 2, "idle");
 
   // Sambungan core end-to-end (mapping ODC core <-> ODP core)
   const insLink = db.prepare(
@@ -392,6 +448,27 @@ function seedIfEmpty() {
   insFeeder.run(odc2, p6);
   db.prepare("UPDATE core_assignments SET power_dbm='-19.5' WHERE odc_id=? AND core=1 AND source='olt_to_odc'").run(odc1);
   db.prepare("UPDATE core_assignments SET power_dbm='-20.2' WHERE odc_id=? AND core=2 AND source='olt_to_odc'").run(odc1);
+
+  // Splitter bertingkat — contoh topologi 4:8:8:
+  //   OLT → ODC: SPL-1 (1:4) → cascade SPL-2 (1:8) → ODP-003, dan langsung ke ODP-001
+  //   Di dalam ODP juga ada splitter 1:8 (SPL-ODP1 / SPL-ODP3)
+  const insSplitter = db.prepare(
+    "INSERT INTO splitters (odc_id, odp_id, name, ratio, input_core, input_note, notes, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+  );
+  const insOut = db.prepare("INSERT INTO splitter_outputs (splitter_id, port) VALUES (?,?)");
+  const addPorts = (id, n) => { for (let i = 1; i <= n; i++) insOut.run(id, i); };
+  const setOut = (splitterId, port, odp = null, spl = null) =>
+    db.prepare("UPDATE splitter_outputs SET target_type=?, target_odp_id=?, target_splitter_id=? WHERE splitter_id=? AND port=?")
+      .run(odp ? "odp" : spl ? "splitter" : null, odp, spl, splitterId, port);
+
+  const spl1 = insSplitter.run(odc1, null, "SPL-1", "1:4", 1, "Core 1 dari OLT", "Splitter utama ODC", ts, ts).lastInsertRowid;
+  const spl2 = insSplitter.run(odc1, null, "SPL-2", "1:8", null, "Cascade dari SPL-1 output 1", "Splitter tahap 2", ts, ts).lastInsertRowid;
+  const splOdp1 = insSplitter.run(null, odp1, "SPL-ODP1", "1:8", 1, "Core 1 dari ODC-001", null, ts, ts).lastInsertRowid;
+  const splOdp3 = insSplitter.run(null, odp3, "SPL-ODP3", "1:8", 1, "Core 1 dari ODC-001", null, ts, ts).lastInsertRowid;
+  addPorts(spl1, 4); addPorts(spl2, 8); addPorts(splOdp1, 8); addPorts(splOdp3, 8);
+  setOut(spl1, 1, null, spl2);   // cascade 1:4 → 1:8
+  setOut(spl1, 2, odp1);         // langsung ke ODP-001
+  setOut(spl2, 1, odp3);         // 1:8 → ODP-003
 
   console.log("[arena-api] Database di-seed dengan data demo. Login: admin@arena.test / Arena123!");
 }
@@ -461,6 +538,7 @@ const server = http.createServer(async (req, res) => {
         odps: c("SELECT COUNT(*) n FROM odps"),
         cores: c("SELECT COUNT(*) n FROM core_assignments"),
         links: c("SELECT COUNT(*) n FROM core_links"),
+        splitters: c("SELECT COUNT(*) n FROM splitters"),
         coresUsed: byStatus.used ?? 0,
         coresIdle: byStatus.idle ?? 0,
         coresReserved: byStatus.reserved ?? 0,
@@ -650,8 +728,8 @@ const server = http.createServer(async (req, res) => {
     if (p === "/api/cores" && method === "POST") {
       const b = await readBody(req);
       if (!b.source || !b.core) return send(req, res, 400, { error: "source dan nomor core wajib diisi" });
-      const r = db.prepare("INSERT INTO core_assignments (source, odc_id, odp_id, core, status, customer, destination, power_dbm, notes) VALUES (?,?,?,?,?,?,?,?,?)")
-        .run(b.source, b.odc_id || null, b.odp_id || null, b.core, b.status || "idle", b.customer || null, b.destination || null, b.power_dbm || null, b.notes || null);
+      const r = db.prepare("INSERT INTO core_assignments (source, odc_id, odp_id, core, status, destination, power_dbm, notes) VALUES (?,?,?,?,?,?,?,?)")
+        .run(b.source, b.odc_id || null, b.odp_id || null, b.core, b.status || "idle", b.destination || null, b.power_dbm || null, b.notes || null);
       return send(req, res, 201, db.prepare("SELECT * FROM core_assignments WHERE id=?").get(r.lastInsertRowid));
     }
     m = p.match(/^\/api\/cores\/(\d+)$/);
@@ -659,8 +737,8 @@ const server = http.createServer(async (req, res) => {
       const id = Number(m[1]);
       if (method === "PATCH") {
         const b = await readBody(req);
-        db.prepare("UPDATE core_assignments SET status=?, customer=?, destination=?, power_dbm=?, notes=?, updated_at=? WHERE id=?")
-          .run(b.status || "idle", b.customer || null, b.destination || null, b.power_dbm || null, b.notes || null, now(), id);
+        db.prepare("UPDATE core_assignments SET status=?, destination=?, power_dbm=?, notes=?, updated_at=? WHERE id=?")
+          .run(b.status || "idle", b.destination || null, b.power_dbm || null, b.notes || null, now(), id);
         return send(req, res, 200, db.prepare("SELECT * FROM core_assignments WHERE id=?").get(id));
       }
       if (method === "DELETE") {
@@ -731,10 +809,79 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
+    // ---------------- Splitter (boleh bertingkat/cascade, di ODC atau ODP) ----------------
+    if (p === "/api/splitters" && method === "GET") {
+      const { odc_id, odp_id } = Object.fromEntries(url.searchParams);
+      let rows;
+      if (odc_id) rows = db.prepare(SPLITTER_SQL + " WHERE s.odc_id=? ORDER BY s.name").all(Number(odc_id));
+      else if (odp_id) rows = db.prepare(SPLITTER_SQL + " WHERE s.odp_id=? ORDER BY s.name").all(Number(odp_id));
+      else rows = db.prepare(SPLITTER_SQL + " ORDER BY s.name").all();
+      const outStmt = db.prepare(SPLITTER_OUT_SQL);
+      return send(req, res, 200, rows.map((r) => ({ ...r, outputs: outStmt.all(r.id) })));
+    }
+    if (p === "/api/splitters" && method === "POST") {
+      const b = await readBody(req);
+      if (!b.name?.trim() || !b.ratio) return send(req, res, 400, { error: "Nama dan rasio splitter wajib diisi" });
+      if (!b.odc_id && !b.odp_id) return send(req, res, 400, { error: "Splitter harus ditempatkan di ODC atau ODP" });
+      if (!splitterPorts(b.ratio)) return send(req, res, 400, { error: "Rasio splitter tidak valid (contoh 1:4)" });
+      const r = db.prepare("INSERT INTO splitters (odc_id, odp_id, name, ratio, input_core, input_note, notes) VALUES (?,?,?,?,?,?,?)")
+        .run(b.odc_id || null, b.odp_id || null, b.name.trim(), b.ratio, b.input_core || null, b.input_note || null, b.notes || null);
+      syncSplitterPorts(r.lastInsertRowid, b.ratio);
+      return send(req, res, 201, getSplitter(r.lastInsertRowid));
+    }
+    m = p.match(/^\/api\/splitters\/(\d+)$/);
+    if (m) {
+      const id = Number(m[1]);
+      if (method === "PATCH") {
+        const b = await readBody(req);
+        if (!splitterPorts(b.ratio)) return send(req, res, 400, { error: "Rasio splitter tidak valid (contoh 1:8)" });
+        db.prepare("UPDATE splitters SET name=?, ratio=?, input_core=?, input_note=?, notes=?, updated_at=? WHERE id=?")
+          .run(b.name, b.ratio, b.input_core || null, b.input_note || null, b.notes || null, now(), id);
+        syncSplitterPorts(id, b.ratio);
+        return send(req, res, 200, getSplitter(id));
+      }
+      if (method === "DELETE") {
+        db.prepare("UPDATE splitter_outputs SET target_type=NULL, target_splitter_id=NULL WHERE target_splitter_id=?").run(id);
+        db.prepare("DELETE FROM splitters WHERE id=?").run(id);
+        return send(req, res, 200, { ok: true });
+      }
+    }
+    m = p.match(/^\/api\/splitter-outputs\/(\d+)$/);
+    if (m && method === "PATCH") {
+      const id = Number(m[1]);
+      const out = db.prepare("SELECT * FROM splitter_outputs WHERE id=?").get(id);
+      if (!out) return send(req, res, 404, { error: "Output splitter tidak ditemukan" });
+      const b = await readBody(req);
+      let odpId = null;
+      let splId = null;
+      if (b.target_type === "odp") {
+        if (!db.prepare("SELECT id FROM odps WHERE id=?").get(Number(b.target_id))) {
+          return send(req, res, 400, { error: "ODP tujuan tidak ditemukan" });
+        }
+        odpId = Number(b.target_id);
+      } else if (b.target_type === "splitter") {
+        splId = Number(b.target_id);
+        if (!db.prepare("SELECT id FROM splitters WHERE id=?").get(splId)) {
+          return send(req, res, 400, { error: "Splitter tujuan tidak ditemukan" });
+        }
+        if (splId === out.splitter_id) {
+          return send(req, res, 400, { error: "Splitter tidak bisa di-cascade ke dirinya sendiri" });
+        }
+      }
+      db.prepare("UPDATE splitter_outputs SET target_type=?, target_odp_id=?, target_splitter_id=?, notes=? WHERE id=?")
+        .run(odpId ? "odp" : splId ? "splitter" : null, odpId, splId, b.notes || null, id);
+      return send(req, res, 200, db.prepare(
+        `SELECT o.*, od.name AS target_odp_name, ts.name AS target_splitter_name
+         FROM splitter_outputs o
+         LEFT JOIN odps od ON od.id = o.target_odp_id
+         LEFT JOIN splitters ts ON ts.id = o.target_splitter_id
+         WHERE o.id=?`).get(id));
+    }
+
     // ---------------- Laporan ----------------
     if (p === "/api/laporan" && method === "GET") {
       const rows = db.prepare(`
-        SELECT ca.id, ca.source, ca.core, ca.status, ca.customer, ca.destination, ca.notes,
+        SELECT ca.id, ca.source, ca.core, ca.status, ca.destination, ca.notes,
           CASE WHEN ca.source='olt_to_odc' THEN d.name ELSE pd.name END AS link_name,
           CASE WHEN ca.source='olt_to_odc' THEN o.name ELSE d2.name END AS uplink_name,
           CASE WHEN ca.source='olt_to_odc' THEN d.cable_type ELSE pd.cable_type END AS cable_type

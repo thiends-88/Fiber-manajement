@@ -21,7 +21,7 @@ export default function Laporan() {
   }, [rows, source, status]);
 
   function exportCsv() {
-    const head = ["Sumber", "Link", "Uplink", "Kabel", "Core", "Status", "Pelanggan", "Tujuan", "Catatan"];
+    const head = ["Sumber", "Link", "Uplink", "Kabel", "Core", "Status", "Tujuan", "Catatan"];
     const lines = [
       head.join(";"),
       ...filtered.map((r) =>
@@ -32,7 +32,6 @@ export default function Laporan() {
           getCableInfo(r.cable_type)?.label ?? r.cable_type ?? "",
           r.core,
           STATUS[r.status]?.label ?? r.status,
-          r.customer ?? "",
           r.destination ?? "",
           r.notes ?? "",
         ]
@@ -90,7 +89,6 @@ export default function Laporan() {
                 <th className="th">Kabel</th>
                 <th className="th">Core</th>
                 <th className="th">Status</th>
-                <th className="th">Pelanggan</th>
                 <th className="th">Tujuan</th>
               </tr>
             </thead>
@@ -103,7 +101,6 @@ export default function Laporan() {
                   <td className="td text-mut">{getCableInfo(r.cable_type)?.label ?? "-"}</td>
                   <td className="td font-semibold">{r.core}</td>
                   <td className="td"><Badge cls={STATUS[r.status].cls}>{STATUS[r.status].label}</Badge></td>
-                  <td className="td text-mut">{r.customer || "-"}</td>
                   <td className="td text-mut">{r.destination || "-"}</td>
                 </tr>
               ))}

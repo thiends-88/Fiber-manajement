@@ -8,12 +8,17 @@ export default function Topologi() {
   const [tree, setTree] = useState(null);
   const [links, setLinks] = useState([]);
   const [feederPorts, setFeederPorts] = useState([]);
+  const [splitters, setSplitters] = useState([]);
 
   useEffect(() => {
-    Promise.all([api("/api/olts"), api("/api/odcs"), api("/api/odps"), api("/api/links"), api("/api/feeder-ports")])
-      .then(([olts, odcs, odps, lk, f]) => {
+    Promise.all([
+      api("/api/olts"), api("/api/odcs"), api("/api/odps"), api("/api/links"),
+      api("/api/feeder-ports"), api("/api/splitters"),
+    ])
+      .then(([olts, odcs, odps, lk, f, s]) => {
         setLinks(lk);
         setFeederPorts(f);
+        setSplitters(s);
         setTree(
           olts.map((o) => ({
             ...o,
@@ -80,6 +85,11 @@ export default function Topologi() {
                           })()}
                           {" · "}Core ⇄ ODP: {links.filter((l) => l.odc_id === odc.id).length} sambungan
                         </div>
+                        {splitters.filter((sp) => sp.odc_id === odc.id).length > 0 && (
+                          <div className="text-[11px] text-violet-300/90">
+                            Splitter: {splitters.filter((sp) => sp.odc_id === odc.id).map((sp) => `${sp.name} (${sp.ratio})`).join(", ")}
+                          </div>
+                        )}
                       </div>
                       <div className="text-xs text-mut">{odc.odps.length} ODP</div>
                     </button>
@@ -101,6 +111,11 @@ export default function Topologi() {
                                 {links.filter((l) => l.odp_id === odp.id).length > 0 &&
                                   `Core dari ${odc.name}: ${links.filter((l) => l.odp_id === odp.id).map((l) => `C${l.odc_core}→C${l.odp_core}`).join(", ")}`}
                               </div>
+                              {splitters.filter((sp) => sp.odp_id === odp.id).length > 0 && (
+                                <div className="text-[11px] text-violet-300/90">
+                                  Splitter: {splitters.filter((sp) => sp.odp_id === odp.id).map((sp) => `${sp.name} (${sp.ratio})`).join(", ")}
+                                </div>
+                              )}
                             </div>
                           </div>
                         ))}

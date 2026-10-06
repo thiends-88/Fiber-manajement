@@ -4,6 +4,7 @@ import { api } from "../lib/api.js";
 import { useAuth } from "../lib/auth.jsx";
 import { Card, Empty, Field, Modal, PageHeader, Toast, useToast } from "../components/ui.jsx";
 import CoreManager from "../components/CoreManager.jsx";
+import SplitterManager from "../components/SplitterManager.jsx";
 import { CABLE_TYPES, getCableInfo } from "../lib/fiber.js";
 
 const empty = { name: "", olt_id: "", location: "", cable_type: CABLE_TYPES[0].value, feeder_port_ids: [], notes: "" };
@@ -161,6 +162,12 @@ export default function Odcs() {
             cableType={selected.cable_type}
             title={`Core OLT → ${selected.name}`}
           />
+        </Card>
+      )}
+
+      {selected && (
+        <Card className="mt-6">
+          <SplitterManager parentType="odc" parentId={selected.id} title={`Splitter di ${selected.name}`} />
         </Card>
       )}
 
