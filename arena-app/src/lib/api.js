@@ -1,22 +1,33 @@
 // Klien API sederhana — semua request relatif terhadap origin yang sama,
 // diteruskan oleh Vite proxy ke server SQLite lokal (server.mjs).
 //
-// Autentikasi berlapis untuk lingkungan preview (iframe pihak ketiga):
-//   1. Cookie HttpOnly "fiberops_token" — otomatis dikirim browser,
-//      tetap bekerja walau header Authorization dihapus oleh proxy.
-//   2. Header Authorization dari localStorage — cadangan bila cookie diblokir.
-// Semua akses localStorage dibungkus try/catch agar tidak fatal bila
-// storage diblokir di iframe preview.
+// Autentikasi 3 kanal (lingkungan preview bisa memblokir cookie & storage):
+//   1. Parameter URL "?token=..."  — paling tahan banting, selalu diteruskan proxy
+//   2. Cookie HttpOnly "fiberops_token" — bila cookie diizinkan browser
+//   3. Header Authorization — bila header tidak dihapus proxy
+// Token terutama disimpan di MEMORI halaman (module variable), dengan
+// localStorage sebagai cadangan best-effort. Semua akses storage aman.
 const TOKEN_KEY = "fiberops_arena_token";
 const USER_KEY = "fiberops_arena_user";
 
-export function getToken() {
+let memToken = null;
+
+export function setMemToken(t) {
+  memToken = t;
+}
+
+function getTokenFromStorage() {
   try {
     return localStorage.getItem(TOKEN_KEY);
   } catch {
     return null;
   }
 }
+
+export function getToken() {
+  return memToken || getTokenFromStorage();
+}
+
 export function getStoredUser() {
   try {
     return JSON.parse(localStorage.getItem(USER_KEY) || "null");
@@ -24,7 +35,9 @@ export function getStoredUser() {
     return null;
   }
 }
+
 export function clearSession() {
+  memToken = null;
   try {
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(USER_KEY);
@@ -41,10 +54,14 @@ export class ApiError extends Error {
 }
 
 export async function api(path, { method = "GET", body } = {}) {
-  const headers = { "Content-Type": "application/json" };
   const token = getToken();
-  if (token) headers["Authorization"] = `Bearer ${token}`;
-  const res = await fetch(path, {
+  let url = path;
+  const headers = { "Content-Type": "application/json" };
+  if (token) {
+    url += (path.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(token);
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+  const res = await fetch(url, {
     method,
     headers,
     credentials: "same-origin",
@@ -59,8 +76,10 @@ export async function api(path, { method = "GET", body } = {}) {
   if (!res.ok) {
     if (res.status === 401 && !path.startsWith("/api/login") && path !== "/api/me") {
       clearSession();
+      // Redirect lembut lewat event SPA — tanpa reload penuh, supaya token
+      // di memori tidak hilang dan tidak terjadi loop.
       try {
-        if (!location.pathname.startsWith("/login")) location.href = "/login";
+        window.dispatchEvent(new CustomEvent("arena:unauthorized"));
       } catch {
         /* abaikan */
       }
@@ -72,11 +91,12 @@ export async function api(path, { method = "GET", body } = {}) {
 
 export async function login(email, password) {
   const data = await api("/api/login", { method: "POST", body: { email, password } });
+  memToken = data.token; // kanal utama: memori + param URL
   try {
     localStorage.setItem(TOKEN_KEY, data.token);
     localStorage.setItem(USER_KEY, JSON.stringify(data.user));
   } catch {
-    /* storage diblokir — cookie tetap membawa sesi */
+    /* storage diblokir — sesi tetap jalan lewat memori */
   }
   return data.user;
 }

@@ -131,7 +131,8 @@ function send(req, res, status, body) {
     extraCookies = null;
   }
   res.writeHead(status, headers);
-  console.log(`[arena-api] ${req.method} ${req.url} -> ${status}`);
+  const safeUrl = req.url.replace(/([?&]token=)[^&]+/g, "$1***");
+  console.log(`[arena-api] ${req.method} ${safeUrl} -> ${status}${authVia ? ` (auth:${authVia})` : ""}`);
   res.end(JSON.stringify(body));
 }
 
@@ -162,11 +163,21 @@ function parseCookies(req) {
   return out;
 }
 
-function authUser(req) {
+let authVia = null;
+function authUser(req, url) {
   const header = req.headers["authorization"] || "";
-  const token = header.startsWith("Bearer ")
-    ? header.slice(7)
-    : parseCookies(req)["fiberops_token"] || null;
+  let token = null;
+  authVia = null;
+  if (header.startsWith("Bearer ")) {
+    token = header.slice(7);
+    authVia = "header";
+  } else if (parseCookies(req)["fiberops_token"]) {
+    token = parseCookies(req)["fiberops_token"];
+    authVia = "cookie";
+  } else if (url && url.searchParams.get("token")) {
+    token = url.searchParams.get("token");
+    authVia = "param";
+  }
   if (!token) return null;
   const row = db
     .prepare(
@@ -275,14 +286,16 @@ const server = http.createServer(async (req, res) => {
     if (!p.startsWith("/api/")) return send(req, res, 404, { error: "Not found" });
 
     // ---------------- Semua /api/* di bawah ini butuh login ----------------
-    const user = authUser(req);
+    const user = authUser(req, url);
     if (!user) return send(req, res, 401, { error: "Silakan login terlebih dahulu" });
 
     if (p === "/api/logout" && method === "POST") {
-      const user0 = authUser(req);
+      const user0 = authUser(req, url);
       if (user0) {
         const header = req.headers["authorization"] || "";
-        const token = header.startsWith("Bearer ") ? header.slice(7) : parseCookies(req)["fiberops_token"];
+        const token = header.startsWith("Bearer ")
+          ? header.slice(7)
+          : parseCookies(req)["fiberops_token"] || url.searchParams.get("token");
         if (token) db.prepare("DELETE FROM sessions WHERE token = ?").run(token);
       }
       setCookie("fiberops_token=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0");

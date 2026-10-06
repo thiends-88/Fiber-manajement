@@ -7,7 +7,7 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(() => getStoredUser());
 
   // Boot recovery: bila localStorage kosong/terblokir (mis. iframe preview),
-  // coba pulihkan sesi dari cookie HttpOnly lewat /api/me.
+  // coba pulihkan sesi dari cookie/token lewat /api/me.
   useEffect(() => {
     if (user) return;
     let cancelled = false;
@@ -22,6 +22,13 @@ export function AuthProvider({ children }) {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Bila ada request yang 401, keluar dengan lembut (tanpa reload penuh).
+  useEffect(() => {
+    const onUnauthorized = () => setUser(null);
+    window.addEventListener("arena:unauthorized", onUnauthorized);
+    return () => window.removeEventListener("arena:unauthorized", onUnauthorized);
   }, []);
 
   async function signIn(email, password) {
