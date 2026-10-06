@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowRight, GitBranch, Link2, Pencil, Plus, Trash2, Workflow } from "lucide-react";
+import { ArrowRight, Gauge, GitBranch, Link2, Pencil, Plus, Trash2, Workflow } from "lucide-react";
 import { api } from "../lib/api.js";
 import { useAuth } from "../lib/auth.jsx";
 import { Badge, Card, Empty, Field, Modal, PageHeader, Toast, useToast } from "../components/ui.jsx";
 import { STATUS, colorForCoreInCable, coresPerTube, getCableInfo } from "../lib/fiber.js";
+import { GPON, SPLITTER_LOSS, buildPowerBudget, fmtDb, fmtDbm } from "../lib/budget.js";
 
 function CoreChip({ core, cableType, small }) {
   const color = colorForCoreInCable(core, coresPerTube(cableType));
@@ -91,6 +92,15 @@ export default function Mapping() {
   );
 
   const cable = odc?.cable_type;
+
+  // Anggaran daya per jalur (ODC terpilih)
+  const budget = useMemo(
+    () =>
+      buildPowerBudget({ olts, odcs, odps, splitters, links, feederPorts }).filter(
+        (r) => r.odcId === Number(odcId),
+      ),
+    [olts, odcs, odps, splitters, links, feederPorts, odcId],
+  );
   const powerCount = feederCores.filter((c) => c.power_dbm).length;
 
   function openAdd() {
@@ -267,6 +277,75 @@ export default function Mapping() {
                 );
               })}
             </div>
+          </Card>
+
+          {/* Anggaran daya per jalur */}
+          <Card>
+            <div className="mb-1 flex flex-wrap items-center gap-2">
+              <Gauge size={16} className="text-emerald-400" />
+              <h2 className="font-semibold">Anggaran Daya per Jalur (Power Budget)</h2>
+              <span className="text-xs text-mut">
+                daya tiba = TX SFP di OLT − redaman kabel feeder − redaman splitter
+              </span>
+            </div>
+            <p className="mb-3 text-[11px] text-mut">
+              Redaman splitter dipakai standar: {Object.entries(SPLITTER_LOSS).map(([r, v]) => `${r} = ${v} dB`).join(" · ")}. Patokan GPON kelas B+:
+              sensitivitas {GPON.sensitivity} dBm, aman bila hasil ≥ {GPON.sensitivity + GPON.warnMargin} dBm.
+            </p>
+
+            {budget.length === 0 ? (
+              <Empty text="ODC ini belum punya ODP tujuan." />
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead className="border-b border-line">
+                    <tr>
+                      <th className="th">ODP</th>
+                      <th className="th">Jalur</th>
+                      <th className="th">TX SFP</th>
+                      <th className="th">Total redaman</th>
+                      <th className="th">Tiba di ODP</th>
+                      <th className="th">Ujung akhir</th>
+                      <th className="th">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {budget.map((b) => (
+                      <tr key={b.odpId} className="border-b border-line-soft align-top last:border-0">
+                        <td className="td">
+                          <div className="font-medium">{b.odpName}</div>
+                          {b.topology && <Badge cls="bg-violet-500/15 text-violet-300">Topologi {b.topology}</Badge>}
+                        </td>
+                        <td className="td max-w-[280px] text-[11px] text-mut">{b.route}</td>
+                        <td className="td text-mut">
+                          {b.tx === null ? <span className="text-amber-300">belum diisi</span> : fmtDbm(b.tx)}
+                          {b.txLabel && <div className="text-[10px] text-mut-soft">{b.txLabel}</div>}
+                        </td>
+                        <td className="td text-[11px] text-mut">
+                          <div>
+                            {b.lossTotal === 0 ? "belum ada data" : fmtDb(b.lossTotal)}
+                            {b.chain.length > 0 && <span> · splitter {b.chain.map((c) => `${c.ratio} (${c.loss})`).join(" + ")}</span>}
+                            {b.insideLoss > 0 && <span> + dalam ODP {b.insideSplitters.map((c) => `${c.ratio} (${c.loss})`).join(" + ")}</span>}
+                            {!b.viaSplitter && b.cableLoss > 0 && <span> + kabel {b.cableLoss}</span>}
+                            {b.feederLoss > 0 && <span> + feeder {b.feederLoss}</span>}
+                          </div>
+                          {b.tx !== null && b.lossTotal > 0 && (
+                            <div className="font-medium text-ink">
+                              {b.tx} − {b.lossTotal} = {fmtDbm(b.finalOut)}
+                            </div>
+                          )}
+                        </td>
+                        <td className="td text-mut">{b.routeKnown ? fmtDbm(b.arrival) : "—"}</td>
+                        <td className="td font-medium">{b.routeKnown ? fmtDbm(b.finalOut) : "—"}</td>
+                        <td className="td">
+                          <Badge cls={b.status.cls}>{b.status.label}</Badge>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </Card>
 
           {/* Jalur splitter bertingkat */}

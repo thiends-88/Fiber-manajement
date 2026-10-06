@@ -414,6 +414,10 @@ export default function Olts() {
               <input className="input" type="number" step="0.1" value={portForm.rx_power} onChange={(e) => setPortForm({ ...portForm, rx_power: e.target.value })} placeholder="mis. -18.4" />
             </Field>
           </div>
+          <p className="text-[11px] text-mut">
+            TX tipikal SFP GPON: +1,5…+5 dBm (kelas B+), sampai +7 dBm (kelas C+). Nilai TX ini dipakai untuk
+            menghitung anggaran daya jalur di menu Mapping Core &amp; Topologi.
+          </p>
           <Field label="Catatan">
             <textarea className="input" rows={2} value={portForm.notes} onChange={(e) => setPortForm({ ...portForm, notes: e.target.value })} />
           </Field>

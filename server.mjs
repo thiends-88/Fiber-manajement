@@ -159,6 +159,7 @@ db.exec(`
 // ---------------------------------------------------------------------------
 const MIGRATIONS = [
   "ALTER TABLE core_assignments ADD COLUMN power_dbm TEXT",
+  "ALTER TABLE odcs ADD COLUMN feeder_loss_db REAL",
   "ALTER TABLE olt_ports ADD COLUMN tx_power TEXT",
   "ALTER TABLE olt_ports ADD COLUMN rx_power TEXT",
   `CREATE TABLE IF NOT EXISTS splitters (
@@ -232,6 +233,8 @@ if (!feederTableExisted) {
     ins.run(odc1.id, 1, odp1.id, 1, 0.15, "Closure Perempatan");
     ins.run(odc1.id, 2, odp1.id, 2, 0.2, null);
   }
+  db.prepare("UPDATE odcs SET feeder_loss_db=COALESCE(feeder_loss_db,0.5) WHERE name='ODC-001'").run();
+  db.prepare("UPDATE odcs SET feeder_loss_db=COALESCE(feeder_loss_db,0.7) WHERE name='ODC-002'").run();
   db.prepare("UPDATE core_assignments SET power_dbm=COALESCE(power_dbm,'-19.5') WHERE odc_id=? AND core=1 AND source='olt_to_odc'").run(odc1.id);
   db.prepare("UPDATE core_assignments SET power_dbm=COALESCE(power_dbm,'-20.2') WHERE odc_id=? AND core=2 AND source='olt_to_odc'").run(odc1.id);
   db.prepare("UPDATE olt_ports SET tx_power=COALESCE(tx_power,'2.5'), rx_power=COALESCE(rx_power,'-18.4') WHERE notes LIKE '%Feeder ODC-001%'").run();
@@ -400,10 +403,10 @@ function seedIfEmpty() {
   const p6 = insPort.run(card3, 1, "GPON", "HW23C0001", "active", "Feeder ODC-002", "2.6", "-19.1", ts, ts).lastInsertRowid;
 
   const insOdc = db.prepare(
-    "INSERT INTO odcs (olt_id, name, location, cable_type, notes, created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
+    "INSERT INTO odcs (olt_id, name, location, cable_type, feeder_loss_db, notes, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
   );
-  const odc1 = insOdc.run(olt1, "ODC-001", "Perempatan Kota", "24_core_4_tube", "Closure utama", ts, ts).lastInsertRowid;
-  const odc2 = insOdc.run(olt2, "ODC-002", "Kawasan Industri", "48_core_8_tube", null, ts, ts).lastInsertRowid;
+  const odc1 = insOdc.run(olt1, "ODC-001", "Perempatan Kota", "24_core_4_tube", 0.5, "Closure utama", ts, ts).lastInsertRowid;
+  const odc2 = insOdc.run(olt2, "ODC-002", "Kawasan Industri", "48_core_8_tube", 0.7, null, ts, ts).lastInsertRowid;
 
   const insOdp = db.prepare(
     "INSERT INTO odps (odc_id, name, location, cable_type, notes, created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
@@ -651,8 +654,8 @@ const server = http.createServer(async (req, res) => {
       if (!b.name?.trim() || !b.olt_id || !b.cable_type) return send(req, res, 400, { error: "Nama, OLT, dan tipe kabel wajib diisi" });
       const badFeeder = checkFeederPorts(b.olt_id, b.feeder_port_ids);
       if (badFeeder) return send(req, res, 400, { error: badFeeder });
-      const r = db.prepare("INSERT INTO odcs (olt_id, name, location, cable_type, notes) VALUES (?,?,?,?,?)")
-        .run(b.olt_id, b.name.trim(), b.location || null, b.cable_type, b.notes || null);
+      const r = db.prepare("INSERT INTO odcs (olt_id, name, location, cable_type, feeder_loss_db, notes) VALUES (?,?,?,?,?,?)")
+        .run(b.olt_id, b.name.trim(), b.location || null, b.cable_type, b.feeder_loss_db ?? null, b.notes || null);
       syncFeederPorts(r.lastInsertRowid, b.feeder_port_ids);
       return send(req, res, 201, db.prepare("SELECT * FROM odcs WHERE id=?").get(r.lastInsertRowid));
     }
@@ -665,8 +668,8 @@ const server = http.createServer(async (req, res) => {
         const oltId = b.olt_id ?? cur?.olt_id;
         const badFeeder = checkFeederPorts(oltId, b.feeder_port_ids);
         if (badFeeder) return send(req, res, 400, { error: badFeeder });
-        db.prepare("UPDATE odcs SET olt_id=?, name=?, location=?, cable_type=?, notes=?, updated_at=? WHERE id=?")
-          .run(oltId, b.name, b.location || null, b.cable_type, b.notes || null, now(), id);
+        db.prepare("UPDATE odcs SET olt_id=?, name=?, location=?, cable_type=?, feeder_loss_db=?, notes=?, updated_at=? WHERE id=?")
+          .run(oltId, b.name, b.location || null, b.cable_type, b.feeder_loss_db ?? null, b.notes || null, now(), id);
         if (b.feeder_port_ids !== undefined) syncFeederPorts(id, b.feeder_port_ids);
         return send(req, res, 200, db.prepare("SELECT * FROM odcs WHERE id=?").get(id));
       }

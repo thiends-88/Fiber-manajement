@@ -182,14 +182,19 @@ export default function Topologi() {
       </div>
 
       {view === "diagram" ? (
-        <TopologiDiagram
-          olts={data.olts}
-          odcs={data.odcs}
-          odps={data.odps}
-          splitters={data.splitters}
-          links={data.links}
-          feederPorts={data.feederPorts}
-        />
+        <div>
+          <TopologiDiagram
+            olts={data.olts}
+            odcs={data.odcs}
+            odps={data.odps}
+            splitters={data.splitters}
+            links={data.links}
+            feederPorts={data.feederPorts}
+          />
+          <p className="mt-2 text-[11px] text-mut">
+            Klik simpul ODP pada diagram untuk melihat anggaran daya jalurnya (TX − redaman = daya tiba).
+          </p>
+        </div>
       ) : (
         <TreeView
           olts={data.olts}

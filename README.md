@@ -17,16 +17,25 @@ CSV, dan manajemen user berbasis peran.
 4. **Core** — penugasan core per kabel dengan warna standar TIA/EIA-598
    (12 warna per tube), status idle/terpakai/reserved/rusak, pelanggan,
    tujuan, dan **daya optik terukur (dBm)** per core.
-5. **Splitter bertingkat (baru)** — pilih rasio **1:2 / 1:4 / 1:8 / 1:16 / 1:32**,
+5. **Anggaran daya per jalur (power budget)** — otomatis menghitung daya
+   sampai ODP: **TX SFP di OLT (dBm) − redaman kabel feeder − redaman splitter
+   sepanjang jalur = daya di ujung**. Contoh: TX +7 dBm dengan topologi 4:8:8
+   (1:4 + 1:8 + 1:8 = 28,3 dB) → 7 − 28,3 = **−21,3 dBm**.
+   Tabel redaman splitter yang dipakai: 1:2 = 3,6 · 1:4 = 7,3 · 1:8 = 10,5 ·
+   1:16 = 13,8 · 1:32 = 17,0 dB. Status otomatis dibandingkan sensitivitas GPON
+   kelas B+ (−28 dBm): **aman**, **mendekati batas**, atau **gagal**.
+   Bisa dilihat di menu **Mapping Core** (tabel per ODP) dan dengan mengklik
+   simpul ODP pada **Topologi**.
+6. **Splitter bertingkat** — pilih rasio **1:2 / 1:4 / 1:8 / 1:16 / 1:32**,
    ditempatkan **di dalam ODC maupun di dalam ODP**. Setiap output splitter bisa
    diarahkan **ke ODP** atau **di-cascade ke splitter lain**, sehingga topologi
    bertingkat seperti **4:8:8** (OLT → SPL 1:4 → SPL 1:8 → ODP dengan SPL 1:8)
    bisa dimodelkan penuh. Aplikasi otomatis membaca rantainya sebagai "Topologi 4:8:8".
-6. **Mapping Core** — peta jalur **end-to-end**: dari port feeder OLT →
+7. **Mapping Core** — peta jalur **end-to-end**: dari port feeder OLT →
    core ODC → core ODP → pelanggan, lengkap dengan redaman (dB), daya per titik,
    dan penanda core mana yang sudah/belum tersambung. Satu core hanya boleh
    memiliki satu sambungan (dijaga di sisi server).
-7. **Topologi** — halaman dengan **dua tampilan**:
+8. **Topologi** — halaman dengan **dua tampilan**:
    * **Diagram** — gambar alur jaringan dari kiri ke kanan: OLT → port feeder →
      ODC → splitter (termasuk cascade bertingkat) → ODP → splitter di dalam ODP.
      Garis diberi label (porta feeder, core masuk, out N, dan `C1→C2` untuk
@@ -34,7 +43,7 @@ CSV, dan manajemen user berbasis peran.
      menyorot seluruh jalurnya, bisa zoom, dan label bisa disembunyikan.
      ODP yang belum dipetakan core ditandai garis putus-putus.
    * **Daftar** — pohon OLT → ODC → ODP yang bisa dibuka-tutup (tampilan lama).
-8. **Laporan** — ekspor CSV + manajemen user berbasis peran (admin/operator/user).
+9. **Laporan** — ekspor CSV + manajemen user berbasis peran (admin/operator/user).
 
 **Database sederhana versi Arena:** SQLite bawaan Node (`node:sqlite`) dalam
 satu file `data/fiberops.db`. Tidak ada Supabase, tidak ada koneksi keluar.
@@ -101,6 +110,7 @@ lihat **[DEPLOY-PROXMOX.md](DEPLOY-PROXMOX.md)**. Tersedia juga `Dockerfile`.
 | --- | --- |
 | `server.mjs` | API HTTP + skema & seed SQLite (tanpa dependensi npm), termasuk migrasi otomatis DB lama |
 | `src/lib/fiber.js` | Konstanta kabel, warna core TIA/EIA-598, status |
+| `src/lib/budget.js` | Perhitungan anggaran daya per jalur (murni, bisa diuji via node) |
 | `src/lib/topology.js` | Perhitungan tata letak diagram topologi (murni, bisa diuji via node) |
 | `src/components/TopologiDiagram.jsx` | Diagram SVG interaktif OLT → ODC → splitter → ODP |
 | `src/pages/Mapping.jsx` | Peta jalur core OLT → ODC → ODP + jalur splitter bertingkat |
