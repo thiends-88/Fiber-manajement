@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Zap } from "lucide-react";
 import { useAuth } from "../lib/auth.jsx";
@@ -15,6 +15,11 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+
+  // Sudah login (mis. sesi dipulihkan dari cookie) → langsung masuk.
+  useEffect(() => {
+    if (user) navigate("/", { replace: true });
+  }, [user, navigate]);
 
   async function submit(e) {
     e.preventDefault();

@@ -120,8 +120,18 @@ db.exec(`
 const hash = (pw) => crypto.createHash("sha256").update(pw).digest("hex");
 const now = () => new Date().toISOString();
 
-function send(res, status, body) {
-  res.writeHead(status, { "Content-Type": "application/json" });
+let extraCookies = null;
+function setCookie(value) {
+  extraCookies = value;
+}
+function send(req, res, status, body) {
+  const headers = { "Content-Type": "application/json" };
+  if (extraCookies) {
+    headers["Set-Cookie"] = extraCookies;
+    extraCookies = null;
+  }
+  res.writeHead(status, headers);
+  console.log(`[arena-api] ${req.method} ${req.url} -> ${status}`);
   res.end(JSON.stringify(body));
 }
 
@@ -143,10 +153,21 @@ function readBody(req) {
   });
 }
 
+function parseCookies(req) {
+  const out = {};
+  for (const part of String(req.headers["cookie"] || "").split(";")) {
+    const i = part.indexOf("=");
+    if (i > -1) out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+  }
+  return out;
+}
+
 function authUser(req) {
   const header = req.headers["authorization"] || "";
-  if (!header.startsWith("Bearer ")) return null;
-  const token = header.slice(7);
+  const token = header.startsWith("Bearer ")
+    ? header.slice(7)
+    : parseCookies(req)["fiberops_token"] || null;
+  if (!token) return null;
   const row = db
     .prepare(
       "SELECT u.id, u.email, u.full_name, u.role FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ?",
@@ -236,38 +257,44 @@ const server = http.createServer(async (req, res) => {
   const method = req.method;
 
   try {
-    if (p === "/healthz") return send(res, 200, { ok: true, service: "fiberops-arena-api" });
+    if (p === "/healthz") return send(req, res, 200, { ok: true, service: "fiberops-arena-api" });
 
     // ---------------- Login (tanpa auth) ----------------
     if (p === "/api/login" && method === "POST") {
       const body = await readBody(req);
       const user = db.prepare("SELECT * FROM users WHERE email = ?").get(String(body.email || "").toLowerCase().trim());
       if (!user || user.password_hash !== hash(String(body.password || ""))) {
-        return send(res, 401, { error: "Email atau password salah" });
+        return send(req, res, 401, { error: "Email atau password salah" });
       }
       const token = crypto.randomBytes(24).toString("base64url");
       db.prepare("INSERT INTO sessions (token, user_id) VALUES (?,?)").run(token, user.id);
-      return send(res, 200, { token, user: { id: user.id, email: user.email, full_name: user.full_name, role: user.role } });
+      setCookie(`fiberops_token=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800`);
+      return send(req, res, 200, { token, user: { id: user.id, email: user.email, full_name: user.full_name, role: user.role } });
     }
 
-    if (!p.startsWith("/api/")) return send(res, 404, { error: "Not found" });
+    if (!p.startsWith("/api/")) return send(req, res, 404, { error: "Not found" });
 
     // ---------------- Semua /api/* di bawah ini butuh login ----------------
     const user = authUser(req);
-    if (!user) return send(res, 401, { error: "Silakan login terlebih dahulu" });
+    if (!user) return send(req, res, 401, { error: "Silakan login terlebih dahulu" });
 
     if (p === "/api/logout" && method === "POST") {
-      const token = req.headers["authorization"].slice(7);
-      db.prepare("DELETE FROM sessions WHERE token = ?").run(token);
-      return send(res, 200, { ok: true });
+      const user0 = authUser(req);
+      if (user0) {
+        const header = req.headers["authorization"] || "";
+        const token = header.startsWith("Bearer ") ? header.slice(7) : parseCookies(req)["fiberops_token"];
+        if (token) db.prepare("DELETE FROM sessions WHERE token = ?").run(token);
+      }
+      setCookie("fiberops_token=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0");
+      return send(req, res, 200, { ok: true });
     }
 
-    if (p === "/api/me" && method === "GET") return send(res, 200, { user });
+    if (p === "/api/me" && method === "GET") return send(req, res, 200, { user });
 
     const canWrite = user.role === "admin" || user.role === "operator";
     const isAdmin = user.role === "admin";
     if (method !== "GET" && !canWrite) {
-      return send(res, 403, { error: "Hanya admin/operator yang dapat mengubah data" });
+      return send(req, res, 403, { error: "Hanya admin/operator yang dapat mengubah data" });
     }
 
     // ---------------- Dashboard ----------------
@@ -275,7 +302,7 @@ const server = http.createServer(async (req, res) => {
       const c = (sql) => db.prepare(sql).get().n;
       const cores = db.prepare("SELECT status, COUNT(*) AS n FROM core_assignments GROUP BY status").all();
       const byStatus = Object.fromEntries(cores.map((r) => [r.status, r.n]));
-      return send(res, 200, {
+      return send(req, res, 200, {
         olts: c("SELECT COUNT(*) n FROM olts"),
         cards: c("SELECT COUNT(*) n FROM olt_cards"),
         ports: c("SELECT COUNT(*) n FROM olt_ports"),
@@ -293,14 +320,14 @@ const server = http.createServer(async (req, res) => {
     // ---------------- OLT ----------------
     if (p === "/api/olts" && method === "GET") {
       const rows = db.prepare("SELECT o.*, (SELECT COUNT(*) FROM olt_cards c WHERE c.olt_id=o.id) AS card_count, (SELECT COUNT(*) FROM odcs d WHERE d.olt_id=o.id) AS odc_count FROM olts o ORDER BY o.name").all();
-      return send(res, 200, rows);
+      return send(req, res, 200, rows);
     }
     if (p === "/api/olts" && method === "POST") {
       const b = await readBody(req);
-      if (!b.name?.trim()) return send(res, 400, { error: "Nama OLT wajib diisi" });
+      if (!b.name?.trim()) return send(req, res, 400, { error: "Nama OLT wajib diisi" });
       const r = db.prepare("INSERT INTO olts (name, olt_type, location, ip, notes) VALUES (?,?,?,?,?)")
         .run(b.name.trim(), b.olt_type || null, b.location || null, b.ip || null, b.notes || null);
-      return send(res, 201, db.prepare("SELECT * FROM olts WHERE id=?").get(r.lastInsertRowid));
+      return send(req, res, 201, db.prepare("SELECT * FROM olts WHERE id=?").get(r.lastInsertRowid));
     }
     let m = p.match(/^\/api\/olts\/(\d+)$/);
     if (m) {
@@ -309,11 +336,11 @@ const server = http.createServer(async (req, res) => {
         const b = await readBody(req);
         db.prepare("UPDATE olts SET name=?, olt_type=?, location=?, ip=?, notes=?, updated_at=? WHERE id=?")
           .run(b.name, b.olt_type || null, b.location || null, b.ip || null, b.notes || null, now(), id);
-        return send(res, 200, db.prepare("SELECT * FROM olts WHERE id=?").get(id));
+        return send(req, res, 200, db.prepare("SELECT * FROM olts WHERE id=?").get(id));
       }
       if (method === "DELETE") {
         db.prepare("DELETE FROM olts WHERE id=?").run(id);
-        return send(res, 200, { ok: true });
+        return send(req, res, 200, { ok: true });
       }
     }
 
@@ -323,14 +350,14 @@ const server = http.createServer(async (req, res) => {
       const rows = oltId
         ? db.prepare("SELECT * FROM olt_cards WHERE olt_id=? ORDER BY slot").all(Number(oltId))
         : db.prepare("SELECT * FROM olt_cards ORDER BY olt_id, slot").all();
-      return send(res, 200, rows);
+      return send(req, res, 200, rows);
     }
     if (p === "/api/cards" && method === "POST") {
       const b = await readBody(req);
-      if (!b.olt_id || !b.slot) return send(res, 400, { error: "olt_id dan slot wajib diisi" });
+      if (!b.olt_id || !b.slot) return send(req, res, 400, { error: "olt_id dan slot wajib diisi" });
       const r = db.prepare("INSERT INTO olt_cards (olt_id, slot, card_type, label, port_count, notes) VALUES (?,?,?,?,?,?)")
         .run(b.olt_id, b.slot, b.card_type || "OTHER", b.label || null, b.port_count || 8, b.notes || null);
-      return send(res, 201, db.prepare("SELECT * FROM olt_cards WHERE id=?").get(r.lastInsertRowid));
+      return send(req, res, 201, db.prepare("SELECT * FROM olt_cards WHERE id=?").get(r.lastInsertRowid));
     }
     m = p.match(/^\/api\/cards\/(\d+)$/);
     if (m) {
@@ -339,11 +366,11 @@ const server = http.createServer(async (req, res) => {
         const b = await readBody(req);
         db.prepare("UPDATE olt_cards SET slot=?, card_type=?, label=?, port_count=?, notes=?, updated_at=? WHERE id=?")
           .run(b.slot, b.card_type, b.label || null, b.port_count || 8, b.notes || null, now(), id);
-        return send(res, 200, db.prepare("SELECT * FROM olt_cards WHERE id=?").get(id));
+        return send(req, res, 200, db.prepare("SELECT * FROM olt_cards WHERE id=?").get(id));
       }
       if (method === "DELETE") {
         db.prepare("DELETE FROM olt_cards WHERE id=?").run(id);
-        return send(res, 200, { ok: true });
+        return send(req, res, 200, { ok: true });
       }
     }
 
@@ -353,14 +380,14 @@ const server = http.createServer(async (req, res) => {
       const rows = cardId
         ? db.prepare("SELECT * FROM olt_ports WHERE card_id=? ORDER BY port").all(Number(cardId))
         : db.prepare("SELECT * FROM olt_ports ORDER BY card_id, port").all();
-      return send(res, 200, rows);
+      return send(req, res, 200, rows);
     }
     if (p === "/api/ports" && method === "POST") {
       const b = await readBody(req);
-      if (!b.card_id || !b.port) return send(res, 400, { error: "card_id dan nomor port wajib diisi" });
+      if (!b.card_id || !b.port) return send(req, res, 400, { error: "card_id dan nomor port wajib diisi" });
       const r = db.prepare("INSERT INTO olt_ports (card_id, port, sfp, serial, status, notes) VALUES (?,?,?,?,?,?)")
         .run(b.card_id, b.port, b.sfp || null, b.serial || null, b.status || "inactive", b.notes || null);
-      return send(res, 201, db.prepare("SELECT * FROM olt_ports WHERE id=?").get(r.lastInsertRowid));
+      return send(req, res, 201, db.prepare("SELECT * FROM olt_ports WHERE id=?").get(r.lastInsertRowid));
     }
     m = p.match(/^\/api\/ports\/(\d+)$/);
     if (m) {
@@ -369,11 +396,11 @@ const server = http.createServer(async (req, res) => {
         const b = await readBody(req);
         db.prepare("UPDATE olt_ports SET port=?, sfp=?, serial=?, status=?, notes=?, updated_at=? WHERE id=?")
           .run(b.port, b.sfp || null, b.serial || null, b.status || "inactive", b.notes || null, now(), id);
-        return send(res, 200, db.prepare("SELECT * FROM olt_ports WHERE id=?").get(id));
+        return send(req, res, 200, db.prepare("SELECT * FROM olt_ports WHERE id=?").get(id));
       }
       if (method === "DELETE") {
         db.prepare("DELETE FROM olt_ports WHERE id=?").run(id);
-        return send(res, 200, { ok: true });
+        return send(req, res, 200, { ok: true });
       }
     }
 
@@ -384,14 +411,14 @@ const server = http.createServer(async (req, res) => {
           (SELECT COUNT(*) FROM odps p WHERE p.odc_id=d.id) AS odp_count,
           (SELECT COUNT(*) FROM core_assignments ca WHERE ca.odc_id=d.id AND ca.source='olt_to_odc') AS core_count
         FROM odcs d JOIN olts o ON o.id=d.olt_id ORDER BY d.name`).all();
-      return send(res, 200, rows);
+      return send(req, res, 200, rows);
     }
     if (p === "/api/odcs" && method === "POST") {
       const b = await readBody(req);
-      if (!b.name?.trim() || !b.olt_id || !b.cable_type) return send(res, 400, { error: "Nama, OLT, dan tipe kabel wajib diisi" });
+      if (!b.name?.trim() || !b.olt_id || !b.cable_type) return send(req, res, 400, { error: "Nama, OLT, dan tipe kabel wajib diisi" });
       const r = db.prepare("INSERT INTO odcs (olt_id, name, location, cable_type, notes) VALUES (?,?,?,?,?)")
         .run(b.olt_id, b.name.trim(), b.location || null, b.cable_type, b.notes || null);
-      return send(res, 201, db.prepare("SELECT * FROM odcs WHERE id=?").get(r.lastInsertRowid));
+      return send(req, res, 201, db.prepare("SELECT * FROM odcs WHERE id=?").get(r.lastInsertRowid));
     }
     m = p.match(/^\/api\/odcs\/(\d+)$/);
     if (m) {
@@ -400,11 +427,11 @@ const server = http.createServer(async (req, res) => {
         const b = await readBody(req);
         db.prepare("UPDATE odcs SET olt_id=?, name=?, location=?, cable_type=?, notes=?, updated_at=? WHERE id=?")
           .run(b.olt_id, b.name, b.location || null, b.cable_type, b.notes || null, now(), id);
-        return send(res, 200, db.prepare("SELECT * FROM odcs WHERE id=?").get(id));
+        return send(req, res, 200, db.prepare("SELECT * FROM odcs WHERE id=?").get(id));
       }
       if (method === "DELETE") {
         db.prepare("DELETE FROM odcs WHERE id=?").run(id);
-        return send(res, 200, { ok: true });
+        return send(req, res, 200, { ok: true });
       }
     }
 
@@ -414,14 +441,14 @@ const server = http.createServer(async (req, res) => {
         SELECT p.*, d.name AS odc_name,
           (SELECT COUNT(*) FROM core_assignments ca WHERE ca.odp_id=p.id AND ca.source='odc_to_odp') AS core_count
         FROM odps p JOIN odcs d ON d.id=p.odc_id ORDER BY p.name`).all();
-      return send(res, 200, rows);
+      return send(req, res, 200, rows);
     }
     if (p === "/api/odps" && method === "POST") {
       const b = await readBody(req);
-      if (!b.name?.trim() || !b.odc_id || !b.cable_type) return send(res, 400, { error: "Nama, ODC, dan tipe kabel wajib diisi" });
+      if (!b.name?.trim() || !b.odc_id || !b.cable_type) return send(req, res, 400, { error: "Nama, ODC, dan tipe kabel wajib diisi" });
       const r = db.prepare("INSERT INTO odps (odc_id, name, location, cable_type, notes) VALUES (?,?,?,?,?)")
         .run(b.odc_id, b.name.trim(), b.location || null, b.cable_type, b.notes || null);
-      return send(res, 201, db.prepare("SELECT * FROM odps WHERE id=?").get(r.lastInsertRowid));
+      return send(req, res, 201, db.prepare("SELECT * FROM odps WHERE id=?").get(r.lastInsertRowid));
     }
     m = p.match(/^\/api\/odps\/(\d+)$/);
     if (m) {
@@ -430,11 +457,11 @@ const server = http.createServer(async (req, res) => {
         const b = await readBody(req);
         db.prepare("UPDATE odps SET odc_id=?, name=?, location=?, cable_type=?, notes=?, updated_at=? WHERE id=?")
           .run(b.odc_id, b.name, b.location || null, b.cable_type, b.notes || null, now(), id);
-        return send(res, 200, db.prepare("SELECT * FROM odps WHERE id=?").get(id));
+        return send(req, res, 200, db.prepare("SELECT * FROM odps WHERE id=?").get(id));
       }
       if (method === "DELETE") {
         db.prepare("DELETE FROM odps WHERE id=?").run(id);
-        return send(res, 200, { ok: true });
+        return send(req, res, 200, { ok: true });
       }
     }
 
@@ -449,14 +476,14 @@ const server = http.createServer(async (req, res) => {
       } else {
         rows = db.prepare("SELECT * FROM core_assignments ORDER BY source, core").all();
       }
-      return send(res, 200, rows);
+      return send(req, res, 200, rows);
     }
     if (p === "/api/cores" && method === "POST") {
       const b = await readBody(req);
-      if (!b.source || !b.core) return send(res, 400, { error: "source dan nomor core wajib diisi" });
+      if (!b.source || !b.core) return send(req, res, 400, { error: "source dan nomor core wajib diisi" });
       const r = db.prepare("INSERT INTO core_assignments (source, odc_id, odp_id, core, status, customer, destination, notes) VALUES (?,?,?,?,?,?,?,?)")
         .run(b.source, b.odc_id || null, b.odp_id || null, b.core, b.status || "idle", b.customer || null, b.destination || null, b.notes || null);
-      return send(res, 201, db.prepare("SELECT * FROM core_assignments WHERE id=?").get(r.lastInsertRowid));
+      return send(req, res, 201, db.prepare("SELECT * FROM core_assignments WHERE id=?").get(r.lastInsertRowid));
     }
     m = p.match(/^\/api\/cores\/(\d+)$/);
     if (m) {
@@ -465,11 +492,11 @@ const server = http.createServer(async (req, res) => {
         const b = await readBody(req);
         db.prepare("UPDATE core_assignments SET status=?, customer=?, destination=?, notes=?, updated_at=? WHERE id=?")
           .run(b.status || "idle", b.customer || null, b.destination || null, b.notes || null, now(), id);
-        return send(res, 200, db.prepare("SELECT * FROM core_assignments WHERE id=?").get(id));
+        return send(req, res, 200, db.prepare("SELECT * FROM core_assignments WHERE id=?").get(id));
       }
       if (method === "DELETE") {
         db.prepare("DELETE FROM core_assignments WHERE id=?").run(id);
-        return send(res, 200, { ok: true });
+        return send(req, res, 200, { ok: true });
       }
     }
 
@@ -486,28 +513,28 @@ const server = http.createServer(async (req, res) => {
         LEFT JOIN odps pd ON pd.id = ca.odp_id
         LEFT JOIN odcs d2 ON d2.id = pd.odc_id
         ORDER BY ca.source, ca.core`).all();
-      return send(res, 200, rows);
+      return send(req, res, 200, rows);
     }
 
     // ---------------- Users (admin only) ----------------
     if (p.startsWith("/api/users")) {
-      if (!isAdmin) return send(res, 403, { error: "Hanya admin yang dapat mengelola user" });
+      if (!isAdmin) return send(req, res, 403, { error: "Hanya admin yang dapat mengelola user" });
 
       if (p === "/api/users" && method === "GET") {
-        return send(res, 200, db.prepare("SELECT id, email, full_name, role, created_at FROM users ORDER BY created_at").all());
+        return send(req, res, 200, db.prepare("SELECT id, email, full_name, role, created_at FROM users ORDER BY created_at").all());
       }
       if (p === "/api/users" && method === "POST") {
         const b = await readBody(req);
-        if (!b.email?.includes("@")) return send(res, 400, { error: "Email tidak valid" });
-        if (!b.full_name?.trim()) return send(res, 400, { error: "Nama wajib diisi" });
-        if (String(b.password || "").length < 8) return send(res, 400, { error: "Password minimal 8 karakter" });
-        if (!["admin", "operator", "user"].includes(b.role)) return send(res, 400, { error: "Peran tidak valid" });
+        if (!b.email?.includes("@")) return send(req, res, 400, { error: "Email tidak valid" });
+        if (!b.full_name?.trim()) return send(req, res, 400, { error: "Nama wajib diisi" });
+        if (String(b.password || "").length < 8) return send(req, res, 400, { error: "Password minimal 8 karakter" });
+        if (!["admin", "operator", "user"].includes(b.role)) return send(req, res, 400, { error: "Peran tidak valid" });
         if (db.prepare("SELECT id FROM users WHERE email=?").get(b.email.toLowerCase().trim())) {
-          return send(res, 409, { error: "Email sudah terdaftar" });
+          return send(req, res, 409, { error: "Email sudah terdaftar" });
         }
         const r = db.prepare("INSERT INTO users (email, password_hash, full_name, role) VALUES (?,?,?,?)")
           .run(b.email.toLowerCase().trim(), hash(b.password), b.full_name.trim(), b.role);
-        return send(res, 201, db.prepare("SELECT id, email, full_name, role, created_at FROM users WHERE id=?").get(r.lastInsertRowid));
+        return send(req, res, 201, db.prepare("SELECT id, email, full_name, role, created_at FROM users WHERE id=?").get(r.lastInsertRowid));
       }
       m = p.match(/^\/api\/users\/(\d+)$/);
       if (m) {
@@ -515,23 +542,23 @@ const server = http.createServer(async (req, res) => {
         if (method === "PATCH") {
           const b = await readBody(req);
           if (id === user.id && b.role && b.role !== "admin") {
-            return send(res, 400, { error: "Admin tidak dapat menurunkan peran akunnya sendiri" });
+            return send(req, res, 400, { error: "Admin tidak dapat menurunkan peran akunnya sendiri" });
           }
           db.prepare("UPDATE users SET full_name=?, role=? WHERE id=?").run(b.full_name, b.role, id);
-          return send(res, 200, db.prepare("SELECT id, email, full_name, role, created_at FROM users WHERE id=?").get(id));
+          return send(req, res, 200, db.prepare("SELECT id, email, full_name, role, created_at FROM users WHERE id=?").get(id));
         }
         if (method === "DELETE") {
-          if (id === user.id) return send(res, 400, { error: "Tidak bisa menghapus akun sendiri" });
+          if (id === user.id) return send(req, res, 400, { error: "Tidak bisa menghapus akun sendiri" });
           db.prepare("DELETE FROM users WHERE id=?").run(id);
-          return send(res, 200, { ok: true });
+          return send(req, res, 200, { ok: true });
         }
       }
     }
 
-    return send(res, 404, { error: `Endpoint tidak ditemukan: ${method} ${p}` });
+    return send(req, res, 404, { error: `Endpoint tidak ditemukan: ${method} ${p}` });
   } catch (e) {
     console.error("[arena-api] error:", e);
-    return send(res, 500, { error: e.message });
+    return send(req, res, 500, { error: e.message });
   }
 });
 

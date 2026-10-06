@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { useAuth } from "./lib/auth.jsx";
+import { getStoredUser } from "./lib/api.js";
 import Layout from "./components/Layout.jsx";
 import Login from "./pages/Login.jsx";
 import Dashboard from "./pages/Dashboard.jsx";
@@ -12,7 +13,9 @@ import Users from "./pages/Users.jsx";
 
 function Protected({ children }) {
   const { user } = useAuth();
-  if (!user) return <Navigate to="/login" replace />;
+  // Fallback ke localStorage: menghindari redirect keliru saat state context
+  // belum ter-commit (mis. tepat setelah login).
+  if (!user && !getStoredUser()) return <Navigate to="/login" replace />;
   return <Layout>{children}</Layout>;
 }
 

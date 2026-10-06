@@ -1,10 +1,28 @@
-import { createContext, useContext, useState } from "react";
-import { getStoredUser, login as apiLogin, logout as apiLogout } from "./api.js";
+import { createContext, useContext, useEffect, useState } from "react";
+import { api, getStoredUser, login as apiLogin, logout as apiLogout } from "./api.js";
 
 const AuthCtx = createContext(null);
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(() => getStoredUser());
+
+  // Boot recovery: bila localStorage kosong/terblokir (mis. iframe preview),
+  // coba pulihkan sesi dari cookie HttpOnly lewat /api/me.
+  useEffect(() => {
+    if (user) return;
+    let cancelled = false;
+    api("/api/me")
+      .then((d) => {
+        if (!cancelled && d?.user) setUser(d.user);
+      })
+      .catch(() => {
+        /* belum login — abaikan */
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function signIn(email, password) {
     const u = await apiLogin(email, password);

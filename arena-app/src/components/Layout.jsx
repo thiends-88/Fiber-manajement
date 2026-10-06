@@ -11,6 +11,7 @@ import {
   Zap,
 } from "lucide-react";
 import { useAuth } from "../lib/auth.jsx";
+import { getStoredUser } from "../lib/api.js";
 
 const NAV = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
@@ -22,7 +23,8 @@ const NAV = [
 ];
 
 export default function Layout({ children }) {
-  const { user, signOut } = useAuth();
+  const { user: ctxUser, signOut } = useAuth();
+  const user = ctxUser ?? getStoredUser();
   const navigate = useNavigate();
   const nav = user?.role === "admin" ? [...NAV, { to: "/users", label: "User", icon: UsersIcon }] : NAV;
 
