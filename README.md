@@ -26,8 +26,14 @@ CSV, dan manajemen user berbasis peran.
    core ODC → core ODP → pelanggan, lengkap dengan redaman (dB), daya per titik,
    dan penanda core mana yang sudah/belum tersambung. Satu core hanya boleh
    memiliki satu sambungan (dijaga di sisi server).
-7. **Topologi** — struktur pohon OLT → ODC → ODP dengan info port feeder
-   (bisa banyak per ODC), splitter, dan pasangan core yang tersambung.
+7. **Topologi** — halaman dengan **dua tampilan**:
+   * **Diagram** — gambar alur jaringan dari kiri ke kanan: OLT → port feeder →
+     ODC → splitter (termasuk cascade bertingkat) → ODP → splitter di dalam ODP.
+     Garis diberi label (porta feeder, core masuk, out N, dan `C1→C2` untuk
+     sambungan core yang diwarnai sesuai standar TIA/EIA-598). Klik simpul untuk
+     menyorot seluruh jalurnya, bisa zoom, dan label bisa disembunyikan.
+     ODP yang belum dipetakan core ditandai garis putus-putus.
+   * **Daftar** — pohon OLT → ODC → ODP yang bisa dibuka-tutup (tampilan lama).
 8. **Laporan** — ekspor CSV + manajemen user berbasis peran (admin/operator/user).
 
 **Database sederhana versi Arena:** SQLite bawaan Node (`node:sqlite`) dalam
@@ -95,6 +101,8 @@ lihat **[DEPLOY-PROXMOX.md](DEPLOY-PROXMOX.md)**. Tersedia juga `Dockerfile`.
 | --- | --- |
 | `server.mjs` | API HTTP + skema & seed SQLite (tanpa dependensi npm), termasuk migrasi otomatis DB lama |
 | `src/lib/fiber.js` | Konstanta kabel, warna core TIA/EIA-598, status |
+| `src/lib/topology.js` | Perhitungan tata letak diagram topologi (murni, bisa diuji via node) |
+| `src/components/TopologiDiagram.jsx` | Diagram SVG interaktif OLT → ODC → splitter → ODP |
 | `src/pages/Mapping.jsx` | Peta jalur core OLT → ODC → ODP + jalur splitter bertingkat |
 | `src/components/SplitterManager.jsx` | Kelola splitter (rasio, input core) & arah tiap output (ODP / cascade) |
 | `src/lib/api.js` | Klien fetch + sesi token |
