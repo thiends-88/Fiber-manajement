@@ -128,7 +128,9 @@ export default function SplitterManager({ parentType, parentId, title }) {
         <h2 className="flex items-center gap-2 text-sm font-semibold">
           <GitBranch size={16} className="text-violet-400" />
           {title || `Splitter di ${parentType === "odc" ? "ODC" : "ODP"} ini`}
-          <span className="text-xs font-normal text-mut">— output bisa ke ODP atau di-cascade ke splitter lain</span>
+          <span className="text-xs font-normal text-mut">
+            — output bisa langsung ke ODP, atau di-cascade (disambung ke splitter berikutnya)
+          </span>
         </h2>
         {canWrite && (
           <button className="btn btn-primary" onClick={openAdd}>
@@ -274,22 +276,30 @@ export default function SplitterManager({ parentType, parentId, title }) {
               </Field>
             )}
             {outForm.target_type === "splitter" && (
-              <Field label="Pilih splitter lanjutan">
-                <select
-                  className="input" required
-                  value={outForm.target_id}
-                  onChange={(e) => setOutForm({ ...outForm, target_id: e.target.value })}
-                >
-                  <option value="" disabled>Pilih splitter…</option>
-                  {allSplitters
-                    .filter((x) => x.id !== outModal.splitter.id)
-                    .map((x) => (
-                      <option key={x.id} value={x.id}>
-                        {x.name} ({x.ratio}) — {x.odc_name || x.odp_name || "-"}
-                      </option>
-                    ))}
-                </select>
-              </Field>
+              <>
+                <p className="rounded-lg border border-line-soft bg-panel2 px-3 py-2 text-[11px] leading-relaxed text-mut">
+                  <span className="font-medium text-ink">Cascade</span> = output splitter ini disambung ke{" "}
+                  <span className="font-medium text-ink">masukan splitter berikutnya</span> (splitter bertingkat),
+                  bukan langsung ke ODP. Contoh topologi <span className="font-medium text-ink">4:8:8</span>:
+                  1:4 → 1:8 → 1:8. Redaman menumpuk, jadi tetap perhitungkan budget daya.
+                </p>
+                <Field label="Pilih splitter lanjutan">
+                  <select
+                    className="input" required
+                    value={outForm.target_id}
+                    onChange={(e) => setOutForm({ ...outForm, target_id: e.target.value })}
+                  >
+                    <option value="" disabled>Pilih splitter…</option>
+                    {allSplitters
+                      .filter((x) => x.id !== outModal.splitter.id)
+                      .map((x) => (
+                        <option key={x.id} value={x.id}>
+                          {x.name} ({x.ratio}) — {x.odc_name || x.odp_name || "-"}
+                        </option>
+                      ))}
+                  </select>
+                </Field>
+              </>
             )}
             <Field label="Catatan">
               <input className="input" value={outForm.notes} onChange={(e) => setOutForm({ ...outForm, notes: e.target.value })} />
