@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "../lib/auth.jsx";
 import { getStoredUser } from "../lib/api.js";
-import ThemePicker from "./ThemePicker.jsx";
+import ThemeMenu from "./ThemeMenu.jsx";
 
 const NAV = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
@@ -57,10 +57,7 @@ export default function Layout({ children }) {
           ))}
         </nav>
         <div className="border-t border-line p-3">
-          <div className="mb-3">
-            <ThemePicker />
-          </div>
-          <div className="mb-2 border-t border-line px-2 pt-3">
+          <div className="mb-2 px-2">
             <div className="truncate text-sm font-medium">{user?.full_name}</div>
             <div className="truncate text-xs text-mut">
               {user?.email} · {user?.role}
@@ -77,7 +74,13 @@ export default function Layout({ children }) {
           </button>
         </div>
       </aside>
-      <main className="ml-60 flex-1 p-6">{children}</main>
+      <main className="ml-60 flex-1">
+        <header className="topbar sticky top-0 z-30 flex h-12 items-center justify-between gap-3 px-6">
+          <span className="text-xs text-mut">Manajemen jaringan fiber optik</span>
+          <ThemeMenu />
+        </header>
+        <div className="p-6">{children}</div>
+      </main>
     </div>
   );
 }

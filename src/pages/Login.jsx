@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Zap } from "lucide-react";
 import { useAuth } from "../lib/auth.jsx";
-import ThemePicker from "../components/ThemePicker.jsx";
+import ThemeMenu from "../components/ThemeMenu.jsx";
 
 const DEMO_ACCOUNTS = [
   { label: "Admin", email: "admin@arena.test", password: "Arena123!" },
@@ -38,6 +38,9 @@ export default function Login() {
 
   return (
     <div className="flex min-h-screen items-center justify-center px-4">
+      <div className="fixed right-4 top-4 z-40">
+        <ThemeMenu />
+      </div>
       <div className="w-full max-w-sm">
         <div className="card p-6">
           <div className="mb-5 text-center">
@@ -87,9 +90,6 @@ export default function Login() {
           </div>
         </div>
         <div className="mt-4 flex flex-col items-center gap-2">
-          <div className="w-full">
-            <ThemePicker showLabel />
-          </div>
           <p className="text-center text-xs text-mut">
             Database SQLite lokal · tidak terhubung ke Supabase
           </p>

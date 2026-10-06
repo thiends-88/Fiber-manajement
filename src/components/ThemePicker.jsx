@@ -9,8 +9,8 @@ const MODE_ICONS = {
   auto: MonitorSmartphone,
 };
 
-/** Pemilih tampilan: mode (terang/gelap/pekat/auto) + warna aksen. */
-export default function ThemePicker({ showLabel = false, compact = false }) {
+/** Isi pengaturan tampilan: pilih mode (terang/gelap/pekat/auto) + warna aksen. */
+export default function ThemePicker({ compact = false }) {
   const [prefs, setPrefs] = useState(getPrefs);
 
   // Ikut berubah otomatis saat mode "auto" dan sistem berganti tema
@@ -32,13 +32,10 @@ export default function ThemePicker({ showLabel = false, compact = false }) {
   }
 
   return (
-    <div className={compact ? "" : "space-y-3"}>
+    <div className={compact ? "space-y-2" : "space-y-3"}>
       <div>
         <div className="mb-1.5 flex items-center gap-1.5 text-[11px] text-mut">
-          <Sun size={12} /> Mode tampilan
-          <span className="ml-auto font-medium text-ink">
-            {MODES.find((m) => m.id === prefs.mode)?.name}
-          </span>
+          <Sun size={12} /> Mode
         </div>
         <div className="flex gap-1.5">
           {MODES.map((m) => {
@@ -57,16 +54,16 @@ export default function ThemePicker({ showLabel = false, compact = false }) {
             );
           })}
         </div>
+        <div className="mt-1 text-[10px] text-mut">
+          {MODES.find((m) => m.id === prefs.mode)?.desc}
+        </div>
       </div>
 
       <div>
         <div className="mb-1.5 flex items-center gap-1.5 text-[11px] text-mut">
           <Palette size={12} /> Warna aksen
-          <span className="ml-auto font-medium text-ink">
-            {ACCENTS.find((a) => a.id === prefs.accent)?.name}
-          </span>
         </div>
-        <div className={`flex gap-2 ${showLabel ? "justify-center" : ""}`}>
+        <div className="flex gap-2">
           {ACCENTS.map((a) => (
             <button
               key={a.id}
@@ -78,6 +75,9 @@ export default function ThemePicker({ showLabel = false, compact = false }) {
               style={{ backgroundImage: `linear-gradient(135deg, ${a.swatch[0]}, ${a.swatch[1]})` }}
             />
           ))}
+        </div>
+        <div className="mt-1 text-[10px] text-mut">
+          {ACCENTS.find((a) => a.id === prefs.accent)?.desc}
         </div>
       </div>
     </div>

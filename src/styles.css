@@ -35,6 +35,7 @@
   --color-ink: #e9edf6;
   --color-mut: #8d97ad;
   --color-mut-soft: #7c869c;
+  --color-topbar: #0b0d15d9;
 
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
 }
@@ -53,6 +54,7 @@ html[data-mode="terang"] {
   --color-ink: #0f172a;
   --color-mut: #5b6a82;
   --color-mut-soft: #71809a;
+  --color-topbar: #ffffffd9;
 }
 
 /* --- Pekat: hitam pekat (OLED friendly) --- */
@@ -67,6 +69,7 @@ html[data-mode="pekat"] {
   --color-ink: #f2f4f9;
   --color-mut: #878fa1;
   --color-mut-soft: #757d8f;
+  --color-topbar: #000000d9;
 }
 
 /* ============================ AKSEN ====================================== */
@@ -281,6 +284,27 @@ html[data-mode="terang"] .toast-err {
   background: #fef2f2;
   color: #b91c1c;
   border-color: #ef444455;
+}
+
+/* --------------------- bilah atas & menu tampilan ------------------------ */
+.topbar {
+  background-color: var(--color-topbar);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--color-line);
+}
+.pop {
+  animation: pop-in 0.14s ease-out;
+}
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 /* ----------------------------- pilihan tema ------------------------------ */

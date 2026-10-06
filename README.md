@@ -36,8 +36,11 @@ Hapus file tersebut untuk mereset ke data demo.
 
 ## Tampilan (mode + warna)
 
-Tampilan diatur dari **sidebar** (atau halaman login) dan tersimpan otomatis
-di browser. Dua pilihan yang bebas dikombinasikan:
+Tampilan diatur dari **tombol di pojok kanan atas** (tersedia juga di halaman
+login). Panel tertutup secara bawaan — hanya berupa ikon kecil — sehingga tidak
+mengganggu tampilan aplikasi; klik untuk membuka, klik di luar atau tekan Esc
+untuk menutup. Pilihan tersimpan otomatis di browser. Dua pilihan yang bebas
+dikombinasikan:
 
 **Mode tampilan**
 
