@@ -34,3 +34,6 @@ dist-ssr
 .env
 *.json
 .env
+
+# Arena mode local data
+arena/db.json
