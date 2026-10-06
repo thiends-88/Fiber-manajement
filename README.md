@@ -10,18 +10,19 @@ CSV, dan manajemen user berbasis peran.
 
 1. **OLT** — perangkat, card (slot/tipe), port GPON + status, SFP/serial,
    serta **daya TX/RX (dBm)** per port.
-2. **ODC** — induk OLT, tipe kabel, lokasi, **sumber power** (PLN/baterai/solar),
-   dan **port feeder OLT** yang menyuplai ODC tersebut.
-3. **ODP** — induk ODC, tipe kabel, lokasi, **sumber power**.
+2. **ODC** — induk OLT, tipe kabel, lokasi, dan **port feeder OLT** yang
+   menyuplai ODC tersebut — **boleh lebih dari satu port** (satu ODC bisa
+   ditarik dari beberapa port feeder). Port feeder wajib milik OLT induk ODC.
+3. **ODP** — induk ODC, tipe kabel, lokasi.
 4. **Core** — penugasan core per kabel dengan warna standar TIA/EIA-598
    (12 warna per tube), status idle/terpakai/reserved/rusak, pelanggan,
    tujuan, dan **daya optik terukur (dBm)** per core.
-5. **Mapping Core (baru)** — peta jalur **end-to-end**: dari port feeder OLT →
+5. **Mapping Core** — peta jalur **end-to-end**: dari port feeder OLT →
    core ODC → core ODP → pelanggan, lengkap dengan redaman (dB), daya per titik,
    dan penanda core mana yang sudah/belum tersambung. Satu core hanya boleh
    memiliki satu sambungan (dijaga di sisi server).
-6. **Topologi** — struktur pohon OLT → ODC → ODP dengan info feeder, power,
-   dan pasangan core yang tersambung.
+6. **Topologi** — struktur pohon OLT → ODC → ODP dengan info port feeder
+   (bisa banyak per ODC) dan pasangan core yang tersambung.
 7. **Laporan** — ekspor CSV + manajemen user berbasis peran (admin/operator/user).
 
 **Database sederhana versi Arena:** SQLite bawaan Node (`node:sqlite`) dalam
@@ -65,7 +66,7 @@ lihat **[DEPLOY-PROXMOX.md](DEPLOY-PROXMOX.md)**. Tersedia juga `Dockerfile`.
 | File | Isi |
 | --- | --- |
 | `server.mjs` | API HTTP + skema & seed SQLite (tanpa dependensi npm), termasuk migrasi otomatis DB lama |
-| `src/lib/fiber.js` | Konstanta kabel, warna core TIA/EIA-598, sumber power, status |
+| `src/lib/fiber.js` | Konstanta kabel, warna core TIA/EIA-598, status |
 | `src/pages/Mapping.jsx` | Peta jalur core OLT → ODC → ODP + editor sambungan core |
 | `src/lib/api.js` | Klien fetch + sesi token |
 | `src/components/CoreManager.jsx` | Grid core interaktif (dipakai ODC & ODP) |

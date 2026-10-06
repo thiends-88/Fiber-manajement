@@ -31,7 +31,7 @@ export default function Mapping() {
   const [odps, setOdps] = useState([]);
   const [olts, setOlts] = useState([]);
   const [allCores, setAllCores] = useState([]);
-  const [ports, setPorts] = useState([]);
+  const [feederPorts, setFeederPorts] = useState([]);
   const [odcId, setOdcId] = useState("");
   const [links, setLinks] = useState([]);
   const [modal, setModal] = useState(null);
@@ -41,9 +41,9 @@ export default function Mapping() {
 
   const load = useCallback(async () => {
     const [d, p, o, c, pt] = await Promise.all([
-      api("/api/odcs"), api("/api/odps"), api("/api/olts"), api("/api/cores"), api("/api/ports"),
+      api("/api/odcs"), api("/api/odps"), api("/api/olts"), api("/api/cores"), api("/api/feeder-ports"),
     ]);
-    setPorts(pt);
+    setFeederPorts(pt);
     setOdcs(d);
     setOdps(p);
     setOlts(o);
@@ -75,7 +75,11 @@ export default function Mapping() {
   );
   const feederByCore = useMemo(() => Object.fromEntries(feederCores.map((c) => [c.core, c])), [feederCores]);
   const linkedOdcCores = useMemo(() => new Set(links.map((l) => l.odc_core)), [links]);
-  const feederPort = useMemo(() => ports.find((p) => p.id === odc?.feeder_port_id), [ports, odc]);
+  const feederPortsForOdc = useMemo(
+    () => feederPorts.filter((f) => f.odc_id === Number(odcId)),
+    [feederPorts, odcId],
+  );
+  const feederLabel = (f) => `${f.card_label || `Card ${f.slot}`} port ${f.port}`;
 
   // Core ODC → ODP untuk tiap ODP (dipakai untuk fallback tampilan)
   const odpCores = useMemo(
@@ -155,12 +159,13 @@ export default function Mapping() {
             <div className="flex flex-wrap gap-2 pb-1 text-xs">
               <Badge cls="bg-cyan-500/15 text-cyan-300">OLT: {odc.olt_name}{odcOlts?.olt_type ? ` (${odcOlts.olt_type})` : ""}</Badge>
               <Badge cls="bg-slate-500/15 text-slate-300">
-                Feeder: {odc.feeder_card_label ? `${odc.feeder_card_label} ` : ""}{odc.feeder_port ? `port ${odc.feeder_port}` : "belum diatur"}
-                {feederPort?.tx_power || feederPort?.rx_power
-                  ? ` · ${feederPort.tx_power || "-"}/${feederPort.rx_power || "-"} dBm`
-                  : ""}
+                Feeder ({feederPortsForOdc.length}):{" "}
+                {feederPortsForOdc.length === 0
+                  ? "belum diatur"
+                  : feederPortsForOdc
+                      .map((f) => `${feederLabel(f)}${f.tx_power || f.rx_power ? ` (TX ${f.tx_power || "-"}/RX ${f.rx_power || "-"} dBm)` : ""}`)
+                      .join(" · ")}
               </Badge>
-              <Badge cls="bg-violet-500/15 text-violet-300">Power: {odc.power_source || "belum diatur"}</Badge>
               <Badge cls="bg-emerald-500/15 text-emerald-400">Core ODC: {feederCores.length} terdata · {links.length} tersambung</Badge>
               <Badge cls="bg-amber-500/15 text-amber-300">Daya optik: {powerCount}/{feederCores.length} core</Badge>
             </div>
@@ -194,7 +199,9 @@ export default function Mapping() {
                       <div className="rounded-lg border border-line bg-panel px-2.5 py-1.5 text-xs">
                         <div className="font-semibold">{odc.olt_name}</div>
                         <div className="text-mut">
-                          {odc.feeder_card_label ? `${odc.feeder_card_label} ` : ""}{odc.feeder_port ? `port ${odc.feeder_port}` : "port feeder belum diatur"}
+                          {feederPortsForOdc.length === 0
+                            ? "port feeder belum diatur"
+                            : feederPortsForOdc.map(feederLabel).join(" · ")}
                         </div>
                       </div>
                       <Arrow />
@@ -224,7 +231,6 @@ export default function Mapping() {
                         <div className="text-mut">{feeder?.destination || "Tujuan belum diisi"}</div>
                       </div>
                       <div className="ml-auto flex items-center gap-1">
-                        <Badge cls="bg-violet-500/15 text-violet-300">Power ODP: {odp?.power_source || "-"}</Badge>
                         {canWrite && (
                           <>
                             <button
@@ -315,7 +321,6 @@ export default function Mapping() {
                         <span className="font-semibold">{p.name}</span>
                         <span className="text-mut">{p.location || "-"}</span>
                         <Badge cls="bg-amber-500/15 text-amber-300">{getCableInfo(p.cable_type)?.label ?? p.cable_type}</Badge>
-                        <Badge cls="bg-violet-500/15 text-violet-300">Power: {p.power_source || "-"}</Badge>
                       </div>
                       <div className="mt-2 flex flex-wrap items-center gap-2">
                         <span className="text-mut">Core terpakai dari ODC:</span>

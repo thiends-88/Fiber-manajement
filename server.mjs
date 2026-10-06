@@ -160,9 +160,6 @@ const MIGRATIONS = [
   "ALTER TABLE core_assignments ADD COLUMN power_dbm TEXT",
   "ALTER TABLE olt_ports ADD COLUMN tx_power TEXT",
   "ALTER TABLE olt_ports ADD COLUMN rx_power TEXT",
-  "ALTER TABLE odcs ADD COLUMN power_source TEXT",
-  "ALTER TABLE odcs ADD COLUMN feeder_port_id INTEGER REFERENCES olt_ports(id) ON DELETE SET NULL",
-  "ALTER TABLE odps ADD COLUMN power_source TEXT",
   `CREATE TABLE IF NOT EXISTS core_links (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     odc_id INTEGER NOT NULL REFERENCES odcs(id) ON DELETE CASCADE,
@@ -181,16 +178,32 @@ for (const stmt of MIGRATIONS) {
   try { db.exec(stmt); } catch { /* kolom/tabel sudah ada */ }
 }
 
+// Port feeder ODC: satu ODC boleh punya BEBERAPA port feeder dari OLT induknya
+const feederTableExisted = !!db
+  .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='odc_feeder_ports'")
+  .get();
+db.exec(`CREATE TABLE IF NOT EXISTS odc_feeder_ports (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  odc_id INTEGER NOT NULL REFERENCES odcs(id) ON DELETE CASCADE,
+  port_id INTEGER NOT NULL REFERENCES olt_ports(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(odc_id, port_id)
+)`);
+if (!feederTableExisted) {
+  // Database lama hanya menyimpan satu feeder_port_id per ODC — pindahkan ke tabel baru
+  try {
+    db.exec(
+      "INSERT OR IGNORE INTO odc_feeder_ports (odc_id, port_id) SELECT id, feeder_port_id FROM odcs WHERE feeder_port_id IS NOT NULL",
+    );
+  } catch { /* kolom feeder_port_id tidak ada (database baru) */ }
+}
+
 // Lengkapi database demo lama dengan info feeder/power/sambungan (hanya baris demo)
 (function backfillDemoExtras() {
   const odc1 = db.prepare("SELECT id FROM odcs WHERE name='ODC-001'").get();
   const odc2 = db.prepare("SELECT id FROM odcs WHERE name='ODC-002'").get();
   const odp1 = db.prepare("SELECT id FROM odps WHERE name='ODP-001'").get();
   if (!odc1 || !odc2 || !odp1) return;
-  db.prepare("UPDATE odps SET power_source=COALESCE(power_source,'PLN') WHERE name='ODP-001'").run();
-  db.prepare("UPDATE odps SET power_source=COALESCE(power_source,'PLN + Baterai') WHERE name='ODP-002'").run();
-  db.prepare("UPDATE odcs SET power_source=COALESCE(power_source,'PLN + Baterai'), feeder_port_id=COALESCE(feeder_port_id,(SELECT p.id FROM olt_ports p WHERE p.notes LIKE '%Feeder ODC-001%' LIMIT 1)) WHERE id=?").run(odc1.id);
-  db.prepare("UPDATE odcs SET power_source=COALESCE(power_source,'PLN'), feeder_port_id=COALESCE(feeder_port_id,(SELECT p.id FROM olt_ports p WHERE p.notes LIKE '%Feeder ODC-002%' LIMIT 1)) WHERE id=?").run(odc2.id);
   if (db.prepare("SELECT COUNT(*) n FROM core_links").get().n === 0) {
     const ins = db.prepare("INSERT INTO core_links (odc_id, odc_core, odp_id, odp_core, loss_db, notes) VALUES (?,?,?,?,?,?)");
     ins.run(odc1.id, 1, odp1.id, 1, 0.15, "Closure Perempatan");
@@ -207,6 +220,27 @@ for (const stmt of MIGRATIONS) {
 // ---------------------------------------------------------------------------
 const hash = (pw) => crypto.createHash("sha256").update(pw).digest("hex");
 const now = () => new Date().toISOString();
+
+// Validasi daftar port feeder ODC: boleh banyak, tetapi harus milik OLT induk ODC
+function checkFeederPorts(oltId, ids) {
+  if (!ids || !ids.length) return null;
+  const olt = db.prepare("SELECT name FROM olts WHERE id=?").get(Number(oltId));
+  for (const raw of ids) {
+    const row = db.prepare(
+      "SELECT c.olt_id FROM olt_ports p JOIN olt_cards c ON c.id=p.card_id WHERE p.id=?",
+    ).get(Number(raw));
+    if (!row) return `Port feeder id ${raw} tidak ditemukan`;
+    if (row.olt_id !== Number(oltId)) {
+      return `Port feeder harus milik OLT induk ODC (${olt?.name ?? `OLT #${oltId}`})`;
+    }
+  }
+  return null;
+}
+function syncFeederPorts(odcId, ids) {
+  db.prepare("DELETE FROM odc_feeder_ports WHERE odc_id=?").run(odcId);
+  const ins = db.prepare("INSERT OR IGNORE INTO odc_feeder_ports (odc_id, port_id) VALUES (?,?)");
+  for (const raw of ids || []) ins.run(odcId, Number(raw));
+}
 
 let extraCookies = null;
 function setCookie(value) {
@@ -306,7 +340,7 @@ function seedIfEmpty() {
     "INSERT INTO olt_ports (card_id, port, sfp, serial, status, notes, tx_power, rx_power, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
   );
   const p1 = insPort.run(card1, 1, "XGS-PON", "ZTE23A0001", "active", "Feeder ODC-001", "2.5", "-18.4", ts, ts).lastInsertRowid;
-  insPort.run(card1, 2, "XGS-PON", "ZTE23A0002", "active", null, "2.3", "-19.0", ts, ts);
+  const p2 = insPort.run(card1, 2, "XGS-PON", "ZTE23A0002", "active", null, "2.3", "-19.0", ts, ts).lastInsertRowid;
   insPort.run(card1, 3, null, null, "inactive", null, null, null, ts, ts);
   insPort.run(card2, 1, "GPON", "ZTE23B0001", "active", null, "2.1", "-20.3", ts, ts);
   insPort.run(card2, 2, null, null, "reserved", "Rencana ODC-003", null, null, ts, ts);
@@ -319,10 +353,10 @@ function seedIfEmpty() {
   const odc2 = insOdc.run(olt2, "ODC-002", "Kawasan Industri", "48_core_8_tube", null, ts, ts).lastInsertRowid;
 
   const insOdp = db.prepare(
-    "INSERT INTO odps (odc_id, name, location, cable_type, power_source, notes, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
+    "INSERT INTO odps (odc_id, name, location, cable_type, notes, created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
   );
-  const odp1 = insOdp.run(odc1, "ODP-001", "Jl. Melati RT 03", "12_core_2_tube", "PLN", null, ts, ts).lastInsertRowid;
-  const odp2 = insOdp.run(odc2, "ODP-002", "Perum Griya Asri", "24_core_2_tube", "PLN + Baterai", null, ts, ts).lastInsertRowid;
+  const odp1 = insOdp.run(odc1, "ODP-001", "Jl. Melati RT 03", "12_core_2_tube", null, ts, ts).lastInsertRowid;
+  const odp2 = insOdp.run(odc2, "ODP-002", "Perum Griya Asri", "24_core_2_tube", null, ts, ts).lastInsertRowid;
 
   const FIBER_COLORS = ["Biru","Jingga","Hijau","Coklat","Abu-abu","Putih","Merah","Hitam","Kuning","Ungu","Pink","Aqua"];
   const insCore = db.prepare(
@@ -351,9 +385,11 @@ function seedIfEmpty() {
   insLink.run(odc1, 1, odp1, 1, 0.15, "Closure Perempatan", ts, ts);
   insLink.run(odc1, 2, odp1, 2, 0.2, null, ts, ts);
 
-  // Sumber power & port feeder ODC
-  db.prepare("UPDATE odcs SET power_source=?, feeder_port_id=? WHERE id=?").run("PLN + Baterai", p1, odc1);
-  db.prepare("UPDATE odcs SET power_source=?, feeder_port_id=? WHERE id=?").run("PLN", p6, odc2);
+  // Port feeder ODC — satu ODC boleh beberapa port (contoh: ODC-001 memakai 2 port)
+  const insFeeder = db.prepare("INSERT OR IGNORE INTO odc_feeder_ports (odc_id, port_id) VALUES (?,?)");
+  insFeeder.run(odc1, p1);
+  insFeeder.run(odc1, p2);
+  insFeeder.run(odc2, p6);
   db.prepare("UPDATE core_assignments SET power_dbm='-19.5' WHERE odc_id=? AND core=1 AND source='olt_to_odc'").run(odc1);
   db.prepare("UPDATE core_assignments SET power_dbm='-20.2' WHERE odc_id=? AND core=2 AND source='olt_to_odc'").run(odc1);
 
@@ -528,19 +564,18 @@ const server = http.createServer(async (req, res) => {
         SELECT d.*, o.name AS olt_name,
           (SELECT COUNT(*) FROM odps p WHERE p.odc_id=d.id) AS odp_count,
           (SELECT COUNT(*) FROM core_assignments ca WHERE ca.odc_id=d.id AND ca.source='olt_to_odc') AS core_count,
-          fp.port AS feeder_port, fc.slot AS feeder_slot, fc.label AS feeder_card_label
-        FROM odcs d
-        JOIN olts o ON o.id=d.olt_id
-        LEFT JOIN olt_ports fp ON fp.id=d.feeder_port_id
-        LEFT JOIN olt_cards fc ON fc.id=fp.card_id
-        ORDER BY d.name`).all();
+          (SELECT COUNT(*) FROM odc_feeder_ports fp WHERE fp.odc_id=d.id) AS feeder_count
+        FROM odcs d JOIN olts o ON o.id=d.olt_id ORDER BY d.name`).all();
       return send(req, res, 200, rows);
     }
     if (p === "/api/odcs" && method === "POST") {
       const b = await readBody(req);
       if (!b.name?.trim() || !b.olt_id || !b.cable_type) return send(req, res, 400, { error: "Nama, OLT, dan tipe kabel wajib diisi" });
-      const r = db.prepare("INSERT INTO odcs (olt_id, name, location, cable_type, power_source, feeder_port_id, notes) VALUES (?,?,?,?,?,?,?)")
-        .run(b.olt_id, b.name.trim(), b.location || null, b.cable_type, b.power_source || null, b.feeder_port_id || null, b.notes || null);
+      const badFeeder = checkFeederPorts(b.olt_id, b.feeder_port_ids);
+      if (badFeeder) return send(req, res, 400, { error: badFeeder });
+      const r = db.prepare("INSERT INTO odcs (olt_id, name, location, cable_type, notes) VALUES (?,?,?,?,?)")
+        .run(b.olt_id, b.name.trim(), b.location || null, b.cable_type, b.notes || null);
+      syncFeederPorts(r.lastInsertRowid, b.feeder_port_ids);
       return send(req, res, 201, db.prepare("SELECT * FROM odcs WHERE id=?").get(r.lastInsertRowid));
     }
     m = p.match(/^\/api\/odcs\/(\d+)$/);
@@ -548,8 +583,13 @@ const server = http.createServer(async (req, res) => {
       const id = Number(m[1]);
       if (method === "PATCH") {
         const b = await readBody(req);
-        db.prepare("UPDATE odcs SET olt_id=?, name=?, location=?, cable_type=?, power_source=?, feeder_port_id=?, notes=?, updated_at=? WHERE id=?")
-          .run(b.olt_id, b.name, b.location || null, b.cable_type, b.power_source || null, b.feeder_port_id || null, b.notes || null, now(), id);
+        const cur = db.prepare("SELECT olt_id FROM odcs WHERE id=?").get(id);
+        const oltId = b.olt_id ?? cur?.olt_id;
+        const badFeeder = checkFeederPorts(oltId, b.feeder_port_ids);
+        if (badFeeder) return send(req, res, 400, { error: badFeeder });
+        db.prepare("UPDATE odcs SET olt_id=?, name=?, location=?, cable_type=?, notes=?, updated_at=? WHERE id=?")
+          .run(oltId, b.name, b.location || null, b.cable_type, b.notes || null, now(), id);
+        if (b.feeder_port_ids !== undefined) syncFeederPorts(id, b.feeder_port_ids);
         return send(req, res, 200, db.prepare("SELECT * FROM odcs WHERE id=?").get(id));
       }
       if (method === "DELETE") {
@@ -569,8 +609,8 @@ const server = http.createServer(async (req, res) => {
     if (p === "/api/odps" && method === "POST") {
       const b = await readBody(req);
       if (!b.name?.trim() || !b.odc_id || !b.cable_type) return send(req, res, 400, { error: "Nama, ODC, dan tipe kabel wajib diisi" });
-      const r = db.prepare("INSERT INTO odps (odc_id, name, location, cable_type, power_source, notes) VALUES (?,?,?,?,?,?)")
-        .run(b.odc_id, b.name.trim(), b.location || null, b.cable_type, b.power_source || null, b.notes || null);
+      const r = db.prepare("INSERT INTO odps (odc_id, name, location, cable_type, notes) VALUES (?,?,?,?,?)")
+        .run(b.odc_id, b.name.trim(), b.location || null, b.cable_type, b.notes || null);
       return send(req, res, 201, db.prepare("SELECT * FROM odps WHERE id=?").get(r.lastInsertRowid));
     }
     m = p.match(/^\/api\/odps\/(\d+)$/);
@@ -578,8 +618,8 @@ const server = http.createServer(async (req, res) => {
       const id = Number(m[1]);
       if (method === "PATCH") {
         const b = await readBody(req);
-        db.prepare("UPDATE odps SET odc_id=?, name=?, location=?, cable_type=?, power_source=?, notes=?, updated_at=? WHERE id=?")
-          .run(b.odc_id, b.name, b.location || null, b.cable_type, b.power_source || null, b.notes || null, now(), id);
+        db.prepare("UPDATE odps SET odc_id=?, name=?, location=?, cable_type=?, notes=?, updated_at=? WHERE id=?")
+          .run(b.odc_id, b.name, b.location || null, b.cable_type, b.notes || null, now(), id);
         return send(req, res, 200, db.prepare("SELECT * FROM odps WHERE id=?").get(id));
       }
       if (method === "DELETE") {
@@ -627,6 +667,24 @@ const server = http.createServer(async (req, res) => {
         db.prepare("DELETE FROM core_assignments WHERE id=?").run(id);
         return send(req, res, 200, { ok: true });
       }
+    }
+
+    // ---------------- Port feeder ODC (boleh banyak per ODC) ----------------
+    if (p === "/api/feeder-ports" && method === "GET") {
+      const odcId = url.searchParams.get("odc_id");
+      const base = `
+        SELECT fp.id, fp.odc_id, fp.port_id,
+          o.id AS olt_id, o.name AS olt_name,
+          c.slot, c.label AS card_label,
+          pt.port, pt.sfp, pt.tx_power, pt.rx_power
+        FROM odc_feeder_ports fp
+        JOIN olt_ports pt ON pt.id = fp.port_id
+        JOIN olt_cards c ON c.id = pt.card_id
+        JOIN olts o ON o.id = c.olt_id`;
+      const rows = odcId
+        ? db.prepare(base + " WHERE fp.odc_id=? ORDER BY o.name, c.slot, pt.port").all(Number(odcId))
+        : db.prepare(base + " ORDER BY fp.odc_id, o.name, c.slot, pt.port").all();
+      return send(req, res, 200, rows);
     }
 
     // ---------------- Sambungan core (mapping ODC core <-> ODP core) ----------------

@@ -7,11 +7,13 @@ import { getCableInfo } from "../lib/fiber.js";
 export default function Topologi() {
   const [tree, setTree] = useState(null);
   const [links, setLinks] = useState([]);
+  const [feederPorts, setFeederPorts] = useState([]);
 
   useEffect(() => {
-    Promise.all([api("/api/olts"), api("/api/odcs"), api("/api/odps"), api("/api/links")])
-      .then(([olts, odcs, odps, lk]) => {
+    Promise.all([api("/api/olts"), api("/api/odcs"), api("/api/odps"), api("/api/links"), api("/api/feeder-ports")])
+      .then(([olts, odcs, odps, lk, f]) => {
         setLinks(lk);
+        setFeederPorts(f);
         setTree(
           olts.map((o) => ({
             ...o,
@@ -70,8 +72,12 @@ export default function Topologi() {
                           {getCableInfo(odc.cable_type)?.label ?? odc.cable_type} · {odc.location || "tanpa lokasi"}
                         </div>
                         <div className="text-[11px] text-mut/80">
-                          Feeder: {odc.feeder_card_label ? `${odc.feeder_card_label} ` : ""}{odc.feeder_port ? `port ${odc.feeder_port}` : "belum diatur"}
-                          {" · "}Power: {odc.power_source || "belum diatur"}
+                          Port feeder: {(() => {
+                            const fs = feederPorts.filter((f) => f.odc_id === odc.id);
+                            return fs.length === 0
+                              ? "belum diatur"
+                              : fs.map((f) => `${f.card_label || `Card ${f.slot}`} p${f.port}`).join(", ");
+                          })()}
                           {" · "}Core ⇄ ODP: {links.filter((l) => l.odc_id === odc.id).length} sambungan
                         </div>
                       </div>
@@ -92,9 +98,8 @@ export default function Topologi() {
                                 {getCableInfo(odp.cable_type)?.label ?? odp.cable_type} · {odp.location || "tanpa lokasi"}
                               </div>
                               <div className="text-[11px] text-mut/80">
-                                Power: {odp.power_source || "belum diatur"}
                                 {links.filter((l) => l.odp_id === odp.id).length > 0 &&
-                                  ` · Core dari ${odc.name}: ${links.filter((l) => l.odp_id === odp.id).map((l) => `C${l.odc_core}→C${l.odp_core}`).join(", ")}`}
+                                  `Core dari ${odc.name}: ${links.filter((l) => l.odp_id === odp.id).map((l) => `C${l.odc_core}→C${l.odp_core}`).join(", ")}`}
                               </div>
                             </div>
                           </div>

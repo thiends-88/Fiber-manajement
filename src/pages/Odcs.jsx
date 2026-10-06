@@ -4,9 +4,9 @@ import { api } from "../lib/api.js";
 import { useAuth } from "../lib/auth.jsx";
 import { Card, Empty, Field, Modal, PageHeader, Toast, useToast } from "../components/ui.jsx";
 import CoreManager from "../components/CoreManager.jsx";
-import { CABLE_TYPES, POWER_SOURCES, getCableInfo } from "../lib/fiber.js";
+import { CABLE_TYPES, getCableInfo } from "../lib/fiber.js";
 
-const empty = { name: "", olt_id: "", location: "", cable_type: CABLE_TYPES[0].value, power_source: "", feeder_port_id: "", notes: "" };
+const empty = { name: "", olt_id: "", location: "", cable_type: CABLE_TYPES[0].value, feeder_port_ids: [], notes: "" };
 
 export default function Odcs() {
   const { user } = useAuth();
@@ -18,14 +18,18 @@ export default function Odcs() {
   const [modal, setModal] = useState(null);
   const [form, setForm] = useState(empty);
   const [ports, setPorts] = useState([]);
+  const [feederPorts, setFeederPorts] = useState([]);
   const [toastState, setToastState] = useState(null);
   const toast = useToast(setToastState);
 
   const load = useCallback(async () => {
-    const [d, o, p] = await Promise.all([api("/api/odcs"), api("/api/olts"), api("/api/ports")]);
+    const [d, o, p, f] = await Promise.all([
+      api("/api/odcs"), api("/api/olts"), api("/api/ports"), api("/api/feeder-ports"),
+    ]);
     setOdcs(d);
     setOlts(o);
     setPorts(p);
+    setFeederPorts(f);
   }, []);
 
   useEffect(() => {
@@ -35,7 +39,11 @@ export default function Odcs() {
   async function save(e) {
     e.preventDefault();
     try {
-      const body = { ...form, olt_id: Number(form.olt_id), feeder_port_id: form.feeder_port_id ? Number(form.feeder_port_id) : null };
+      const body = {
+        ...form,
+        olt_id: Number(form.olt_id),
+        feeder_port_ids: form.feeder_port_ids.map(Number),
+      };
       if (modal.mode === "add") await api("/api/odcs", { method: "POST", body });
       else await api(`/api/odcs/${modal.odc.id}`, { method: "PATCH", body: { ...modal.odc, ...body } });
       setModal(null);
@@ -59,6 +67,9 @@ export default function Odcs() {
   }
 
   const selected = odcs.find((d) => d.id === selectedId);
+  const feederOf = (odcId) => feederPorts.filter((f) => f.odc_id === odcId);
+  const feederLabel = (f) => `${f.card_label || `Card ${f.slot}`} p${f.port}`;
+  const portsForOlt = ports.filter((p) => p.olt_id === Number(form.olt_id));
 
   return (
     <div>
@@ -83,8 +94,7 @@ export default function Odcs() {
               <th className="th">Nama</th>
               <th className="th">Induk OLT</th>
               <th className="th">Kabel</th>
-              <th className="th">Power</th>
-              <th className="th">Port Feeder</th>
+              <th className="th">Port Feeder OLT</th>
               <th className="th">Lokasi</th>
               <th className="th">Core</th>
               <th className="th">ODP</th>
@@ -104,8 +114,9 @@ export default function Odcs() {
                 </td>
                 <td className="td text-mut">{d.olt_name}</td>
                 <td className="td text-mut">{getCableInfo(d.cable_type)?.label ?? d.cable_type}</td>
-                <td className="td text-mut">{d.power_source || "-"}</td>
-                <td className="td text-mut">{d.feeder_card_label ? `${d.feeder_card_label} ` : ""}{d.feeder_port ? `port ${d.feeder_port}` : "-"}</td>
+                <td className="td text-mut">
+                  {feederOf(d.id).length === 0 ? "-" : feederOf(d.id).map(feederLabel).join(", ")}
+                </td>
                 <td className="td text-mut">{d.location || "-"}</td>
                 <td className="td">{d.core_count}</td>
                 <td className="td">{d.odp_count}</td>
@@ -115,7 +126,11 @@ export default function Odcs() {
                       <button
                         className="btn px-2 py-1"
                         onClick={() => {
-                          setForm({ name: d.name, olt_id: d.olt_id, location: d.location || "", cable_type: d.cable_type, power_source: d.power_source || "", feeder_port_id: d.feeder_port_id || "", notes: d.notes || "" });
+                          setForm({
+                            name: d.name, olt_id: d.olt_id, location: d.location || "",
+                            cable_type: d.cable_type, notes: d.notes || "",
+                            feeder_port_ids: feederOf(d.id).map((f) => f.port_id),
+                          });
                           setModal({ mode: "edit", odc: d });
                         }}
                       >
@@ -131,7 +146,7 @@ export default function Odcs() {
             ))}
             {odcs.length === 0 && (
               <tr>
-                <td className="td py-8 text-center text-mut" colSpan={9}>Belum ada ODC.</td>
+                <td className="td py-8 text-center text-mut" colSpan={8}>Belum ada ODC.</td>
               </tr>
             )}
           </tbody>
@@ -165,24 +180,34 @@ export default function Odcs() {
               {CABLE_TYPES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
             </select>
           </Field>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Sumber Power">
-              <select className="input" value={form.power_source} onChange={(e) => setForm({ ...form, power_source: e.target.value })}>
-                <option value="">Belum diatur</option>
-                {POWER_SOURCES.map((p) => <option key={p} value={p}>{p}</option>)}
-              </select>
-            </Field>
-            <Field label="Port Feeder OLT">
-              <select className="input" value={form.feeder_port_id} onChange={(e) => setForm({ ...form, feeder_port_id: e.target.value })}>
-                <option value="">Belum diatur</option>
-                {ports.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {`${p.olt_name ? `${p.olt_name} · ` : ""}${p.card_label || `Card ${p.slot}`} port ${p.port}${p.sfp ? ` (${p.sfp})` : ""}`}
-                  </option>
-                ))}
-              </select>
-            </Field>
-          </div>
+          <Field label={`Port Feeder OLT — boleh lebih dari satu (${form.feeder_port_ids.length} dipilih)`}>
+            <div className="max-h-44 space-y-1 overflow-y-auto rounded-lg border border-line bg-panel2 p-2">
+              {portsForOlt.length === 0 && (
+                <div className="px-1 py-2 text-xs text-mut">OLT ini belum punya port tercatat.</div>
+              )}
+              {portsForOlt.map((p) => (
+                <label key={p.id} className="flex cursor-pointer items-center gap-2 rounded px-1 py-1 text-xs hover:bg-panel">
+                  <input
+                    type="checkbox"
+                    checked={form.feeder_port_ids.includes(p.id)}
+                    onChange={(e) =>
+                      setForm({
+                        ...form,
+                        feeder_port_ids: e.target.checked
+                          ? [...form.feeder_port_ids, p.id]
+                          : form.feeder_port_ids.filter((x) => x !== p.id),
+                      })
+                    }
+                  />
+                  <span className="font-medium">{p.card_label || `Card ${p.slot}`} port {p.port}</span>
+                  <span className="text-mut">
+                    {p.sfp ? `${p.sfp} · ` : ""}{p.status === "active" ? "aktif" : p.status}
+                    {p.tx_power || p.rx_power ? ` · TX ${p.tx_power || "-"} / RX ${p.rx_power || "-"} dBm` : ""}
+                  </span>
+                </label>
+              ))}
+            </div>
+          </Field>
           <Field label="Lokasi">
             <input className="input" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} />
           </Field>
