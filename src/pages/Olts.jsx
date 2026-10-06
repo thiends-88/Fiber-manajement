@@ -287,7 +287,7 @@ export default function Olts() {
                                   : pr.status === "damaged"
                                     ? "border-red-500/50 bg-red-500/15 text-red-300"
                                     : "border-line bg-panel2 text-mut"
-                              : "border-dashed border-line text-mut/50 hover:border-acc/50"
+                              : "border-dashed border-line text-mut/50 hover:border-acc"
                           }`}
                         >
                           {n}

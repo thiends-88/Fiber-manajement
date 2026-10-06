@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Zap } from "lucide-react";
 import { useAuth } from "../lib/auth.jsx";
+import ThemePicker from "../components/ThemePicker.jsx";
 
 const DEMO_ACCOUNTS = [
   { label: "Admin", email: "admin@arena.test", password: "Arena123!" },
@@ -40,10 +41,10 @@ export default function Login() {
       <div className="w-full max-w-sm">
         <div className="card p-6">
           <div className="mb-5 text-center">
-            <span className="mx-auto mb-3 flex size-12 items-center justify-center rounded-xl bg-acc/15 text-acc">
+            <span className="brand-mark mx-auto mb-3 flex size-12 items-center justify-center rounded-xl">
               <Zap size={22} />
             </span>
-            <h1 className="text-xl font-bold">FiberOps Arena</h1>
+            <h1 className="page-title text-center text-xl">FiberOps Arena</h1>
             <p className="mt-1 text-sm text-mut">Manajemen jaringan fiber optik — versi mandiri</p>
           </div>
           <form onSubmit={submit} className="space-y-3">
@@ -85,9 +86,12 @@ export default function Login() {
             </div>
           </div>
         </div>
-        <p className="mt-4 text-center text-xs text-mut">
-          Database SQLite lokal · tidak terhubung ke Supabase
-        </p>
+        <div className="mt-4 flex flex-col items-center gap-2">
+          <ThemePicker showLabel />
+          <p className="text-center text-xs text-mut">
+            Database SQLite lokal · tidak terhubung ke Supabase
+          </p>
+        </div>
       </div>
     </div>
   );

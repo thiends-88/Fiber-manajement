@@ -1,15 +1,115 @@
 @import "tailwindcss";
 
+/* ==========================================================================
+   Tema warna FiberOps Arena
+   --------------------------------------------------------------------------
+   Tema default "Aurora" ada di @theme; tema lain hanya menimpa variabel
+   warna yang sama di html[data-theme="..."], sehingga SELURUH aplikasi
+   ikut berganti warna tanpa menyentuh komponen.
+   Dipilih dari sidebar / halaman login (tersimpan di localStorage).
+
+   Catatan: semua gradasi memakai variabel langsung (bukan color-mix),
+   supaya nilainya tidak "dibekukan" menjadi satu warna oleh minifier.
+   ========================================================================== */
 @theme {
-  --color-bg: #0b1220;
-  --color-panel: #111a2e;
-  --color-panel2: #16213a;
-  --color-line: #1f2c47;
-  --color-ink: #e6edf7;
-  --color-mut: #8fa0bd;
-  --color-acc: #22d3ee;
-  --color-acc2: #34d399;
+  /* --- Aurora: ungu + cyan (default) --- */
+  --color-bg: #0b0a1a;
+  --color-panel: #141329;
+  --color-panel-hi: #232045;
+  --color-panel2: #1d1b3d;
+  --color-line: #2f2b57;
+  --color-ink: #ecebfd;
+  --color-mut: #9f9cc9;
+  --color-acc: #8b5cf6;
+  --color-acc2: #22d3ee;
+  --color-acc-deep: #6435c9;
+  --color-acc2-deep: #0f8fa3;
+  --color-acc-soft: #8b5cf62e;
+  --color-acc-soft2: #8b5cf659;
+  --color-acc-glow: #8b5cf6aa;
+  --color-acc-faint: #8b5cf630;
+  --color-acc2-faint: #22d3ee26;
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+}
+
+/* --- Samudra: biru laut --- */
+html[data-theme="ocean"] {
+  --color-bg: #050e1c;
+  --color-panel: #0c1a2e;
+  --color-panel-hi: #17324f;
+  --color-panel2: #122642;
+  --color-line: #1e3a5f;
+  --color-ink: #e6f1ff;
+  --color-mut: #8aa8cc;
+  --color-acc: #3b82f6;
+  --color-acc2: #22d3ee;
+  --color-acc-deep: #1d4ed8;
+  --color-acc2-deep: #0e7f96;
+  --color-acc-soft: #3b82f62e;
+  --color-acc-soft2: #3b82f659;
+  --color-acc-glow: #3b82f6aa;
+  --color-acc-faint: #3b82f630;
+  --color-acc2-faint: #22d3ee26;
+}
+
+/* --- Zamrud: hijau --- */
+html[data-theme="emerald"] {
+  --color-bg: #03140f;
+  --color-panel: #082018;
+  --color-panel-hi: #123a2b;
+  --color-panel2: #0e2e23;
+  --color-line: #1a4535;
+  --color-ink: #e2f8ef;
+  --color-mut: #86b8a6;
+  --color-acc: #10b981;
+  --color-acc2: #22d3ee;
+  --color-acc-deep: #0a8f63;
+  --color-acc2-deep: #0e8296;
+  --color-acc-soft: #10b9812e;
+  --color-acc-soft2: #10b98159;
+  --color-acc-glow: #10b98199;
+  --color-acc-faint: #10b98130;
+  --color-acc2-faint: #22d3ee26;
+}
+
+/* --- Senja: merah muda + jingga --- */
+html[data-theme="sunset"] {
+  --color-bg: #160a11;
+  --color-panel: #24101f;
+  --color-panel-hi: #3c1b35;
+  --color-panel2: #31162a;
+  --color-line: #4d2340;
+  --color-ink: #fdeef5;
+  --color-mut: #c99cb3;
+  --color-acc: #e11d48;
+  --color-acc2: #f59e0b;
+  --color-acc-deep: #b01639;
+  --color-acc2-deep: #b4710a;
+  --color-acc-soft: #e11d482e;
+  --color-acc-soft2: #e11d4859;
+  --color-acc-glow: #e11d48aa;
+  --color-acc-faint: #e11d4830;
+  --color-acc2-faint: #f59e0b26;
+}
+
+/* --- Neon: hitam dengan aksen lime + magenta --- */
+html[data-theme="neon"] {
+  --color-bg: #05060b;
+  --color-panel: #0d1018;
+  --color-panel-hi: #18202f;
+  --color-panel2: #151a26;
+  --color-line: #232a3d;
+  --color-ink: #eef2ff;
+  --color-mut: #8f9ab8;
+  --color-acc: #a3e635;
+  --color-acc2: #d946ef;
+  --color-acc-deep: #7cb518;
+  --color-acc2-deep: #a52fbd;
+  --color-acc-soft: #a3e63524;
+  --color-acc-soft2: #a3e6354d;
+  --color-acc-glow: #a3e63588;
+  --color-acc-faint: #a3e63526;
+  --color-acc2-faint: #d946ef26;
 }
 
 html,
@@ -19,27 +119,55 @@ body,
 }
 
 body {
-  background: var(--color-bg);
   color: var(--color-ink);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
+  background-color: var(--color-bg);
+  background-image:
+    radial-gradient(900px 620px at 8% -8%, var(--color-acc-faint), transparent 62%),
+    radial-gradient(820px 540px at 102% -2%, var(--color-acc2-faint), transparent 58%);
+  background-attachment: fixed;
 }
 
+/* --- kartu: permukaan bergradasi + bayangan lembut --- */
 .card {
-  @apply rounded-xl border border-line bg-panel shadow-sm;
+  @apply rounded-xl border border-line;
+  background-color: var(--color-panel);
+  background-image: linear-gradient(180deg, var(--color-panel-hi), var(--color-panel));
+  box-shadow:
+    0 1px 2px rgb(0 0 0 / 0.25),
+    0 12px 32px -20px rgb(0 0 0 / 0.75);
 }
+
+/* --- tombol --- */
 .btn {
-  @apply inline-flex items-center justify-center gap-2 rounded-lg border border-line bg-panel2 px-3 py-2 text-sm font-medium text-ink transition hover:border-acc/60 hover:text-white disabled:cursor-not-allowed disabled:opacity-50;
+  @apply inline-flex items-center justify-center gap-2 rounded-lg border border-line bg-panel2 px-3 py-2 text-sm font-medium text-ink transition disabled:cursor-not-allowed disabled:opacity-50;
+}
+.btn:hover:not(:disabled) {
+  border-color: var(--color-acc);
+  box-shadow: 0 0 0 1px var(--color-acc-soft2);
 }
 .btn-primary {
-  @apply border-transparent bg-acc text-slate-900 hover:bg-cyan-300;
+  @apply border-transparent text-white;
+  background-color: var(--color-acc);
+  background-image: linear-gradient(135deg, var(--color-acc-deep), var(--color-acc2-deep));
+  box-shadow: 0 8px 22px -10px var(--color-acc-glow);
+}
+.btn-primary:hover:not(:disabled) {
+  filter: brightness(1.12) saturate(1.05);
+  transform: translateY(-1px);
 }
 .btn-danger {
   @apply border-transparent bg-red-500/90 text-white hover:bg-red-500;
 }
+
 .input {
   @apply w-full rounded-lg border border-line bg-panel2 px-3 py-2 text-sm text-ink placeholder:text-mut/60 focus:border-acc focus:outline-none;
 }
+.input:focus {
+  box-shadow: 0 0 0 3px var(--color-acc-soft);
+}
+
 .label {
   @apply mb-1 block text-xs font-medium text-mut;
 }
@@ -52,10 +180,81 @@ body {
 .badge {
   @apply inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium;
 }
+
+/* --- navigasi samping --- */
+.sidebar {
+  background-color: var(--color-panel);
+  background-image: linear-gradient(180deg, var(--color-panel-hi), var(--color-panel) 58%);
+  backdrop-filter: blur(8px);
+}
+.brand-mark {
+  background-color: var(--color-acc);
+  background-image: linear-gradient(135deg, var(--color-acc), var(--color-acc2));
+  color: #fff;
+  box-shadow: 0 8px 24px -10px var(--color-acc-glow);
+}
 .navlink {
-  @apply flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-mut transition hover:bg-panel2 hover:text-ink;
+  @apply flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-mut transition hover:text-ink;
+}
+.navlink:hover {
+  background: var(--color-acc-soft);
 }
 .navlink-active {
-  @apply bg-panel2 text-white;
-  box-shadow: inset 2px 0 0 var(--color-acc);
+  @apply text-white;
+  background-color: var(--color-panel2);
+  background-image: linear-gradient(90deg, var(--color-acc-soft2), transparent 85%);
+  box-shadow:
+    inset 3px 0 0 var(--color-acc),
+    0 0 26px -16px var(--color-acc);
+}
+
+/* --- judul halaman bergradasi --- */
+.page-title {
+  @apply text-xl font-bold;
+  background-image: linear-gradient(92deg, var(--color-ink) 30%, var(--color-acc));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* --- pilihan tema --- */
+.theme-dot {
+  @apply size-6 rounded-full transition;
+  box-shadow: 0 0 0 2px transparent;
+}
+.theme-dot:hover {
+  transform: scale(1.12);
+}
+.theme-dot-active {
+  box-shadow: 0 0 0 2px var(--color-ink);
+  transform: scale(1.12);
+}
+
+/* Tema Neon: aksen terang, jadi tulisan tombol dibuat gelap agar kontras */
+html[data-theme="neon"] .btn-primary,
+html[data-theme="neon"] .brand-mark {
+  color: #0f1305;
+}
+html[data-theme="neon"] .btn-primary {
+  background-image: linear-gradient(135deg, var(--color-acc), var(--color-acc2));
+}
+
+/* --- scrollbar halus --- */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-acc-soft2) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--color-acc-soft2);
+  border-radius: 9999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--color-acc);
+  background-clip: content-box;
 }

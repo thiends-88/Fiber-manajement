@@ -34,6 +34,22 @@ CSV, dan manajemen user berbasis peran.
 satu file `data/fiberops.db`. Tidak ada Supabase, tidak ada koneksi keluar.
 Hapus file tersebut untuk mereset ke data demo.
 
+## Tema warna
+
+Aplikasi punya **5 palet warna** yang bisa diganti langsung dari **sidebar**
+(atau halaman login) dan otomatis tersimpan di browser:
+
+| Tema | Nuansa |
+| --- | --- |
+| Aurora (default) | ungu + cyan |
+| Samudra | biru laut |
+| Zamrud | hijau |
+| Senja | merah muda + jingga |
+| Neon | hitam dengan lime + magenta |
+
+Menambah tema baru cukup: tambahkan entri di `src/lib/theme.js` dan blok
+`html[data-theme="..."]` yang menimpa variabel warna di `src/styles.css`.
+
 ## Menjalankan (pengembangan)
 
 ```bash

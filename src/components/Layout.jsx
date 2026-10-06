@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "../lib/auth.jsx";
 import { getStoredUser } from "../lib/api.js";
+import ThemePicker from "./ThemePicker.jsx";
 
 const NAV = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
@@ -32,9 +33,9 @@ export default function Layout({ children }) {
 
   return (
     <div className="flex min-h-screen">
-      <aside className="fixed inset-y-0 left-0 z-10 flex w-60 flex-col border-r border-line bg-panel">
+      <aside className="sidebar fixed inset-y-0 left-0 z-10 flex w-60 flex-col border-r border-line">
         <div className="flex items-center gap-2 border-b border-line px-4 py-4">
-          <span className="flex size-9 items-center justify-center rounded-lg bg-acc/15 text-acc">
+          <span className="brand-mark flex size-9 items-center justify-center rounded-lg">
             <Zap size={18} />
           </span>
           <div>
@@ -56,7 +57,10 @@ export default function Layout({ children }) {
           ))}
         </nav>
         <div className="border-t border-line p-3">
-          <div className="mb-2 px-2">
+          <div className="mb-3">
+            <ThemePicker />
+          </div>
+          <div className="mb-2 border-t border-line px-2 pt-3">
             <div className="truncate text-sm font-medium">{user?.full_name}</div>
             <div className="truncate text-xs text-mut">
               {user?.email} · {user?.role}

@@ -5,7 +5,7 @@ export function PageHeader({ title, desc, children }) {
   return (
     <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
       <div>
-        <h1 className="text-xl font-bold">{title}</h1>
+        <h1 className="page-title">{title}</h1>
         {desc && <p className="mt-1 text-sm text-mut">{desc}</p>}
       </div>
       {children}
@@ -59,8 +59,8 @@ export function Toast({ toast }) {
   const ok = toast.type === "success";
   return (
     <div
-      className={`fixed bottom-5 right-5 z-[60] rounded-lg border px-4 py-3 text-sm shadow-lg ${
-        ok ? "border-emerald-500/40 bg-emerald-950 text-emerald-300" : "border-red-500/40 bg-red-950 text-red-300"
+      className={`fixed bottom-5 right-5 z-[60] rounded-lg border px-4 py-3 text-sm shadow-2xl backdrop-blur ${
+        ok ? "border-emerald-500/40 bg-emerald-950/90 text-emerald-300" : "border-red-500/40 bg-red-950/90 text-red-300"
       }`}
     >
       {toast.message}

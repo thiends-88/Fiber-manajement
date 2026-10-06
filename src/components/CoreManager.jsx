@@ -123,7 +123,7 @@ export default function CoreManager({ source, parentId, cableType, title }) {
                 disabled={!canWrite}
                 onClick={() => openCore(n)}
                 title={`Core ${n} · Tube ${tube} · ${fc.name}${assign ? ` · ${STATUS[assign.status].label}${assign.power_dbm ? ` · ${assign.power_dbm} dBm` : ""}` : " · belum dicatat"}`}
-                className={`flex flex-col items-center gap-1 rounded-lg border bg-panel2 p-2 transition hover:border-acc/70 ${border}`}
+                className={`flex flex-col items-center gap-1 rounded-lg border bg-panel2 p-2 transition hover:border-acc ${border}`}
               >
                 <span
                   className="block size-4 rounded-full ring-1 ring-white/20"
