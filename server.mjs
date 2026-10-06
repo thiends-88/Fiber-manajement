@@ -19,6 +19,44 @@ const DATA_DIR = path.join(__dirname, "data");
 const DB_FILE = path.join(DATA_DIR, "fiberops.db");
 const PORT = Number(process.env.ARENA_API_PORT || 4500);
 const HOST = process.env.ARENA_API_HOST || "0.0.0.0";
+const DIST_DIR = path.join(__dirname, "dist");
+
+const MIME = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript",
+  ".css": "text/css",
+  ".json": "application/json",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".ico": "image/x-icon",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
+  ".txt": "text/plain; charset=utf-8",
+};
+
+// Mode produksi: satu proses melayani API + frontend hasil build (dist/).
+function sendFile(res, filePath) {
+  const type = MIME[path.extname(filePath).toLowerCase()] || "application/octet-stream";
+  res.writeHead(200, { "Content-Type": type });
+  res.end(fs.readFileSync(filePath));
+}
+
+function serveStatic(req, res, p) {
+  if (req.method !== "GET" && req.method !== "HEAD") {
+    return send(req, res, 405, { error: "Method tidak didukung" });
+  }
+  if (!fs.existsSync(DIST_DIR)) {
+    return send(req, res, 200, {
+      service: "fiberops-arena-api",
+      hint: "Frontend belum di-build. Jalankan 'npm run build' dulu, atau pakai 'npm run dev' saat pengembangan.",
+    });
+  }
+  const filePath = path.normalize(path.join(DIST_DIR, p));
+  if (!filePath.startsWith(DIST_DIR)) return send(req, res, 403, { error: "Forbidden" });
+  if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) return sendFile(res, filePath);
+  return sendFile(res, path.join(DIST_DIR, "index.html")); // fallback SPA (route /login, /olt, dst.)
+}
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 const db = new DatabaseSync(DB_FILE);
@@ -283,7 +321,7 @@ const server = http.createServer(async (req, res) => {
       return send(req, res, 200, { token, user: { id: user.id, email: user.email, full_name: user.full_name, role: user.role } });
     }
 
-    if (!p.startsWith("/api/")) return send(req, res, 404, { error: "Not found" });
+    if (!p.startsWith("/api/")) return serveStatic(req, res, p);
 
     // ---------------- Semua /api/* di bawah ini butuh login ----------------
     const user = authUser(req, url);

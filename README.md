@@ -10,13 +10,26 @@ CSV, dan manajemen user berbasis peran.
 satu file `data/fiberops.db`. Tidak ada Supabase, tidak ada koneksi keluar.
 Hapus file tersebut untuk mereset ke data demo.
 
-## Menjalankan
+## Menjalankan (pengembangan)
 
 ```bash
 npm install            # sekali saja
 node server.mjs        # API di port 4500
 npm run dev            # frontend di port 8080 (proxy /api → 4500)
 ```
+
+## Produksi / deploy (mis. Proxmox)
+
+```bash
+npm install
+npm run build          # menghasilkan dist/
+node server.mjs        # SATU proses melayani API + frontend (port 4500)
+```
+
+Setelah di-build, `node server.mjs` membuka `http://server:4500` berisi
+aplikasi lengkap — tidak ada server frontend terpisah, dan `node_modules`
+tidak dibutuhkan saat runtime. Panduan lengkap (Docker, systemd, backup):
+lihat **[DEPLOY-PROXMOX.md](DEPLOY-PROXMOX.md)**. Tersedia juga `Dockerfile`.
 
 ## Login demo
 
