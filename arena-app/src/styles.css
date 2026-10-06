@@ -1,0 +1,61 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #0b1220;
+  --color-panel: #111a2e;
+  --color-panel2: #16213a;
+  --color-line: #1f2c47;
+  --color-ink: #e6edf7;
+  --color-mut: #8fa0bd;
+  --color-acc: #22d3ee;
+  --color-acc2: #34d399;
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+.card {
+  @apply rounded-xl border border-line bg-panel shadow-sm;
+}
+.btn {
+  @apply inline-flex items-center justify-center gap-2 rounded-lg border border-line bg-panel2 px-3 py-2 text-sm font-medium text-ink transition hover:border-acc/60 hover:text-white disabled:cursor-not-allowed disabled:opacity-50;
+}
+.btn-primary {
+  @apply border-transparent bg-acc text-slate-900 hover:bg-cyan-300;
+}
+.btn-danger {
+  @apply border-transparent bg-red-500/90 text-white hover:bg-red-500;
+}
+.input {
+  @apply w-full rounded-lg border border-line bg-panel2 px-3 py-2 text-sm text-ink placeholder:text-mut/60 focus:border-acc focus:outline-none;
+}
+.label {
+  @apply mb-1 block text-xs font-medium text-mut;
+}
+.th {
+  @apply px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-mut;
+}
+.td {
+  @apply px-3 py-2 text-sm;
+}
+.badge {
+  @apply inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium;
+}
+.navlink {
+  @apply flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-mut transition hover:bg-panel2 hover:text-ink;
+}
+.navlink-active {
+  @apply bg-panel2 text-white;
+  box-shadow: inset 2px 0 0 var(--color-acc);
+}
