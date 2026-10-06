@@ -94,7 +94,7 @@ export default function Laporan() {
             </thead>
             <tbody>
               {filtered.map((r) => (
-                <tr key={r.id} className="border-b border-line/50 last:border-0">
+                <tr key={r.id} className="border-b border-line-soft last:border-0">
                   <td className="td text-mut">{r.source === "olt_to_odc" ? "OLT → ODC" : "ODC → ODP"}</td>
                   <td className="td font-medium">{r.link_name ?? "-"}</td>
                   <td className="td text-mut">{r.uplink_name ?? "-"}</td>

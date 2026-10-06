@@ -1,25 +1,19 @@
 @import "tailwindcss";
 
 /* ==========================================================================
-   Tema warna FiberOps Arena
+   Tema FiberOps Arena
    --------------------------------------------------------------------------
-   Tema default "Aurora" ada di @theme; tema lain hanya menimpa variabel
-   warna yang sama di html[data-theme="..."], sehingga SELURUH aplikasi
-   ikut berganti warna tanpa menyentuh komponen.
-   Dipilih dari sidebar / halaman login (tersimpan di localStorage).
-
-   Catatan: semua gradasi memakai variabel langsung (bukan color-mix),
-   supaya nilainya tidak "dibekukan" menjadi satu warna oleh minifier.
+   Dua pilihan terpisah, bebas dikombinasikan:
+     • MODE   : terang (putih) · gelap · pekat (hitam pekat) · auto (ikut OS)
+     • AKSEN  : aurora · samudra · zamrud · senja · neon
+   Semua warna dipakai lewat token CSS, sehingga mengganti mode/aksen
+   langsung mengubah SELURUH aplikasi.
+   Catatan: gradasi memakai variabel langsung (bukan color-mix) supaya tidak
+   dibekukan menjadi satu warna oleh minifier saat build.
    ========================================================================== */
+
 @theme {
-  /* --- Aurora: ungu + cyan (default) --- */
-  --color-bg: #0b0a1a;
-  --color-panel: #141329;
-  --color-panel-hi: #232045;
-  --color-panel2: #1d1b3d;
-  --color-line: #2f2b57;
-  --color-ink: #ecebfd;
-  --color-mut: #9f9cc9;
+  /* --- aksen default: Aurora (ungu + cyan) --- */
   --color-acc: #8b5cf6;
   --color-acc2: #22d3ee;
   --color-acc-deep: #6435c9;
@@ -29,18 +23,55 @@
   --color-acc-glow: #8b5cf6aa;
   --color-acc-faint: #8b5cf630;
   --color-acc2-faint: #22d3ee26;
+
+  /* --- mode default: gelap --- */
+  --color-bg: #0b0d15;
+  --color-panel: #12151f;
+  --color-panel-hi: #1b2030;
+  --color-panel2: #171b27;
+  --color-panel-soft: #15192580;
+  --color-line: #272d3f;
+  --color-line-soft: #21273680;
+  --color-ink: #e9edf6;
+  --color-mut: #8d97ad;
+  --color-mut-soft: #7c869c;
+
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
 }
 
-/* --- Samudra: biru laut --- */
-html[data-theme="ocean"] {
-  --color-bg: #050e1c;
-  --color-panel: #0c1a2e;
-  --color-panel-hi: #17324f;
-  --color-panel2: #122642;
-  --color-line: #1e3a5f;
-  --color-ink: #e6f1ff;
-  --color-mut: #8aa8cc;
+/* ============================ MODE ======================================== */
+
+/* --- Terang: putih bersih, profesional --- */
+html[data-mode="terang"] {
+  --color-bg: #f3f5fa;
+  --color-panel: #ffffff;
+  --color-panel-hi: #ffffff;
+  --color-panel2: #f2f5fa;
+  --color-panel-soft: #f7f9fc;
+  --color-line: #e2e8f0;
+  --color-line-soft: #eef2f7;
+  --color-ink: #0f172a;
+  --color-mut: #5b6a82;
+  --color-mut-soft: #71809a;
+}
+
+/* --- Pekat: hitam pekat (OLED friendly) --- */
+html[data-mode="pekat"] {
+  --color-bg: #000000;
+  --color-panel: #08090d;
+  --color-panel-hi: #14161e;
+  --color-panel2: #0e1016;
+  --color-panel-soft: #0c0e1480;
+  --color-line: #21242e;
+  --color-line-soft: #191c2480;
+  --color-ink: #f2f4f9;
+  --color-mut: #878fa1;
+  --color-mut-soft: #757d8f;
+}
+
+/* ============================ AKSEN ====================================== */
+
+html[data-accent="ocean"] {
   --color-acc: #3b82f6;
   --color-acc2: #22d3ee;
   --color-acc-deep: #1d4ed8;
@@ -52,15 +83,7 @@ html[data-theme="ocean"] {
   --color-acc2-faint: #22d3ee26;
 }
 
-/* --- Zamrud: hijau --- */
-html[data-theme="emerald"] {
-  --color-bg: #03140f;
-  --color-panel: #082018;
-  --color-panel-hi: #123a2b;
-  --color-panel2: #0e2e23;
-  --color-line: #1a4535;
-  --color-ink: #e2f8ef;
-  --color-mut: #86b8a6;
+html[data-accent="emerald"] {
   --color-acc: #10b981;
   --color-acc2: #22d3ee;
   --color-acc-deep: #0a8f63;
@@ -72,15 +95,7 @@ html[data-theme="emerald"] {
   --color-acc2-faint: #22d3ee26;
 }
 
-/* --- Senja: merah muda + jingga --- */
-html[data-theme="sunset"] {
-  --color-bg: #160a11;
-  --color-panel: #24101f;
-  --color-panel-hi: #3c1b35;
-  --color-panel2: #31162a;
-  --color-line: #4d2340;
-  --color-ink: #fdeef5;
-  --color-mut: #c99cb3;
+html[data-accent="sunset"] {
   --color-acc: #e11d48;
   --color-acc2: #f59e0b;
   --color-acc-deep: #b01639;
@@ -92,15 +107,7 @@ html[data-theme="sunset"] {
   --color-acc2-faint: #f59e0b26;
 }
 
-/* --- Neon: hitam dengan aksen lime + magenta --- */
-html[data-theme="neon"] {
-  --color-bg: #05060b;
-  --color-panel: #0d1018;
-  --color-panel-hi: #18202f;
-  --color-panel2: #151a26;
-  --color-line: #232a3d;
-  --color-ink: #eef2ff;
-  --color-mut: #8f9ab8;
+html[data-accent="neon"] {
   --color-acc: #a3e635;
   --color-acc2: #d946ef;
   --color-acc-deep: #7cb518;
@@ -112,6 +119,7 @@ html[data-theme="neon"] {
   --color-acc2-faint: #d946ef26;
 }
 
+/* ============================ DASAR ====================================== */
 html,
 body,
 #root {
@@ -129,7 +137,14 @@ body {
   background-attachment: fixed;
 }
 
-/* --- kartu: permukaan bergradasi + bayangan lembut --- */
+/* mode terang: pendaran warna dibuat lebih halus */
+html[data-mode="terang"] body {
+  background-image:
+    radial-gradient(760px 460px at 6% -10%, var(--color-acc-soft), transparent 62%),
+    radial-gradient(680px 420px at 104% -6%, var(--color-acc2-faint), transparent 60%);
+}
+
+/* ---------------------------- kartu -------------------------------------- */
 .card {
   @apply rounded-xl border border-line;
   background-color: var(--color-panel);
@@ -138,8 +153,16 @@ body {
     0 1px 2px rgb(0 0 0 / 0.25),
     0 12px 32px -20px rgb(0 0 0 / 0.75);
 }
+html[data-mode="terang"] .card {
+  box-shadow:
+    0 1px 2px rgb(15 23 42 / 0.05),
+    0 10px 26px -20px rgb(15 23 42 / 0.35);
+}
+html[data-mode="pekat"] .card {
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.7), 0 12px 32px -20px rgb(0 0 0 / 0.9);
+}
 
-/* --- tombol --- */
+/* ---------------------------- tombol ------------------------------------- */
 .btn {
   @apply inline-flex items-center justify-center gap-2 rounded-lg border border-line bg-panel2 px-3 py-2 text-sm font-medium text-ink transition disabled:cursor-not-allowed disabled:opacity-50;
 }
@@ -162,7 +185,10 @@ body {
 }
 
 .input {
-  @apply w-full rounded-lg border border-line bg-panel2 px-3 py-2 text-sm text-ink placeholder:text-mut/60 focus:border-acc focus:outline-none;
+  @apply w-full rounded-lg border border-line bg-panel2 px-3 py-2 text-sm text-ink focus:border-acc focus:outline-none;
+}
+.input::placeholder {
+  color: var(--color-mut-soft);
 }
 .input:focus {
   box-shadow: 0 0 0 3px var(--color-acc-soft);
@@ -181,7 +207,7 @@ body {
   @apply inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium;
 }
 
-/* --- navigasi samping --- */
+/* ------------------------- navigasi samping ------------------------------ */
 .sidebar {
   background-color: var(--color-panel);
   background-image: linear-gradient(180deg, var(--color-panel-hi), var(--color-panel) 58%);
@@ -194,21 +220,26 @@ body {
   box-shadow: 0 8px 24px -10px var(--color-acc-glow);
 }
 .navlink {
-  @apply flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-mut transition hover:text-ink;
+  @apply flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-mut transition;
 }
 .navlink:hover {
   background: var(--color-acc-soft);
+  color: var(--color-ink);
 }
 .navlink-active {
-  @apply text-white;
+  color: var(--color-ink);
   background-color: var(--color-panel2);
   background-image: linear-gradient(90deg, var(--color-acc-soft2), transparent 85%);
   box-shadow:
     inset 3px 0 0 var(--color-acc),
     0 0 26px -16px var(--color-acc);
 }
+html[data-mode="terang"] .navlink-active {
+  color: var(--color-acc-deep);
+  font-weight: 600;
+}
 
-/* --- judul halaman bergradasi --- */
+/* ---------------------- judul halaman bergradasi ------------------------- */
 .page-title {
   @apply text-xl font-bold;
   background-image: linear-gradient(92deg, var(--color-ink) 30%, var(--color-acc));
@@ -216,8 +247,60 @@ body {
   background-clip: text;
   color: transparent;
 }
+html[data-mode="terang"] .page-title {
+  background-image: linear-gradient(92deg, var(--color-ink) 42%, var(--color-acc-deep));
+}
 
-/* --- pilihan tema --- */
+/* --------------------------- modal & toast ------------------------------- */
+.modal-overlay {
+  background: rgb(0 0 0 / 0.62);
+}
+html[data-mode="terang"] .modal-overlay {
+  background: rgb(15 23 42 / 0.35);
+}
+
+.toast {
+  @apply fixed bottom-5 right-5 z-[60] rounded-lg border px-4 py-3 text-sm shadow-2xl;
+}
+.toast-ok {
+  border-color: #10b98166;
+  background: #052e22;
+  color: #6ee7b7;
+}
+.toast-err {
+  border-color: #ef444466;
+  background: #450a0a;
+  color: #fca5a5;
+}
+html[data-mode="terang"] .toast-ok {
+  background: #ecfdf5;
+  color: #047857;
+  border-color: #10b98155;
+}
+html[data-mode="terang"] .toast-err {
+  background: #fef2f2;
+  color: #b91c1c;
+  border-color: #ef444455;
+}
+
+/* ----------------------------- pilihan tema ------------------------------ */
+.mode-btn {
+  @apply flex flex-1 items-center justify-center rounded-lg border border-line bg-panel2 py-1.5 text-mut transition;
+}
+.mode-btn:hover {
+  color: var(--color-ink);
+  border-color: var(--color-acc);
+}
+.mode-btn-active {
+  color: #fff;
+  border-color: transparent;
+  background-color: var(--color-acc);
+  background-image: linear-gradient(135deg, var(--color-acc-deep), var(--color-acc2-deep));
+}
+html[data-mode="terang"] .mode-btn-active {
+  color: #fff;
+}
+
 .theme-dot {
   @apply size-6 rounded-full transition;
   box-shadow: 0 0 0 2px transparent;
@@ -230,16 +313,52 @@ body {
   transform: scale(1.12);
 }
 
-/* Tema Neon: aksen terang, jadi tulisan tombol dibuat gelap agar kontras */
-html[data-theme="neon"] .btn-primary,
-html[data-theme="neon"] .brand-mark {
+/* --- aksen terang (lime): tulisan dibuat gelap agar kontras --- */
+html[data-accent="neon"] .btn-primary,
+html[data-accent="neon"] .brand-mark,
+html[data-accent="neon"] .mode-btn-active {
   color: #0f1305;
 }
-html[data-theme="neon"] .btn-primary {
-  background-image: linear-gradient(135deg, var(--color-acc), var(--color-acc2));
+
+/* ------ mode terang: warna status dibuat lebih pekat agar terbaca ------- */
+html[data-mode="terang"] .text-emerald-300,
+html[data-mode="terang"] .text-emerald-400 {
+  color: #047857;
+}
+html[data-mode="terang"] .text-amber-300,
+html[data-mode="terang"] .text-amber-400 {
+  color: #b45309;
+}
+html[data-mode="terang"] .text-cyan-300,
+html[data-mode="terang"] .text-cyan-400 {
+  color: #0e7490;
+}
+html[data-mode="terang"] .text-violet-300,
+html[data-mode="terang"] .text-violet-400 {
+  color: #6d28d9;
+}
+html[data-mode="terang"] .text-fuchsia-300 {
+  color: #a21caf;
+}
+html[data-mode="terang"] .text-sky-300 {
+  color: #0369a1;
+}
+html[data-mode="terang"] .text-rose-300 {
+  color: #be123c;
+}
+html[data-mode="terang"] .text-red-300,
+html[data-mode="terang"] .text-red-400 {
+  color: #b91c1c;
+}
+html[data-mode="terang"] .text-slate-300 {
+  color: #334155;
+}
+html[data-mode="terang"] .text-mut\/80,
+html[data-mode="terang"] .text-mut\/70 {
+  color: var(--color-mut);
 }
 
-/* --- scrollbar halus --- */
+/* --------------------------- scrollbar halus ----------------------------- */
 * {
   scrollbar-width: thin;
   scrollbar-color: var(--color-acc-soft2) transparent;

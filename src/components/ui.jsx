@@ -33,14 +33,14 @@ export function Field({ label, children, className = "" }) {
 export function Modal({ open, title, onClose, children, wide }) {
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onMouseDown={onClose}>
+    <div className="modal-overlay fixed inset-0 z-50 flex items-center justify-center p-4" onMouseDown={onClose}>
       <div
         className={`card max-h-[85vh] w-full overflow-y-auto p-5 ${wide ? "max-w-4xl" : "max-w-md"}`}
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-base font-semibold">{title}</h2>
-          <button className="text-mut hover:text-white" onClick={onClose} aria-label="Tutup">
+          <button className="text-mut hover:text-ink" onClick={onClose} aria-label="Tutup">
             <X size={18} />
           </button>
         </div>
@@ -59,9 +59,7 @@ export function Toast({ toast }) {
   const ok = toast.type === "success";
   return (
     <div
-      className={`fixed bottom-5 right-5 z-[60] rounded-lg border px-4 py-3 text-sm shadow-2xl backdrop-blur ${
-        ok ? "border-emerald-500/40 bg-emerald-950/90 text-emerald-300" : "border-red-500/40 bg-red-950/90 text-red-300"
-      }`}
+      className={`toast ${ok ? "toast-ok" : "toast-err"}`}
     >
       {toast.message}
     </div>

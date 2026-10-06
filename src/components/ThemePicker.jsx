@@ -1,39 +1,84 @@
-import { useState } from "react";
-import { Palette } from "lucide-react";
-import { THEMES, applyTheme, getTheme } from "../lib/theme.js";
+import { useEffect, useState } from "react";
+import { Contrast, MonitorSmartphone, Moon, Palette, Sun } from "lucide-react";
+import { ACCENTS, MODES, applyTheme, getPrefs } from "../lib/theme.js";
 
-/** Pemilih tema warna — dipakai di sidebar dan halaman login. */
-export default function ThemePicker({ showLabel = false }) {
-  const [current, setCurrent] = useState(getTheme);
+const MODE_ICONS = {
+  terang: Sun,
+  gelap: Moon,
+  pekat: Contrast,
+  auto: MonitorSmartphone,
+};
 
-  function pick(id) {
-    setCurrent(applyTheme(id));
+/** Pemilih tampilan: mode (terang/gelap/pekat/auto) + warna aksen. */
+export default function ThemePicker({ showLabel = false, compact = false }) {
+  const [prefs, setPrefs] = useState(getPrefs);
+
+  // Ikut berubah otomatis saat mode "auto" dan sistem berganti tema
+  useEffect(() => {
+    if (prefs.mode !== "auto") return;
+    let media;
+    try {
+      media = window.matchMedia("(prefers-color-scheme: light)");
+    } catch {
+      return;
+    }
+    const onChange = () => setPrefs(applyTheme(prefs));
+    media.addEventListener("change", onChange);
+    return () => media.removeEventListener("change", onChange);
+  }, [prefs]);
+
+  function pick(patch) {
+    setPrefs(applyTheme({ ...prefs, ...patch }));
   }
 
   return (
-    <div className={showLabel ? "text-center" : ""}>
-      {showLabel && (
-        <div className="mb-2 flex items-center justify-center gap-1.5 text-[11px] text-mut">
-          <Palette size={12} /> Tema warna
+    <div className={compact ? "" : "space-y-3"}>
+      <div>
+        <div className="mb-1.5 flex items-center gap-1.5 text-[11px] text-mut">
+          <Sun size={12} /> Mode tampilan
+          <span className="ml-auto font-medium text-ink">
+            {MODES.find((m) => m.id === prefs.mode)?.name}
+          </span>
         </div>
-      )}
-      {!showLabel && (
-        <div className="mb-2 flex items-center gap-1.5 px-2 text-[11px] text-mut">
-          <Palette size={12} /> Tema warna
+        <div className="flex gap-1.5">
+          {MODES.map((m) => {
+            const Icon = MODE_ICONS[m.id] ?? Moon;
+            return (
+              <button
+                key={m.id}
+                type="button"
+                title={`${m.name} — ${m.desc}`}
+                aria-label={`Mode ${m.name}`}
+                onClick={() => pick({ mode: m.id })}
+                className={`mode-btn ${prefs.mode === m.id ? "mode-btn-active" : ""}`}
+              >
+                <Icon size={14} />
+              </button>
+            );
+          })}
         </div>
-      )}
-      <div className={`flex gap-2 ${showLabel ? "justify-center" : "px-2"}`}>
-        {THEMES.map((t) => (
-          <button
-            key={t.id}
-            type="button"
-            title={`${t.name} — ${t.desc}`}
-            aria-label={`Tema ${t.name}`}
-            onClick={() => pick(t.id)}
-            className={`theme-dot ${current === t.id ? "theme-dot-active" : ""}`}
-            style={{ backgroundImage: `linear-gradient(135deg, ${t.swatch[0]}, ${t.swatch[1]})` }}
-          />
-        ))}
+      </div>
+
+      <div>
+        <div className="mb-1.5 flex items-center gap-1.5 text-[11px] text-mut">
+          <Palette size={12} /> Warna aksen
+          <span className="ml-auto font-medium text-ink">
+            {ACCENTS.find((a) => a.id === prefs.accent)?.name}
+          </span>
+        </div>
+        <div className={`flex gap-2 ${showLabel ? "justify-center" : ""}`}>
+          {ACCENTS.map((a) => (
+            <button
+              key={a.id}
+              type="button"
+              title={`${a.name} — ${a.desc}`}
+              aria-label={`Warna ${a.name}`}
+              onClick={() => pick({ accent: a.id })}
+              className={`theme-dot ${prefs.accent === a.id ? "theme-dot-active" : ""}`}
+              style={{ backgroundImage: `linear-gradient(135deg, ${a.swatch[0]}, ${a.swatch[1]})` }}
+            />
+          ))}
+        </div>
       </div>
     </div>
   );

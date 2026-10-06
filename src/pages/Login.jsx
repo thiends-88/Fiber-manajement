@@ -87,7 +87,9 @@ export default function Login() {
           </div>
         </div>
         <div className="mt-4 flex flex-col items-center gap-2">
-          <ThemePicker showLabel />
+          <div className="w-full">
+            <ThemePicker showLabel />
+          </div>
           <p className="text-center text-xs text-mut">
             Database SQLite lokal · tidak terhubung ke Supabase
           </p>

@@ -61,7 +61,7 @@ export default function Topologi() {
               <div className="ml-10 border-t border-line pr-4">
                 {olt.odcs.length === 0 && <div className="py-3 text-xs text-mut">Tidak ada ODC.</div>}
                 {olt.odcs.map((odc) => (
-                  <div key={odc.id} className="border-b border-line/40 py-1 last:border-0">
+                  <div key={odc.id} className="border-b border-line-soft py-1 last:border-0">
                     <button
                       className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left hover:bg-panel2"
                       onClick={() => toggle(`odc-${odc.id}`)}
@@ -76,7 +76,7 @@ export default function Topologi() {
                           <Cable size={10} className="mr-1 inline" />
                           {getCableInfo(odc.cable_type)?.label ?? odc.cable_type} · {odc.location || "tanpa lokasi"}
                         </div>
-                        <div className="text-[11px] text-mut/80">
+                        <div className="text-[11px] text-mut-soft">
                           Port feeder: {(() => {
                             const fs = feederPorts.filter((f) => f.odc_id === odc.id);
                             return fs.length === 0
@@ -107,7 +107,7 @@ export default function Topologi() {
                               <div className="text-xs text-mut">
                                 {getCableInfo(odp.cable_type)?.label ?? odp.cable_type} · {odp.location || "tanpa lokasi"}
                               </div>
-                              <div className="text-[11px] text-mut/80">
+                              <div className="text-[11px] text-mut-soft">
                                 {links.filter((l) => l.odp_id === odp.id).length > 0 &&
                                   `Core dari ${odc.name}: ${links.filter((l) => l.odp_id === odp.id).map((l) => `C${l.odc_core}→C${l.odp_core}`).join(", ")}`}
                               </div>

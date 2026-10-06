@@ -34,21 +34,25 @@ CSV, dan manajemen user berbasis peran.
 satu file `data/fiberops.db`. Tidak ada Supabase, tidak ada koneksi keluar.
 Hapus file tersebut untuk mereset ke data demo.
 
-## Tema warna
+## Tampilan (mode + warna)
 
-Aplikasi punya **5 palet warna** yang bisa diganti langsung dari **sidebar**
-(atau halaman login) dan otomatis tersimpan di browser:
+Tampilan diatur dari **sidebar** (atau halaman login) dan tersimpan otomatis
+di browser. Dua pilihan yang bebas dikombinasikan:
 
-| Tema | Nuansa |
+**Mode tampilan**
+
+| Mode | Keterangan |
 | --- | --- |
-| Aurora (default) | ungu + cyan |
-| Samudra | biru laut |
-| Zamrud | hijau |
-| Senja | merah muda + jingga |
-| Neon | hitam dengan lime + magenta |
+| Terang | putih bersih, cocok untuk ruangan terang / presentasi |
+| Gelap (default) | abu gelap, nyaman untuk pemakaian lama |
+| Pekat | hitam pekat (hemat daya di layar OLED) |
+| Auto | otomatis mengikuti pengaturan terang/gelap sistem operasi |
 
-Menambah tema baru cukup: tambahkan entri di `src/lib/theme.js` dan blok
-`html[data-theme="..."]` yang menimpa variabel warna di `src/styles.css`.
+**Warna aksen:** Aurora (ungu+cyan), Samudra (biru), Zamrud (hijau),
+Senja (merah muda+jingga), Neon (lime+magenta).
+
+Menambah pilihan cukup: tambahkan entri di `src/lib/theme.js` dan blok CSS
+`html[data-mode="..."]` / `html[data-accent="..."]` di `src/styles.css`.
 
 ## Menjalankan (pengembangan)
 

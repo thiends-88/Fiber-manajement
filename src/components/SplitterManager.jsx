@@ -145,7 +145,7 @@ export default function SplitterManager({ parentType, parentId, title }) {
         {splitters.map((sp) => {
           const assigned = sp.outputs.filter((o) => o.target_type).length;
           return (
-            <div key={sp.id} className="rounded-xl border border-line bg-panel2/50 p-3">
+            <div key={sp.id} className="rounded-xl border border-line bg-panel-soft p-3">
               <div className="flex flex-wrap items-center gap-2 text-xs">
                 <span className="font-semibold">{sp.name}</span>
                 <Badge cls={RATIO_CLS[sp.ratio] || "bg-slate-500/15 text-slate-300"}>Splitter {sp.ratio}</Badge>

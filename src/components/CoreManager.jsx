@@ -116,7 +116,7 @@ export default function CoreManager({ source, parentId, cableType, title }) {
                     ? "border-red-500/60"
                     : assign
                       ? "border-line"
-                      : "border-dashed border-line/70";
+                      : "border-dashed border-line";
             return (
               <button
                 key={n}

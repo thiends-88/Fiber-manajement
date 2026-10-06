@@ -1,9 +1,27 @@
 <!doctype html>
-<html lang="id" class="dark">
+<html lang="id" data-mode="gelap" data-accent="aurora">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0b0d15" />
     <title>FiberOps Arena</title>
+    <script>
+      // Terapkan mode & warna tersimpan sebelum halaman dilukis (anti-kedip)
+      (function () {
+        try {
+          var p = JSON.parse(localStorage.getItem("fiberops_theme_v2") || "{}");
+          var mode = p.mode || "gelap";
+          if (mode === "auto") {
+            mode = window.matchMedia("(prefers-color-scheme: light)").matches ? "terang" : "gelap";
+          }
+          var d = document.documentElement;
+          d.dataset.mode = mode;
+          d.dataset.accent = p.accent || localStorage.getItem("fiberops_theme") || "aurora";
+        } catch (e) {
+          /* abaikan — pakai nilai bawaan */
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

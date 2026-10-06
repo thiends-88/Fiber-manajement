@@ -91,7 +91,7 @@ export default function Odps() {
             {odps.map((d) => (
               <tr
                 key={d.id}
-                className={`cursor-pointer border-b border-line/50 last:border-0 hover:bg-panel2 ${d.id === selectedId ? "bg-panel2" : ""}`}
+                className={`cursor-pointer border-b border-line-soft last:border-0 hover:bg-panel2 ${d.id === selectedId ? "bg-panel2" : ""}`}
                 onClick={() => setSelectedId(d.id === selectedId ? null : d.id)}
               >
                 <td className="td font-medium">

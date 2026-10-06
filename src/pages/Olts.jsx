@@ -170,7 +170,7 @@ export default function Olts() {
             {olts.map((o) => (
               <tr
                 key={o.id}
-                className={`cursor-pointer border-b border-line/50 last:border-0 hover:bg-panel2 ${
+                className={`cursor-pointer border-b border-line-soft last:border-0 hover:bg-panel2 ${
                   o.id === selectedId ? "bg-panel2" : ""
                 }`}
                 onClick={() => setSelectedId(o.id === selectedId ? null : o.id)}
@@ -287,7 +287,7 @@ export default function Olts() {
                                   : pr.status === "damaged"
                                     ? "border-red-500/50 bg-red-500/15 text-red-300"
                                     : "border-line bg-panel2 text-mut"
-                              : "border-dashed border-line text-mut/50 hover:border-acc"
+                              : "border-dashed border-line text-mut-soft hover:border-acc"
                           }`}
                         >
                           {n}
@@ -309,7 +309,7 @@ export default function Olts() {
                       </thead>
                       <tbody>
                         {cardPorts.map((pr) => (
-                          <tr key={pr.id} className="border-t border-line/50">
+                          <tr key={pr.id} className="border-t border-line-soft">
                             <td className="td font-semibold">{pr.port}</td>
                             <td className="td text-mut">{pr.sfp || "-"}</td>
                             <td className="td text-mut">{pr.serial || "-"}</td>

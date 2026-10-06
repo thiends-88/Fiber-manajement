@@ -13,7 +13,7 @@ function StatCard({ icon: Icon, label, value, hint, tint }) {
       <div>
         <div className="text-2xl font-bold leading-tight">{value}</div>
         <div className="text-xs text-mut">{label}</div>
-        {hint && <div className="text-[11px] text-mut/70">{hint}</div>}
+        {hint && <div className="text-[11px] text-mut-soft">{hint}</div>}
       </div>
     </Card>
   );
