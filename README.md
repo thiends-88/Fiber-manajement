@@ -102,6 +102,20 @@ npm run build          # menghasilkan dist/
 node server.mjs        # SATU proses melayani API + frontend (port 4500)
 ```
 
+## Uji otomatis halaman (anti "halaman blank")
+
+Uji ini merender **semua halaman** memakai jsdom + data sungguhan dari server,
+lalu memastikan data demo ikut tampil (mis. `ODC-001`, badge `ODC anak`,
+`Anggaran Daya`, `SPL-1`) dan tidak ada pesan error render:
+
+```bash
+node server.mjs            # server harus jalan (data demo)
+npm run test:render        # hasil: SEMUA HALAMAN TAMPIL NORMAL
+```
+
+Kalau ada halaman yang kosong/error (mis. `X is not defined`), uji ini GAGAL
+dan menyebutkan rutenya. Port server bisa diganti: `ARENA_API_PORT=3000 npm run test:render`.
+
 Setelah di-build, `node server.mjs` membuka `http://server:4500` berisi
 aplikasi lengkap — tidak ada server frontend terpisah, dan `node_modules`
 tidak dibutuhkan saat runtime. Panduan lengkap (Docker, systemd, backup):

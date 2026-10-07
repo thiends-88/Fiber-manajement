@@ -9,3 +9,4 @@ data/
 # Lain-lain
 *.log
 .env
+.uji-out/

@@ -49,16 +49,6 @@ export default function Odcs() {
         feeder_loss_db: form.feeder_loss_db === "" ? null : Number(form.feeder_loss_db),
       };
 
-  // ODC yang disuplai dari output splitter ODC lain = ODC anak
-  const parentInfo = new Map();
-  splitters.forEach((sp) => {
-    if (!sp.odc_id) return;
-    (sp.outputs ?? []).forEach((o) => {
-      if (o.target_type === "odc" && o.target_odc_id) {
-        parentInfo.set(Number(o.target_odc_id), { parentName: sp.odc_name, splitter: sp.name, ratio: sp.ratio, port: o.port });
-      }
-    });
-  });
       if (modal.mode === "add") await api("/api/odcs", { method: "POST", body });
       else await api(`/api/odcs/${modal.odc.id}`, { method: "PATCH", body: { ...modal.odc, ...body } });
       setModal(null);
@@ -85,6 +75,19 @@ export default function Odcs() {
   const feederOf = (odcId) => feederPorts.filter((f) => f.odc_id === odcId);
   const feederLabel = (f) => `${f.card_label || `Card ${f.slot}`} p${f.port}`;
   const portsForOlt = ports.filter((p) => p.olt_id === Number(form.olt_id));
+
+  // ODC yang disuplai dari output splitter ODC lain = ODC anak
+  const parentInfo = new Map();
+  splitters.forEach((sp) => {
+    if (!sp.odc_id) return;
+    (sp.outputs ?? []).forEach((o) => {
+      if (o.target_type === "odc" && o.target_odc_id) {
+        parentInfo.set(Number(o.target_odc_id), {
+          parentName: sp.odc_name, splitter: sp.name, ratio: sp.ratio, port: o.port,
+        });
+      }
+    });
+  });
 
   return (
     <div>
