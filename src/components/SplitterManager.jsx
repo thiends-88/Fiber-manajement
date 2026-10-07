@@ -26,6 +26,7 @@ export default function SplitterManager({ parentType, parentId, title }) {
 
   const [splitters, setSplitters] = useState([]);
   const [odps, setOdps] = useState([]);
+  const [odcs, setOdcs] = useState([]);
   const [allSplitters, setAllSplitters] = useState([]);
   const [modal, setModal] = useState(null);
   const [form, setForm] = useState(emptySplitter);
@@ -37,14 +38,16 @@ export default function SplitterManager({ parentType, parentId, title }) {
   const q = parentType === "odc" ? `odc_id=${parentId}` : `odp_id=${parentId}`;
 
   const load = useCallback(async () => {
-    const [mine, o, all] = await Promise.all([
+    const [mine, o, all, ds] = await Promise.all([
       api(`/api/splitters?${q}`),
       api("/api/odps"),
       api("/api/splitters"),
+      api("/api/odcs"),
     ]);
     setSplitters(mine);
     setOdps(o);
     setAllSplitters(all);
+    setOdcs(ds);
   }, [q]);
 
   useEffect(() => {
@@ -118,9 +121,11 @@ export default function SplitterManager({ parentType, parentId, title }) {
   const targetLabel = (o) =>
     o.target_type === "odp"
       ? o.target_odp_name
-      : o.target_type === "splitter"
-        ? `⇄ ${o.target_splitter_name}`
-        : null;
+      : o.target_type === "odc"
+        ? `⇉ ${o.target_odc_name}`
+        : o.target_type === "splitter"
+          ? `⇄ ${o.target_splitter_name}`
+          : null;
 
   return (
     <div>
@@ -129,7 +134,7 @@ export default function SplitterManager({ parentType, parentId, title }) {
           <GitBranch size={16} className="text-violet-400" />
           {title || `Splitter di ${parentType === "odc" ? "ODC" : "ODP"} ini`}
           <span className="text-xs font-normal text-mut">
-            — output bisa langsung ke ODP, atau di-cascade (disambung ke splitter berikutnya)
+            — output bisa ke ODP, di-cascade ke splitter lain (bertingkat di ODC yang sama), atau ke ODC anak
           </span>
         </h2>
         {canWrite && (
@@ -188,9 +193,11 @@ export default function SplitterManager({ parentType, parentId, title }) {
                   const label = targetLabel(o);
                   const cls = o.target_type === "odp"
                     ? "border-emerald-500/60 bg-emerald-500/10 text-emerald-300"
-                    : o.target_type === "splitter"
-                      ? "border-violet-500/60 bg-violet-500/10 text-violet-300"
-                      : "border-dashed border-line text-mut";
+                    : o.target_type === "odc"
+                      ? "border-sky-500/60 bg-sky-500/10 text-sky-300"
+                      : o.target_type === "splitter"
+                        ? "border-violet-500/60 bg-violet-500/10 text-violet-300"
+                        : "border-dashed border-line text-mut";
                   return (
                     <button
                       key={o.id}
@@ -259,6 +266,7 @@ export default function SplitterManager({ parentType, parentId, title }) {
                 <option value="">Kosong (belum dipakai)</option>
                 <option value="odp">ODP</option>
                 <option value="splitter">Splitter lain (cascade)</option>
+                <option value="odc">ODC anak (ODC lain)</option>
               </select>
             </Field>
             {outForm.target_type === "odp" && (
@@ -272,6 +280,22 @@ export default function SplitterManager({ parentType, parentId, title }) {
                   {odps.map((p) => (
                     <option key={p.id} value={p.id}>{p.name} — {p.odc_name}</option>
                   ))}
+                </select>
+              </Field>
+            )}
+            {outForm.target_type === "odc" && (
+              <Field label="Pilih ODC anak">
+                <select
+                  className="input" required
+                  value={outForm.target_id}
+                  onChange={(e) => setOutForm({ ...outForm, target_id: e.target.value })}
+                >
+                  <option value="" disabled>Pilih ODC…</option>
+                  {odcs
+                    .filter((d) => !outModal.splitter.odc_id || d.id !== outModal.splitter.odc_id)
+                    .map((d) => (
+                      <option key={d.id} value={d.id}>{d.name} — {d.olt_name}</option>
+                    ))}
                 </select>
               </Field>
             )}

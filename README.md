@@ -28,16 +28,30 @@ CSV, dan manajemen user berbasis peran.
    simpul ODP pada **Topologi**.
 6. **Splitter bertingkat** — pilih rasio **1:2 / 1:4 / 1:8 / 1:16 / 1:32**,
    ditempatkan **di dalam ODC maupun di dalam ODP**. Setiap output splitter bisa
-   diarahkan **ke ODP** atau **di-cascade ke splitter lain**, sehingga topologi
-   bertingkat seperti **4:8:8** (OLT → SPL 1:4 → SPL 1:8 → ODP dengan SPL 1:8)
-   bisa dimodelkan penuh. Aplikasi otomatis membaca rantainya sebagai "Topologi 4:8:8".
+   diarahkan **ke ODP**, **di-cascade ke splitter lain**, atau **ke ODC anak**.
+   Topologi bertingkat seperti **4:8:8** (OLT → SPL 1:4 → SPL 1:8 di dalam ODC →
+   ODP dengan SPL 1:8) bisa dimodelkan penuh, dan aplikasi otomatis membaca
+   rantainya sebagai "Topologi 4:8:8".
+   Data demo memakai persis alur ini: **OLT → ODC-001 [SPL-1 1:4 → SPL-2 1:8] →
+   ODP-001/ODP-003 [SPL 1:8]**, plus satu cabang **ODC anak**.
+7. **ODC induk / ODC anak** — sebuah output splitter yang berada **di dalam ODC**
+   bisa diarahkan ke **ODC lain**, sehingga ODC tujuan menjadi *ODC anak* dari
+   ODC sumber (*induks*). ODC anak ditandai badge **"ODC anak"** di halaman ODC
+   beserta asal suplainya (splitter & port). Diperbolehkan berlapis
+   (anak → cucu). Server menolak arah yang membentuk **lingkaran**
+   (mis. ODC anak diarahkan balik ke induknya) dengan pesan
+   *"Akan membentuk lingkaran ODC induk/anak"*, dan hanya splitter di dalam ODC
+   yang boleh menargetkan ODC. Anggaran daya otomatis menelusuri seluruh rantai
+   ODC induk → anak, menjumlahkan redaman feeder tiap ODC dan splitter tiap
+   tingkat (contoh demo: ODP-004 lewat ODC-001 → ODC-003 = 29,2 dB).
 7. **Mapping Core** — peta jalur **end-to-end**: dari port feeder OLT →
    core ODC → core ODP → pelanggan, lengkap dengan redaman (dB), daya per titik,
    dan penanda core mana yang sudah/belum tersambung. Satu core hanya boleh
    memiliki satu sambungan (dijaga di sisi server).
 8. **Topologi** — halaman dengan **dua tampilan**:
    * **Diagram** — gambar alur jaringan dari kiri ke kanan: OLT → port feeder →
-     ODC → splitter (termasuk cascade bertingkat) → ODP → splitter di dalam ODP.
+     ODC → splitter (termasuk cascade bertingkat dan cabang ke **ODC anak**) →
+     ODP → splitter di dalam ODP.
      Garis diberi label (porta feeder, core masuk, out N, dan `C1→C2` untuk
      sambungan core yang diwarnai sesuai standar TIA/EIA-598). Klik simpul untuk
      menyorot seluruh jalurnya, bisa zoom, dan label bisa disembunyikan.
@@ -114,7 +128,7 @@ lihat **[DEPLOY-PROXMOX.md](DEPLOY-PROXMOX.md)**. Tersedia juga `Dockerfile`.
 | `src/lib/topology.js` | Perhitungan tata letak diagram topologi (murni, bisa diuji via node) |
 | `src/components/TopologiDiagram.jsx` | Diagram SVG interaktif OLT → ODC → splitter → ODP |
 | `src/pages/Mapping.jsx` | Peta jalur core OLT → ODC → ODP + jalur splitter bertingkat |
-| `src/components/SplitterManager.jsx` | Kelola splitter (rasio, input core) & arah tiap output (ODP / cascade) |
+| `src/components/SplitterManager.jsx` | Kelola splitter (rasio, input core) & arah tiap output (ODP / cascade / ODC anak) |
 | `src/lib/api.js` | Klien fetch + sesi token |
 | `src/components/CoreManager.jsx` | Grid core interaktif (dipakai ODC & ODP) |
 | `src/pages/*` | Dashboard, OLT, ODC, ODP, Topologi, Laporan, Users |

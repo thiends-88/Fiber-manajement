@@ -59,7 +59,7 @@ export function buildPowerBudget({ olts = [], odcs = [], odps = [], splitters = 
   const oltById = new Map(olts.map((o) => [o.id, o]));
   const splById = new Map(splitters.map((s) => [s.id, s]));
 
-  // hubungan cascade: splitter anak → splitter induk
+  // cascade splitter: anak → induk
   const parentOf = new Map();
   splitters.forEach((s) =>
     (s.outputs ?? []).forEach((o) => {
@@ -67,12 +67,22 @@ export function buildPowerBudget({ olts = [], odcs = [], odps = [], splitters = 
     }),
   );
 
-  // Perjalanan ke hulu: dari sebuah splitter, telusuri induk cascade-nya
+  // ODC anak → ODC induk (lewat output splitter yang diarahkan ke ODC)
+  const odcParent = new Map();
+  splitters.forEach((s) =>
+    (s.outputs ?? []).forEach((o) => {
+      if (o.target_type === "odc" && o.target_odc_id && s.odc_id) {
+        odcParent.set(Number(o.target_odc_id), { parentOdcId: s.odc_id, splitter: s });
+      }
+    }),
+  );
+
+  // telusuri ke hulu (splitter cascade) — dibatasi 12 langkah agar aman
   const walkUp = (start) => {
     const chain = [];
     let cur = start ?? null;
     const guard = new Set();
-    while (cur && !guard.has(cur.id)) {
+    while (cur && !guard.has(cur.id) && chain.length < 12) {
       guard.add(cur.id);
       chain.unshift(cur);
       const pid = parentOf.get(cur.id);
@@ -83,43 +93,63 @@ export function buildPowerBudget({ olts = [], odcs = [], odps = [], splitters = 
 
   return odps.map((p) => {
     const odc = odcById.get(p.odc_id) ?? null;
-    const olt = odc ? oltById.get(odc.olt_id) ?? null : null;
-    const feeders = feederPorts.filter((f) => f.odc_id === p.odc_id);
-    const feeder = feeders.find((f) => num(f.tx_power) !== null) ?? feeders[0] ?? null;
-    const tx = feeder ? num(feeder.tx_power) : null;
-    const txLabel = feeder
-      ? `${olt?.name ?? "OLT"} ${feeder.card_label || `Card ${feeder.slot}`} port ${feeder.port}`
-      : null;
-
-    const feederLoss = num(odc?.feeder_loss_db) ?? 0;
     const inside = splitters.filter((s) => s.odp_id === p.id);
 
-    // Jalur ke ODP:
-    //  (a) output splitter DI LUAR ODP ini yang diarahkan ke ODP ini, atau
-    //  (b) splitter di dalam ODP ini yang punya induk cascade (diumpankan dari luar)
-    const externalEntry = splitters
-      .filter((s) => s.odp_id !== p.id)
+    // 1) rantai splitter dari ODC ODP ini menuju ODP
+    let currentOdcId = p.odc_id;
+    let chain = [];
+    const entry = splitters
+      .filter((s) => s.odc_id === currentOdcId)
       .flatMap((s) => (s.outputs ?? []).map((o) => ({ s, o })))
       .find(({ o }) => o.target_type === "odp" && Number(o.target_odp_id) === p.id);
-
-    let chain = [];
-    if (externalEntry) {
-      chain = walkUp(externalEntry.s);
+    if (entry) {
+      chain = walkUp(entry.s);
     } else {
       const fed = inside.find((s) => parentOf.has(s.id));
       if (fed) chain = walkUp(splById.get(parentOf.get(fed.id)) ?? null);
     }
+    const pieces = [{ odcId: currentOdcId, splitters: chain }];
 
-    const chainIds = new Set(chain.map((s) => s.id));
+    // 2) bila ODC ini adalah ODC ANAK, tambahkan rantai dari ODC induknya
+    for (let i = 0; i < 8 && currentOdcId && odcParent.has(Number(currentOdcId)); i++) {
+      const { parentOdcId, splitter } = odcParent.get(Number(currentOdcId));
+      pieces.unshift({ odcId: parentOdcId, splitters: walkUp(splitter) });
+      currentOdcId = parentOdcId;
+    }
+
+    const odcPathIds = pieces.map((pc) => pc.odcId);
+    const rootOdc = odcById.get(odcPathIds[0]) ?? odc;
+    const olt = rootOdc ? oltById.get(rootOdc.olt_id) ?? null : null;
+
+    // TX SFP: dari port feeder ODC paling hulu (atau ODC mana pun di jalur yang punya)
+    let feeder = null;
+    for (const id of odcPathIds) {
+      const list = feederPorts.filter((f) => f.odc_id === id);
+      const withTx = list.find((f) => num(f.tx_power) !== null);
+      if (withTx) { feeder = withTx; break; }
+      if (!feeder && list.length) feeder = list[0];
+    }
+    const tx = feeder ? num(feeder.tx_power) : null;
+    const feederOlt = feeder ? odcById.get(feeder.odc_id) : null;
+    const txLabel = feeder
+      ? `${oltById.get(feederOlt?.olt_id)?.name ?? "OLT"} ${feeder.card_label || `Card ${feeder.slot}`} port ${feeder.port}`
+      : null;
+
+    // redaman kabel feeder = jumlah redaman tiap ODC pada jalur (OLT→induk, induk→anak, …)
+    const feederLoss = odcPathIds.reduce((sum, id) => sum + (num(odcById.get(id)?.feeder_loss_db) ?? 0), 0);
+
+    const chainIds = new Set(pieces.flatMap((pc) => pc.splitters.map((s) => s.id)));
     const insideOnly = inside.filter((s) => !chainIds.has(s.id));
-    const chainLoss = chain.reduce((sum, s) => sum + (splitterLoss(s.ratio) ?? 0), 0);
+    const chainLoss = pieces
+      .flatMap((pc) => pc.splitters)
+      .reduce((sum, s) => sum + (splitterLoss(s.ratio) ?? 0), 0);
     const insideLoss = insideOnly.reduce((sum, s) => sum + (splitterLoss(s.ratio) ?? 0), 0);
 
     // jalur kabel langsung (sambungan core ODC → ODP) — dipakai bila tidak lewat splitter
     const cableLinks = links.filter((l) => l.odp_id === p.id);
     const cableLoss = cableLinks.reduce((m, l) => Math.max(m, num(l.loss_db) ?? 0), 0);
 
-    const viaSplitter = chain.length > 0;
+    const viaSplitter = chainIds.size > 0;
     const lineLoss = feederLoss + (viaSplitter ? chainLoss : cableLoss);
     const lossTotal = lineLoss + insideLoss;
     const routeKnown = viaSplitter || cableLinks.length > 0 || inside.length > 0;
@@ -130,25 +160,36 @@ export function buildPowerBudget({ olts = [], odcs = [], odps = [], splitters = 
       ? budgetStatus(finalOut)
       : { level: "unknown", label: "jalur belum terdata", cls: "bg-slate-500/15 text-slate-300" };
 
-    const routeParts = [
-      txLabel ?? "OLT (port belum diisi)",
-      odc?.name ?? "ODC ?",
-      ...chain.map((s) => `${s.name} ${s.ratio}`),
-      p.name,
-      ...insideOnly.map((s) => `${s.name} ${s.ratio}`),
-    ];
+    // teks jalur: OLT → ODC → splitter → (ODC anak → splitter) → ODP → splitter ODP
+    const routeParts = [txLabel ?? "OLT (port belum diisi)"];
+    pieces.forEach((pc) => {
+      routeParts.push(odcById.get(pc.odcId)?.name ?? "ODC ?");
+      pc.splitters.forEach((s) => routeParts.push(`${s.name} ${s.ratio}`));
+    });
+    routeParts.push(p.name);
+    insideOnly.forEach((s) => routeParts.push(`${s.name} ${s.ratio}`));
+
+    const chainList = pieces.flatMap((pc) =>
+      pc.splitters.map((s) => ({
+        id: s.id,
+        name: s.name,
+        ratio: s.ratio,
+        loss: splitterLoss(s.ratio),
+        odcName: odcById.get(pc.odcId)?.name ?? null,
+      })),
+    );
 
     return {
       odpId: p.id,
       odcId: odc?.id ?? null,
       odpName: p.name,
       odcName: odc?.name ?? "—",
+      odcPath: odcPathIds.map((id) => odcById.get(id)?.name).filter(Boolean),
       oltName: olt?.name ?? "—",
       txLabel,
       tx,
-      feeders: feeders.length,
       feederLoss,
-      chain: chain.map((s) => ({ id: s.id, name: s.name, ratio: s.ratio, loss: splitterLoss(s.ratio) })),
+      chain: chainList,
       chainLoss,
       insideSplitters: insideOnly.map((s) => ({ id: s.id, name: s.name, ratio: s.ratio, loss: splitterLoss(s.ratio) })),
       insideLoss,
@@ -160,7 +201,7 @@ export function buildPowerBudget({ olts = [], odcs = [], odps = [], splitters = 
       finalOut,
       status,
       route: routeParts.join(" → "),
-      topology: [...chain, ...insideOnly].map((s) => String(s.ratio).split(":")[1]).join(":"),
+      topology: [...chainList, ...insideOnly].map((s) => String(s.ratio).split(":")[1]).join(":"),
       links: cableLinks.length,
     };
   });

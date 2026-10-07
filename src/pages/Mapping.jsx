@@ -315,6 +315,9 @@ export default function Mapping() {
                         <td className="td">
                           <div className="font-medium">{b.odpName}</div>
                           {b.topology && <Badge cls="bg-violet-500/15 text-violet-300">Topologi {b.topology}</Badge>}
+                          {(b.odcPath?.length ?? 0) > 1 && (
+                            <Badge cls="bg-sky-500/15 text-sky-300">via {b.odcPath.join(" → ")}</Badge>
+                          )}
                         </td>
                         <td className="td max-w-[280px] text-[11px] text-mut">{b.route}</td>
                         <td className="td text-mut">
@@ -405,14 +408,18 @@ export default function Mapping() {
                           {outs.map((o) => {
                             const label = o.target_type === "odp"
                               ? o.target_odp_name
-                              : o.target_type === "splitter"
-                                ? `⇄ ${o.target_splitter_name}`
-                                : "kosong";
+                              : o.target_type === "odc"
+                                ? `⇉ ${o.target_odc_name} (ODC anak)`
+                                : o.target_type === "splitter"
+                                  ? `⇄ ${o.target_splitter_name}`
+                                  : "kosong";
                             const cls = o.target_type === "odp"
                               ? "border-emerald-500/50 text-emerald-300"
-                              : o.target_type === "splitter"
-                                ? "border-violet-500/50 text-violet-300"
-                                : "border-dashed border-line text-mut";
+                              : o.target_type === "odc"
+                                ? "border-sky-500/50 text-sky-300"
+                                : o.target_type === "splitter"
+                                  ? "border-violet-500/50 text-violet-300"
+                                  : "border-dashed border-line text-mut";
                             return (
                               <span key={o.id} className={`rounded-md border px-2 py-0.5 text-[11px] ${cls}`}>
                                 out {o.port}: {label}

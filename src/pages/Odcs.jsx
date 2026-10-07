@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Boxes, Pencil, Plus, Trash2 } from "lucide-react";
 import { api } from "../lib/api.js";
 import { useAuth } from "../lib/auth.jsx";
-import { Card, Empty, Field, Modal, PageHeader, Toast, useToast } from "../components/ui.jsx";
+import { Badge, Card, Empty, Field, Modal, PageHeader, Toast, useToast } from "../components/ui.jsx";
 import CoreManager from "../components/CoreManager.jsx";
 import SplitterManager from "../components/SplitterManager.jsx";
 import { CABLE_TYPES, getCableInfo } from "../lib/fiber.js";
@@ -20,17 +20,19 @@ export default function Odcs() {
   const [form, setForm] = useState(empty);
   const [ports, setPorts] = useState([]);
   const [feederPorts, setFeederPorts] = useState([]);
+  const [splitters, setSplitters] = useState([]);
   const [toastState, setToastState] = useState(null);
   const toast = useToast(setToastState);
 
   const load = useCallback(async () => {
-    const [d, o, p, f] = await Promise.all([
-      api("/api/odcs"), api("/api/olts"), api("/api/ports"), api("/api/feeder-ports"),
+    const [d, o, p, f, s] = await Promise.all([
+      api("/api/odcs"), api("/api/olts"), api("/api/ports"), api("/api/feeder-ports"), api("/api/splitters"),
     ]);
     setOdcs(d);
     setOlts(o);
     setPorts(p);
     setFeederPorts(f);
+    setSplitters(s);
   }, []);
 
   useEffect(() => {
@@ -46,6 +48,17 @@ export default function Odcs() {
         feeder_port_ids: form.feeder_port_ids.map(Number),
         feeder_loss_db: form.feeder_loss_db === "" ? null : Number(form.feeder_loss_db),
       };
+
+  // ODC yang disuplai dari output splitter ODC lain = ODC anak
+  const parentInfo = new Map();
+  splitters.forEach((sp) => {
+    if (!sp.odc_id) return;
+    (sp.outputs ?? []).forEach((o) => {
+      if (o.target_type === "odc" && o.target_odc_id) {
+        parentInfo.set(Number(o.target_odc_id), { parentName: sp.odc_name, splitter: sp.name, ratio: sp.ratio, port: o.port });
+      }
+    });
+  });
       if (modal.mode === "add") await api("/api/odcs", { method: "POST", body });
       else await api(`/api/odcs/${modal.odc.id}`, { method: "PATCH", body: { ...modal.odc, ...body } });
       setModal(null);
@@ -114,7 +127,17 @@ export default function Odcs() {
                   <span className="mr-2 inline-block text-emerald-400"><Boxes size={14} /></span>
                   {d.name}
                 </td>
-                <td className="td text-mut">{d.olt_name}</td>
+                <td className="td text-mut">
+                  {d.olt_name}
+                  {parentInfo.has(d.id) && (
+                    <div className="mt-1">
+                      <Badge cls="bg-sky-500/15 text-sky-300">ODC anak</Badge>
+                      <div className="mt-1 text-[10px] text-mut-soft">
+                        dari {parentInfo.get(d.id).parentName} · {parentInfo.get(d.id).splitter} {parentInfo.get(d.id).ratio} out {parentInfo.get(d.id).port}
+                      </div>
+                    </div>
+                  )}
+                </td>
                 <td className="td text-mut">{getCableInfo(d.cable_type)?.label ?? d.cable_type}</td>
                 <td className="td text-mut">
                   {feederOf(d.id).length === 0 ? "-" : feederOf(d.id).map(feederLabel).join(", ")}

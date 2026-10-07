@@ -14,6 +14,7 @@ export const EDGE_STYLE = {
   feed: { color: "#8b5cf6", label: "Core masuk perangkat" },
   cascade: { color: "#a78bfa", label: "Cascade splitter" },
   out: { color: "#34d399", label: "Output splitter → ODP" },
+  "splitter-odc": { color: "#38bdf8", label: "Output splitter → ODC anak" },
   core: { color: "#f59e0b", label: "Sambungan core (kabel)" },
   "core-empty": { color: "#64748b", label: "ODP belum dipetakan core" },
 };
@@ -88,9 +89,15 @@ export function buildTopologyGraph({
   });
 
   // --- sisi (edges) ---
-  // OLT → ODC (porta feeder)
+  // ODC yang menerima suplai dari output splitter ODC lain (jadi ODC anak)
+  const childOdcIds = new Set(
+    splitters.flatMap((s) => (s.outputs ?? []).filter((o) => o.target_type === "odc" && o.target_odc_id).map((o) => Number(o.target_odc_id))),
+  );
+
+  // OLT → ODC: gambar bila ODC punya port feeder, atau memang bukan ODC anak
   odcs.forEach((d) => {
     const fp = feederPorts.filter((f) => f.odc_id === d.id);
+    if (fp.length === 0 && childOdcIds.has(d.id)) return; // sudah digambar sebagai cabang ODC induk
     const label = fp.length ? fp.map((f) => `p${f.port}`).join(",") : "feeder -";
     addEdge(`olt-${d.olt_id}`, `odc-${d.id}`, "feeder", label);
   });
@@ -107,6 +114,8 @@ export function buildTopologyGraph({
         addEdge(`spl-${s.id}`, `spl-${o.target_splitter_id}`, "cascade", `out ${o.port}`);
       } else if (o.target_type === "odp" && o.target_odp_id) {
         addEdge(`spl-${s.id}`, `odp-${o.target_odp_id}`, "out", `out ${o.port}`);
+      } else if (o.target_type === "odc" && o.target_odc_id) {
+        addEdge(`spl-${s.id}`, `odc-${o.target_odc_id}`, "splitter-odc", `out ${o.port}`);
       }
     });
   });
