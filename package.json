@@ -9,7 +9,11 @@
     "api": "node server.mjs",
     "build": "vite build",
     "preview": "vite preview",
-    "test:render": "vite build --ssr tests/render-uji.jsx --outDir .uji-out --logLevel error && node tests/render-uji.mjs"
+    "test:render": "vite build --ssr tests/render-uji.jsx --outDir .uji-out --logLevel error && node tests/render-uji.mjs",
+    "test:logic": "node tests/logic-uji.mjs",
+    "test:api": "node tests/api-uji.mjs",
+    "test:layout": "node tests/layout-uji.mjs",
+    "test": "npm run test:logic && npm run test:api && npm run test:layout"
   },
   "dependencies": {
     "lucide-react": "^0.575.0",

@@ -48,7 +48,7 @@ const num = (v) => {
 
 const r1 = (v) => Math.round(v * 10) / 10;
 export const fmtDbm = (v) => (v === null ? "—" : `${r1(v)} dBm`);
-export const fmtDb = (v) => `${r1(v)} dB`;
+export const fmtDb = (v) => (v === null || v === undefined ? "—" : `${r1(v)} dB`);
 
 /**
  * Hitung anggaran daya untuk setiap ODP.
@@ -110,10 +110,16 @@ export function buildPowerBudget({ olts = [], odcs = [], odps = [], splitters = 
     }
     const pieces = [{ odcId: currentOdcId, splitters: chain }];
 
-    // 2) bila ODC ini adalah ODC ANAK, tambahkan rantai dari ODC induknya
+    // 2) bila ODC ini adalah ODC ANAK, tambahkan rantai dari ODC induknya.
+    //    Splitter yang sudah terhitung di rantai anak TIDAK dihitung dua kali:
+    //    saat cascade splitter melewati batas ODC (splitter di ODC induk →
+    //    splitter di ODC anak), splitter induk yang sama muncul di kedua sisi.
+    const sudahDihitung = new Set(chain.map((s) => s.id));
     for (let i = 0; i < 8 && currentOdcId && odcParent.has(Number(currentOdcId)); i++) {
       const { parentOdcId, splitter } = odcParent.get(Number(currentOdcId));
-      pieces.unshift({ odcId: parentOdcId, splitters: walkUp(splitter) });
+      const rantaiInduk = walkUp(splitter).filter((s) => !sudahDihitung.has(s.id));
+      rantaiInduk.forEach((s) => sudahDihitung.add(s.id));
+      pieces.unshift({ odcId: parentOdcId, splitters: rantaiInduk });
       currentOdcId = parentOdcId;
     }
 
@@ -140,6 +146,11 @@ export function buildPowerBudget({ olts = [], odcs = [], odps = [], splitters = 
 
     const chainIds = new Set(pieces.flatMap((pc) => pc.splitters.map((s) => s.id)));
     const insideOnly = inside.filter((s) => !chainIds.has(s.id));
+    // Splitter dengan rasio yang tidak punya nilai redaman → JANGAN dihitung 0 dB,
+    // karena jalur akan tampak lebih baik dari kenyataan.
+    const rasioTakDikenal = [...pieces.flatMap((pc) => pc.splitters), ...insideOnly].some(
+      (s) => splitterLoss(s.ratio) === null,
+    );
     const chainLoss = pieces
       .flatMap((pc) => pc.splitters)
       .reduce((sum, s) => sum + (splitterLoss(s.ratio) ?? 0), 0);
@@ -151,14 +162,17 @@ export function buildPowerBudget({ olts = [], odcs = [], odps = [], splitters = 
 
     const viaSplitter = chainIds.size > 0;
     const lineLoss = feederLoss + (viaSplitter ? chainLoss : cableLoss);
-    const lossTotal = lineLoss + insideLoss;
-    const routeKnown = viaSplitter || cableLinks.length > 0 || inside.length > 0;
+    const routeKnown = !rasioTakDikenal && (viaSplitter || cableLinks.length > 0 || inside.length > 0);
+    const lossTotal = rasioTakDikenal || !routeKnown ? null : lineLoss + insideLoss;
 
-    const arrival = tx === null ? null : tx - lineLoss; // daya tiba di ODP
+    // daya tiba di ODP — null kalau redaman/TX belum lengkap atau jalur belum terdata
+    const arrival = tx === null || rasioTakDikenal || !routeKnown ? null : tx - lineLoss;
     const finalOut = arrival === null ? null : arrival - insideLoss; // ujung terjauh
-    const status = routeKnown
-      ? budgetStatus(finalOut)
-      : { level: "unknown", label: "jalur belum terdata", cls: "bg-slate-500/15 text-slate-300" };
+    const status = rasioTakDikenal
+      ? { level: "unknown", label: "ada rasio splitter yang redamannya belum diketahui", cls: "bg-slate-500/15 text-slate-300" }
+      : routeKnown
+        ? budgetStatus(finalOut)
+        : { level: "unknown", label: "jalur belum terdata", cls: "bg-slate-500/15 text-slate-300" };
 
     // teks jalur: OLT → ODC → splitter → (ODC anak → splitter) → ODP → splitter ODP
     const routeParts = [txLabel ?? "OLT (port belum diisi)"];
@@ -196,6 +210,7 @@ export function buildPowerBudget({ olts = [], odcs = [], odps = [], splitters = 
       cableLoss,
       viaSplitter,
       routeKnown,
+      rasioTakDikenal,
       lossTotal,
       arrival,
       finalOut,

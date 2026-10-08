@@ -326,7 +326,7 @@ export default function Mapping() {
                         </td>
                         <td className="td text-[11px] text-mut">
                           <div>
-                            {b.lossTotal === 0 ? "belum ada data" : fmtDb(b.lossTotal)}
+                            {b.lossTotal === null || b.lossTotal === 0 ? "belum ada data" : fmtDb(b.lossTotal)}
                             {b.chain.length > 0 && <span> · splitter {b.chain.map((c) => `${c.ratio} (${c.loss})`).join(" + ")}</span>}
                             {b.insideLoss > 0 && <span> + dalam ODP {b.insideSplitters.map((c) => `${c.ratio} (${c.loss})`).join(" + ")}</span>}
                             {!b.viaSplitter && b.cableLoss > 0 && <span> + kabel {b.cableLoss}</span>}

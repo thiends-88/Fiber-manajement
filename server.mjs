@@ -13,6 +13,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
+import { SPLITTER_RATIOS } from "./src/lib/fiber.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Lokasi database bisa diatur lewat ARENA_DB_PATH (berguna untuk uji coba / multi-instance)
@@ -158,10 +159,10 @@ db.exec(`
 // Migrasi ringan: database lama otomatis mendapat kolom/tabel baru
 // ---------------------------------------------------------------------------
 const MIGRATIONS = [
-  "ALTER TABLE core_assignments ADD COLUMN power_dbm TEXT",
+  "ALTER TABLE core_assignments ADD COLUMN power_dbm REAL",
   "ALTER TABLE odcs ADD COLUMN feeder_loss_db REAL",
-  "ALTER TABLE olt_ports ADD COLUMN tx_power TEXT",
-  "ALTER TABLE olt_ports ADD COLUMN rx_power TEXT",
+  "ALTER TABLE olt_ports ADD COLUMN tx_power REAL",
+  "ALTER TABLE olt_ports ADD COLUMN rx_power REAL",
   `CREATE TABLE IF NOT EXISTS splitters (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     odc_id INTEGER REFERENCES odcs(id) ON DELETE CASCADE,
@@ -297,13 +298,10 @@ function checkFeederPorts(oltId, ids) {
   }
   return null;
 }
-const SPLITTER_RATIO_RE = /^1:(\d+)$/;
-// Hanya rasio 1:N yang sah (mis. 1:8); mengembalikan 0 bila tidak valid
-const splitterPorts = (ratio) => {
-  const m = SPLITTER_RATIO_RE.exec(String(ratio ?? ""));
-  const n = m ? Number(m[1]) : 0;
-  return n >= 2 && n <= 64 ? n : 0;
-};
+// Rasio splitter yang sah = rasio yang ditawarkan aplikasi (satu sumber kebenaran),
+// supaya tidak ada splitter yang redamannya tidak bisa dihitung anggaran dayanya.
+const ratioSah = (ratio) => SPLITTER_RATIOS.includes(String(ratio ?? "").trim());
+const splitterPorts = (ratio) => (ratioSah(ratio) ? Number(String(ratio).split(":")[1]) : 0);
 const SPLITTER_SQL = `SELECT s.*, d.name AS odc_name, p.name AS odp_name
   FROM splitters s LEFT JOIN odcs d ON d.id = s.odc_id LEFT JOIN odps p ON p.id = s.odp_id`;
 const SPLITTER_OUT_SQL = `SELECT o.*,
@@ -888,7 +886,7 @@ const server = http.createServer(async (req, res) => {
       const b = await readBody(req);
       if (!b.name?.trim() || !b.ratio) return send(req, res, 400, { error: "Nama dan rasio splitter wajib diisi" });
       if (!b.odc_id && !b.odp_id) return send(req, res, 400, { error: "Splitter harus ditempatkan di ODC atau ODP" });
-      if (!splitterPorts(b.ratio)) return send(req, res, 400, { error: "Rasio splitter tidak valid (contoh 1:4)" });
+      if (!splitterPorts(b.ratio)) return send(req, res, 400, { error: `Rasio splitter tidak valid — pilih: ${SPLITTER_RATIOS.join(", ")}` });
       const r = db.prepare("INSERT INTO splitters (odc_id, odp_id, name, ratio, input_core, input_note, notes) VALUES (?,?,?,?,?,?,?)")
         .run(b.odc_id || null, b.odp_id || null, b.name.trim(), b.ratio, b.input_core || null, b.input_note || null, b.notes || null);
       syncSplitterPorts(r.lastInsertRowid, b.ratio);
@@ -899,7 +897,7 @@ const server = http.createServer(async (req, res) => {
       const id = Number(m[1]);
       if (method === "PATCH") {
         const b = await readBody(req);
-        if (!splitterPorts(b.ratio)) return send(req, res, 400, { error: "Rasio splitter tidak valid (contoh 1:8)" });
+        if (!splitterPorts(b.ratio)) return send(req, res, 400, { error: `Rasio splitter tidak valid — pilih: ${SPLITTER_RATIOS.join(", ")}` });
         db.prepare("UPDATE splitters SET name=?, ratio=?, input_core=?, input_note=?, notes=?, updated_at=? WHERE id=?")
           .run(b.name, b.ratio, b.input_core || null, b.input_note || null, b.notes || null, now(), id);
         syncSplitterPorts(id, b.ratio);

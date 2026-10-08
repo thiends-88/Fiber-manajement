@@ -17,6 +17,8 @@ RUN npm run build
 FROM node:22-alpine
 WORKDIR /app
 COPY --from=build /app/server.mjs ./
+# server.mjs memakai daftar rasio splitter dari src/lib/fiber.js (satu sumber kebenaran)
+COPY --from=build /app/src/lib/fiber.js ./src/lib/fiber.js
 COPY --from=build /app/dist ./dist
 ENV ARENA_API_PORT=8080
 EXPOSE 8080

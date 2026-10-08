@@ -126,6 +126,23 @@ npm run test:render        # hasil: SEMUA HALAMAN TAMPIL NORMAL
 Kalau ada halaman yang kosong/error (mis. `X is not defined`), uji ini GAGAL
 dan menyebutkan rutenya. Port server bisa diganti: `ARENA_API_PORT=3000 npm run test:render`.
 
+## Uji otomatis lainnya (sebelum masuk Proxmox)
+
+```bash
+npm test              # logika + API + tata letak runtime (tidak butuh server jalan)
+npm run test:logic    # anggaran daya, topologi, data kabel (murni, 48 pemeriksaan)
+npm run test:api      # login, hak akses, CRUD semua entitas, penjaga validasi (77 pemeriksaan)
+npm run test:layout   # server tetap jalan hanya dengan file yang disalin Dockerfile
+npm run test:render   # semua halaman ter-render (butuh server jalan)
+```
+
+Yang diperiksa `npm run test:api`: login/logout & token, hak akses per peran
+(admin/operator/user), CRUD OLT–kartu–port, ODC + port feeder banyak input, ODP,
+splitter (rasio sah, tempat di ODC/ODP, cascade, output → ODC anak, cegah
+lingkaran), mapping core (core ganda → 409), manajemen user, dashboard/laporan,
+input rusak tidak membuat server mati, serta angka anggaran daya dari data demo
+(ODP-001 ≈ −21,8 dBm, ODP-004 lewat ODC anak ≈ −22,2 dBm).
+
 Panduan **instalasi lengkap di Proxmox** — jalur utama **LXC Ubuntu 24.04**
 (buat container, IP statis via netplan, install Node 22.5+, service systemd,
 backup, reverse proxy, troubleshooting), plus catatan kalau pakai VM Debian 12:
