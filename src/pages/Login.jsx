@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Zap } from "lucide-react";
 import { useAuth } from "../lib/auth.jsx";
 import ThemeMenu from "../components/ThemeMenu.jsx";
+import FiberBackground from "../components/FiberBackground.jsx";
 
 export default function Login() {
   const { user, signIn } = useAuth();
@@ -32,16 +33,22 @@ export default function Login() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center px-4">
+    <div className="relative flex min-h-screen items-center justify-center px-4">
+      <FiberBackground />
       <div className="fixed right-4 top-4 z-40">
         <ThemeMenu />
       </div>
-      <div className="w-full max-w-sm">
-        <div className="card p-6">
+      <div className="relative z-10 w-full max-w-sm">
+        <div className="card fx-card p-6">
           <div className="mb-5 text-center">
-            <span className="brand-mark mx-auto mb-3 flex size-12 items-center justify-center rounded-xl">
-              <Zap size={22} />
-            </span>
+            <div className="relative mx-auto mb-3 size-12">
+              <span className="fx-ring" />
+              <span className="fx-ring" />
+              <span className="brand-mark relative flex size-12 items-center justify-center rounded-xl">
+                <Zap size={22} />
+              </span>
+            </div>
+            <div className="fx-tag mb-1">Jaringan Fiber Optik</div>
             <h1 className="page-title text-center text-xl">Fiber Manajement Core</h1>
           </div>
           <form onSubmit={submit} className="space-y-3">

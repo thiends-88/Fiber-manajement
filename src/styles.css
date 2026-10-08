@@ -401,3 +401,93 @@ html[data-mode="terang"] .text-mut\/70 {
   background: var(--color-acc);
   background-clip: content-box;
 }
+
+/* ---------- Layar login: latar fiber optik animatif ---------- */
+.fx-bg {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  background:
+    radial-gradient(900px 500px at 15% -10%, var(--color-acc-faint), transparent 60%),
+    radial-gradient(800px 500px at 100% 110%, var(--color-acc2-faint), transparent 60%),
+    var(--color-bg);
+}
+.fx-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.fx-trail {
+  stroke-dasharray: 70 890;
+  animation-name: fx-flow;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+@keyframes fx-flow {
+  from { stroke-dashoffset: 0; }
+  to { stroke-dashoffset: -960; }
+}
+.fx-port {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: fx-port 2.4s ease-out infinite;
+}
+@keyframes fx-port {
+  0% { opacity: 0.9; transform: scale(0.6); }
+  100% { opacity: 0; transform: scale(2.2); }
+}
+.fx-card {
+  position: relative;
+  z-index: 10;
+  animation: fx-card-in 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+@keyframes fx-card-in {
+  from { opacity: 0; transform: translateY(14px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+.fx-card::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(120deg, #2563eb, #8b5cf6, #22d3ee, #2563eb);
+  background-size: 300% 300%;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  opacity: 0.55;
+  animation: fx-border 8s linear infinite;
+  pointer-events: none;
+}
+@keyframes fx-border {
+  to { background-position: 300% 50%; }
+}
+.fx-ring {
+  position: absolute;
+  inset: -8px;
+  border-radius: 16px;
+  border: 1.5px solid var(--color-acc2);
+  animation: fx-ring 2.6s ease-out infinite;
+  pointer-events: none;
+}
+.fx-ring + .fx-ring {
+  animation-delay: 1.3s;
+}
+@keyframes fx-ring {
+  0% { opacity: 0.7; transform: scale(0.95); }
+  100% { opacity: 0; transform: scale(1.35); }
+}
+.fx-tag {
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  font-size: 10px;
+  color: var(--color-acc2);
+  opacity: 0.85;
+}
+@media (prefers-reduced-motion: reduce) {
+  .fx-trail, .fx-port, .fx-card, .fx-card::before, .fx-ring { animation: none !important; }
+  .fx-ring { display: none; }
+}
