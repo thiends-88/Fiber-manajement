@@ -23,8 +23,22 @@ function Arrow() {
   return <ArrowRight size={15} className="shrink-0 text-cyan-400" />;
 }
 
+// Chip warna core masuk ODP (warna TIA/EIA-598 dari kabel ODC asal)
+function FeedChip({ feed }) {
+  if (!feed) return null;
+  const color = colorForCoreInCable(feed.core, coresPerTube(feed.cableType));
+  return (
+    <span className="inline-flex items-center gap-1 rounded-md border border-line bg-panel2 px-1.5 py-0.5 text-[11px]">
+      <span className="inline-block h-2 w-2 shrink-0 rounded-full border border-black/30" style={{ background: color.hex }} title={color.name} />
+      <span className="font-medium">core {feed.core}</span>
+      <span className="text-mut">· {color.name}</span>
+    </span>
+  );
+}
+
 // Pohon jalur core (dari buildCoreRoutes): splitter → cascade / ODP / ODC anak.
-function PohonJalur({ node }) {
+// feed = { core, cableType } core ODC yang mengalir ke pohon ini (untuk warna).
+function PohonJalur({ node, feed }) {
   if (!node) return null;
   if (node.kind === "splitter") {
     return (
@@ -41,7 +55,7 @@ function PohonJalur({ node }) {
         {(node.children.length > 0 || node.idlePorts > 0) && (
           <div className="ml-1.5 mt-2 space-y-2 border-l border-line pl-3">
             {node.children.map((c, i) => (
-              <PohonJalur key={`${node.id}-${i}`} node={c} />
+              <PohonJalur key={`${node.id}-${i}`} node={c} feed={feed} />
             ))}
             {node.idlePorts > 0 && (
               <div className="rounded-md border border-dashed border-line px-2 py-1 text-[11px] text-mut">
@@ -60,6 +74,7 @@ function PohonJalur({ node }) {
           {node.port != null && <Badge cls="bg-violet-500/15 text-violet-300">out {node.port}</Badge>}
           <span className="font-semibold text-emerald-300">{node.name}</span>
           <span className="text-mut">{node.location || "lokasi belum diisi"}</span>
+          <FeedChip feed={feed} />
         </div>
         {node.insideSplitters.length > 0 && (
           <div className="mt-1 text-[11px] text-mut">
@@ -80,7 +95,7 @@ function PohonJalur({ node }) {
         {node.children.length > 0 ? (
           <div className="ml-1.5 mt-2 space-y-2 border-l border-line pl-3">
             {node.children.map((c, i) => (
-              <PohonJalur key={`${node.odcId}-${i}`} node={c} />
+              <PohonJalur key={`${node.odcId}-${i}`} node={c} feed={feed} />
             ))}
           </div>
         ) : (
@@ -308,7 +323,7 @@ export default function Mapping() {
                           {odc.name} · daya: {feeder?.power_dbm ? `${feeder.power_dbm} dBm` : "belum terdata"}
                         </span>
                       </div>
-                      <PohonJalur node={t.root} />
+                      <PohonJalur node={t.root} feed={{ core: t.core, cableType: cable }} />
                     </div>
                   );
                 })}

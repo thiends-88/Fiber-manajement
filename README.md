@@ -62,6 +62,7 @@ CSV, dan manajemen user berbasis peran.
      sambungan core yang diwarnai sesuai standar TIA/EIA-598). Klik simpul untuk
      menyorot seluruh jalurnya, bisa zoom, dan label bisa disembunyikan.
      ODP yang belum dipetakan core ditandai garis putus-putus.
+     **Warna core mengalir**: garis feed, cascade, dan output diwarnai sesuai core kabel ODC asal (TIA/EIA-598); titik warna di kanan-bawah ODP menunjukkan core yang masuk, dan Mapping menampilkan chip "core N · Warna" di tiap ODP.
    * **Daftar** — pohon OLT → ODC → ODP yang bisa dibuka-tutup (tampilan lama).
 9. **Laporan** — ekspor CSV + manajemen user berbasis peran (admin/operator/user).
 
@@ -138,7 +139,7 @@ dan menyebutkan rutenya. Port server bisa diganti: `ARENA_API_PORT=3000 npm run 
 
 ```bash
 npm test              # logika + API + tata letak runtime (tidak butuh server jalan)
-npm run test:logic    # anggaran daya, topologi, data kabel, peta jalur core (murni, 63 pemeriksaan)
+npm run test:logic    # anggaran daya, topologi, data kabel, peta jalur core (murni, 69 pemeriksaan)
 npm run test:api      # login, hak akses, CRUD semua entitas, penjaga validasi (77 pemeriksaan)
 npm run test:layout   # server tetap jalan hanya dengan file yang disalin Dockerfile
 npm run test:render   # semua halaman ter-render (butuh server jalan)

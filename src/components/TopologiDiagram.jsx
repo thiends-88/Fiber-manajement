@@ -113,12 +113,15 @@ export default function TopologiDiagram({ olts, odcs, odps, splitters, links, fe
         ))}
         <span className="mx-1 opacity-40">|</span>
         {Object.entries(EDGE_STYLE).map(([k, v]) => (
-          <span key={k} className="flex items-center gap-1.5">
+            <span key={k} className="flex items-center gap-1.5">
             <span className="inline-block h-0.5 w-5 rounded" style={{ background: v.color }} />
             {v.label}
           </span>
         ))}
       </div>
+      <p className="mb-3 text-[11px] text-mut">
+        Warna garis feed, cascade, dan output mengikuti warna core kabel ODC asal (TIA/EIA-598); titik kecil di kanan-bawah ODP menunjukkan core yang masuk.
+      </p>
 
       <Card className="overflow-x-auto p-3">
         <svg
@@ -195,6 +198,21 @@ export default function TopologiDiagram({ olts, odcs, odps, splitters, links, fe
                 <text x={14} y={41} fontSize={10.5} fill="var(--color-mut)">
                   {n.sub}
                 </text>
+                {/* titik warna core masuk (TIA/EIA-598), kanan-bawah simpul ODP */}
+                {n.kind === "odp" &&
+                  (n.coreIn ?? []).slice(0, 8).map((c, i) => (
+                    <circle
+                      key={`${c.odcId}-${c.core}-${c.port ?? "d"}`}
+                      cx={NODE_W - 10 - i * 12}
+                      cy={NODE_H - 10}
+                      r={4.5}
+                      fill={c.hex}
+                      stroke="var(--color-line)"
+                      strokeWidth={0.8}
+                    >
+                      <title>{`core ${c.core} • Warna dari ${c.odcName} (${c.port != null ? `out ${c.port}` : "sambungan langsung"})`}</title>
+                    </circle>
+                  ))}
               </g>
             );
           })}
@@ -219,6 +237,26 @@ export default function TopologiDiagram({ olts, odcs, odps, splitters, links, fe
               {childNames.length ? childNames.join(", ") : "— (ujung)"}
             </div>
           </div>
+
+          {node.kind === "odp" && node.coreIn?.length > 0 && (
+            <div className="mt-3">
+              <div className="mb-1 text-xs font-semibold">Core masuk (warna TIA/EIA-598)</div>
+              <div className="flex flex-wrap gap-1.5">
+                {node.coreIn.map((c) => (
+                  <span
+                    key={`${c.odcId}-${c.core}-${c.port ?? "d"}`}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-line bg-panel2 px-2 py-0.5 text-[11px]"
+                  >
+                    <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-full border border-black/30" style={{ background: c.hex }} />
+                    <span className="font-medium">Core {c.core}</span>
+                    <span className="text-mut">
+                      · {c.colorName} · {c.odcName} · {c.port != null ? `out ${c.port}` : "sambungan langsung"}
+                    </span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
 
           {node.kind === "odp" && (() => {
             const id = Number(node.id.replace("odp-", ""));
