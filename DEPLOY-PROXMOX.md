@@ -1,7 +1,7 @@
-# Instalasi **Fiber Manajement Core** di Proxmox
+# Instalasi **Fiber Manajement Core** di Proxmox (LXC Ubuntu 24.04)
 
-Panduan langkah-demi-langkah dari **VM kosong di Proxmox** sampai aplikasi bisa
-dibuka dari browser. Aplikasi ini sengaja dibuat sangat ringan:
+Panduan langkah-demi-langkah dari **LXC container kosong di Proxmox** sampai
+aplikasi bisa dibuka dari browser. Aplikasi ini sengaja dibuat sangat ringan:
 
 - **Satu proses** (`node server.mjs`) melayani API **dan** tampilan (frontend) — cukup **satu port**.
 - **Tanpa dependensi saat runtime** — `server.mjs` hanya memakai modul bawaan Node
@@ -10,8 +10,8 @@ dibuka dari browser. Aplikasi ini sengaja dibuat sangat ringan:
 - **Database = satu file** `data/fiberops.db`. Backup cukup dengan menyalin file itu.
 
 > **Syarat wajib: Node.js 22.5 atau lebih baru** (dipakai `node:sqlite`).
-> Debian 12 bawaan repo hanya punya Node 18 — jadi Node harus dipasang dari NodeSource
-> (ada di Langkah 3).
+> Ubuntu 24.04 dari repo apt hanya punya Node **18.19.1** — **terlalu tua**, jadi Node
+> harus dipasang dari NodeSource (Langkah 3). Jangan pakai `apt install nodejs` saja.
 
 **Repo kode:** `https://github.com/thiends-88/Fiber-manajement.git`
 **Cabang yang dipakai:** `arena/34102c90-fiber-manajement`
@@ -24,90 +24,108 @@ memakai cabang `main`.)
 
 | # | Langkah | Perkiraan waktu |
 | - | ------- | --------------- |
-| 1 | Buat VM Debian 12 di Proxmox | 10 menit |
-| 2 | Install Debian + atur IP statis | 10 menit |
+| 1 | Buat LXC container Ubuntu 24.04 di Proxmox | 5 menit |
+| 2 | Update sistem + IP statis + SSH | 5 menit |
 | 3 | Install Node.js 22.5+ | 2 menit |
 | 4 | Ambil kode & build aplikasi | 2 menit |
 | 5 | Jadwalkan sebagai service (auto-start) | 2 menit |
 | 6 | Buka dari browser & login | 1 menit |
 
-**Spesifikasi minimum VM** (nyaman untuk ratusan OLT/ODC/ODP):
+**Spesifikasi minimum container** (nyaman untuk ratusan OLT/ODC/ODP):
 
 | Komponen | Nilai |
 | -------- | ----- |
-| CPU | 2 core (type `host`) |
-| RAM | 2 GB |
-| Disk | 20 GB |
+| CPU | 2 core |
+| RAM | 2 GB (swap = 0; kalau nanti kurang, naikkan di Proxmox) |
+| Disk | 20 GB root disk |
 | Jaringan | 1 NIC, bridge `vmbr0` |
 
 ---
 
-## Langkah 1 — Buat VM di Proxmox (lewat web UI)
+## Langkah 1 — Buat LXC container Ubuntu 24.04 (lewat web UI Proxmox)
 
-1. **Upload ISO Debian 12**
-   `Datacenter → pve → local (storage) → ISO Images → Upload` → pilih
-   `debian-12.x-amd64-netinst.iso` (dari debian.org).
+1. **Unduh template Ubuntu 24.04**
+   `Datacenter → pve → local (storage) → CT Templates → Templates` → cari
+   **`ubuntu-24.04-standard`** → **Download**.
+   (Dari shell Proxmox: `pveam update && pveam download local ubuntu-24.04-standard_24.04-2_amd64.tar.zst`)
 
-2. **Create VM** (tombol kanan atas):
-   - **General**: VM ID biarkan otomatis, Name: `fiberops`.
-   - **OS**: pilih ISO Debian 12 yang baru di-upload.
-   - **System**: biarkan default (SCSI Controller: `VirtIO SCSI`).
-   - **Disks**: 20 GB, storage `local-lvm`, hapus centang *Skip replication* bila ada.
-   - **CPU**: 2 cores, Type: `host`.
-   - **Memory**: 2048 MiB (biarkan *Ballooning* aktif).
-   - **Network**: Bridge `vmbr0`, Model: `VirtIO (paravirtualized)`.
-   - **Confirm**: **hilangkan centang "Start after created"**, lalu Finish.
+2. **Create CT** (tombol kanan atas):
+   - **General**: CT ID biarkan otomatis, **Hostname**: `fiberops`,
+     **Password**: buat password root (catat!), biarkan *Unprivileged* tercentang
+     (lebih aman; aplikasi ini tetap jalan normal).
+   - **Template**: pilih `ubuntu-24.04-standard_…` yang baru diunduh.
+   - **Disks**: 20 GB, storage `local-lvm`.
+   - **CPU**: 2 cores.
+   - **Memory**: 2048 MB, **Swap**: 0.
+   - **Network**: IPv4 `DHCP` (bisa juga langsung Static, lihat Langkah 2),
+     Gateway kosong dulu, Bridge `vmbr0`, IPv6 kosongkan.
+   - **DNS**: default (akan pakai DNS dari DHCP).
+   - **Confirm**: centang **Start after created** → Finish.
 
-3. **Start VM** → **Console** (buka dari daftar VM, tombol `>_ Console`).
+3. **Buka console container**
+   Pilih CT `fiberops` → **`>_ Console`** → login `root` dengan password tadi.
 
-> Mau lebih ringan? Bisa juga pakai **LXC (container)** Debian 12: `Create CT` →
-> Template `debian-12-standard`, 2 GB RAM, 20 GB root disk, lalu lanjut dari Langkah 2
-> (langkah-langkah Debian-nya sama).
+> **Catatan:** container Ubuntu **tidak punya SSH** secara default. Setelah itu di
+> Langkah 2, SSH dipasang supaya Anda bisa mengakses dari komputer sendiri.
 
 ---
 
-## Langkah 2 — Install Debian 12 + IP statis
+## Langkah 2 — Update sistem, IP statis, dan SSH
 
-Di dalam console VM, ikuti installer Debian:
-
-1. Language: **English** (atau Indonesia kalau tersedia), Keyboard: sesuai.
-2. Hostname: `fiberops` · Domain: kosongkan.
-3. Root password: **buat password kuat** (catat!).
-4. Buat user biasa, mis. `fiberops`.
-5. Partition disks: **Guided – use entire disk and set up LVM** → pilih disk virtio
-   (`/dev/vda`) → *All files in one partition* → **Finish partitioning and write changes**.
-6. Scan extra installation media: **No**.
-7. Mirror: country **Indonesia**, `deb.debian.org`; proxy: kosongkan.
-8. Popularity contest: **No**.
-9. **Software selection**: cukup centang **SSH server** dan **standard system utilities**
-   (jangan pilih desktop environment — ini server).
-10. Install GRUB: **Yes** → pilih `/dev/vda`.
-
-Setelah reboot, login sebagai `root`, lalu lihat IP:
+Jalankan di console (atau SSH setelah terpasang):
 
 ```bash
-ip a          # catat alamat, mis. 192.168.1.55 (interface biasanya ens18)
+apt update && apt upgrade -y
+apt install -y curl ca-certificates gnupg git openssh-server
 ```
 
-Untuk IP tetap (disarankan, supaya alamat tidak berubah), edit
-`/etc/network/interfaces`:
+### IP statis (disarankan)
+
+Lihat nama interface dulu:
 
 ```bash
-nano /etc/network/interfaces
+ip a          # biasanya eth0 di LXC
 ```
 
-```text
-auto ens18
-iface ens18 inet static
-    address 192.168.1.50/24
-    gateway 192.168.1.1
-    dns-nameservers 192.168.1.1 1.1.1.1
+Edit file netplan (nama file bisa berbeda, cek dengan `ls /etc/netplan/`):
+
+```bash
+nano /etc/netplan/50-cloud-init.yaml
 ```
 
-> Sesuaikan nama interface (`ens18`), IP, dan gateway dengan jaringan Anda.
-> Lakukan dari **console Proxmox**, karena koneksi SSH bisa terputus sesaat.
+```yaml
+network:
+  version: 2
+  ethernets:
+    eth0:
+      dhcp4: no
+      addresses:
+        - 192.168.1.50/24
+      routes:
+        - to: default
+          via: 192.168.1.1
+      nameservers:
+        addresses: [192.168.1.1, 1.1.1.1]
+```
 
-Setelah itu SSH dari komputer Anda lebih nyaman:
+Terapkan:
+
+```bash
+chmod 600 /etc/netplan/50-cloud-init.yaml   # WAJIB: netplan menolak file yang izinnya terbuka
+netplan apply
+ip a                                          # pastikan 192.168.1.50 muncul
+```
+
+> Ganti `eth0`, `192.168.1.50/24`, dan `192.168.1.1` sesuai jaringan Anda.
+> Lakukan dari **console Proxmox**, karena koneksi bisa terputus sesaat.
+>
+> Supaya Proxmox juga tahu IP-nya (biasanya untuk firewall & tampilan di UI),
+> jalankan di **shell Proxmox** (bukan di dalam container):
+> ```bash
+> pct set <CT-ID> --net0 name=eth0,bridge=vmbr0,ip=192.168.1.50/24,gw=192.168.1.1
+> ```
+
+Sekarang SSH dari komputer Anda:
 
 ```bash
 ssh root@192.168.1.50
@@ -117,12 +135,10 @@ ssh root@192.168.1.50
 
 ## Langkah 3 — Install Node.js 22.5+ (wajib)
 
-Debian 12 bawaan repo punya Node 18 — **terlalu tua**. Pasang dari NodeSource:
+Ubuntu 24.04 dari apt hanya punya Node 18.19.1 — **tidak bisa dipakai** karena
+aplikasi memakai `node:sqlite` yang baru ada sejak Node 22.5. Pasang dari NodeSource:
 
 ```bash
-apt-get update
-apt-get install -y ca-certificates curl gnupg git
-
 mkdir -p /etc/apt/keyrings
 curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
   | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
@@ -130,14 +146,14 @@ curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
 echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main" \
   > /etc/apt/sources.list.d/nodesource.list
 
-apt-get update
-apt-get install -y nodejs
+apt update
+apt install -y nodejs
 
 node -v      # HARUS v22.5.0 atau lebih baru, mis. v22.14.0
 ```
 
 Kalau `node -v` masih di bawah 22.5, **jangan lanjut** — aplikasi tidak akan bisa
-membuka database (`node:sqlite` baru ada sejak Node 22.5).
+membuka database.
 
 ---
 
@@ -152,8 +168,7 @@ npm install
 npm run build        # menghasilkan folder dist/ (frontend siap pakai)
 ```
 
-Setelah build sukses, `node_modules` boleh dihapus supaya hemat disk
-(aplikasi tidak membutuhkannya saat runtime):
+Setelah build sukses, `node_modules` boleh dihapus supaya hemat disk:
 
 ```bash
 rm -rf node_modules
@@ -171,8 +186,6 @@ Hentikan dengan `Ctrl+C`, lalu lanjut ke Langkah 5 agar jalan otomatis.
 ---
 
 ## Langkah 5 — Jadikan service systemd (auto-start + auto-restart)
-
-Agar aplikasi tetap hidup walau VM restart atau aplikasi error:
 
 ```bash
 # user khusus (lebih aman daripada root)
@@ -223,18 +236,29 @@ journalctl -u fiberops -f
 Buka `http://192.168.1.50:8080`, login sebagai **admin**, lalu segera buat user baru
 lewat menu **User** dan hapus akun demo bila server bisa diakses orang lain.
 
-**Firewall** (kalau di VM ada `ufw`):
+**Firewall di dalam container** (opsional):
 
 ```bash
-apt-get install -y ufw
+apt install -y ufw
 ufw allow 22/tcp
 ufw allow 8080/tcp
 ufw enable
 ```
 
-Di Proxmox sendiri, firewall default mati. Kalau Anda menyalakannya
-(Datacenter → Firewall, atau per-VM di tab Firewall), izinkan **TCP 8080 inbound**
-dan **ICMP**.
+Di Proxmox, firewall default mati. Kalau dinyalakan (Datacenter → Firewall, atau
+per-CT di tab Firewall), izinkan **TCP 8080 inbound**.
+
+---
+
+## Alternatif: VM Debian 12 (bukan LXC)
+
+Kalau lebih suka VM penuh, langkahnya sama, hanya beda di:
+
+| Bagian | LXC Ubuntu 24.04 | VM Debian 12 |
+| ------ | ---------------- | ------------ |
+| Pembuatan | Create CT + template | Create VM + ISO netinst |
+| Jaringan | netplan (`/etc/netplan/*.yaml`, `netplan apply`) | `/etc/network/interfaces` (ifupdown) |
+| SSH | `apt install -y openssh-server` | dipilih saat install Debian |
 
 ---
 
@@ -255,14 +279,21 @@ systemctl daemon-reload && systemctl restart fiberops
 
 ---
 
-## Opsi lain — Docker (kalau VM/LXC sudah ada Docker)
+## Opsi lain — Docker di dalam LXC
 
-Bisa juga menjalankan dalam container (gambar sudah tersedia `Dockerfile`):
+Kalau mau memakai Docker (bukan Node langsung):
+
+1. Di Proxmox: pilih CT → **Options → Features → Edit** → centang **Nesting** → OK,
+   lalu restart CT.
+2. Di dalam container:
 
 ```bash
+apt install -y docker.io
+systemctl enable --now docker
+
 git clone --depth 1 --branch arena/34102c90-fiber-manajement \
-  https://github.com/thiends-88/Fiber-manajement.git fiberops
-cd fiberops
+  https://github.com/thiends-88/Fiber-manajement.git /opt/fiberops
+cd /opt/fiberops
 
 docker build -t fiber-core .
 docker run -d \
@@ -272,9 +303,6 @@ docker run -d \
   -v fiber-core-data:/app/data \
   fiber-core
 ```
-
-Data tersimpan di volume `fiber-core-data` (aman walau container dihapus).
-Kalau pakai **LXC**, aktifkan dulu `Options → Features → Nesting` pada container.
 
 ---
 
@@ -288,29 +316,29 @@ npm run build
 systemctl restart fiberops
 ```
 
-Cek hasilnya: `systemctl status fiberops` lalu hard-refresh browser (`Ctrl+Shift+R`).
+Cek hasilnya: `systemctl status fiberops`, lalu hard-refresh browser (`Ctrl+Shift+R`).
 
 ---
 
 ## Backup & restore
 
-Database hanya **satu file**. Backup harian (contoh cron pukul 02:00):
+### 1) Backup file database (paling sederhana)
 
 ```bash
 mkdir -p /backup
 crontab -e
-# tambahkan baris:
+# tambahkan baris (backup tiap hari jam 02:00):
 0 2 * * * cp /opt/fiberops/data/fiberops.db /backup/fiberops-$(date +\%Y\%m\%d).db
 ```
 
-Backup paling aman (selama aplikasi berjalan) memakai `.backup` SQLite:
+Backup paling aman **selama aplikasi berjalan** memakai `.backup` SQLite:
 
 ```bash
-apt-get install -y sqlite3
+apt install -y sqlite3
 sqlite3 /opt/fiberops/data/fiberops.db ".backup '/backup/fiberops.db'"
 ```
 
-**Restore**: hentikan service, salin file backup ke `data/fiberops.db`, jalankan lagi:
+**Restore:**
 
 ```bash
 systemctl stop fiberops
@@ -319,8 +347,7 @@ chown fiberops:fiberops /opt/fiberops/data/fiberops.db
 systemctl start fiberops
 ```
 
-**Reset ke data demo**: hapus file database, lalu restart — database dibuat &
-di-seed otomatis:
+**Reset ke data demo** (database dibuat & di-seed otomatis):
 
 ```bash
 systemctl stop fiberops
@@ -328,11 +355,29 @@ rm /opt/fiberops/data/fiberops.db
 systemctl start fiberops
 ```
 
+### 2) Backup seluruh container lewat Proxmox
+
+```bash
+# dari shell Proxmox, ganti 100 dengan CT ID Anda:
+vzdump 100 --mode snapshot --storage local
+```
+
+Atau lewat UI: `Datacenter → Backup → Backup Now` → pilih CT `fiberops` →
+Mode **Snapshot** → Backup. Restore dari tab **Backup** Proxmox.
+
+Salin file keluar-masuk cepat tanpa backup penuh:
+
+```bash
+# dari shell Proxmox:
+pct pull 100 /opt/fiberops/data/fiberops.db ./fiberops.db   # ambil backup
+pct push 100 ./fiberops.db /opt/fiberops/data/fiberops.db   # pulihkan
+```
+
 ---
 
 ## Reverse proxy + HTTPS (opsional, untuk akses dari internet)
 
-Contoh nginx (jalankan di VM yang sama atau VM terpisah):
+Contoh nginx (bisa dijalankan di container yang sama):
 
 ```nginx
 server {
@@ -359,7 +404,7 @@ Aktifkan lalu pasang sertifikat gratis:
 ```bash
 ln -s /etc/nginx/sites-available/fiber /etc/nginx/sites-enabled/
 nginx -t && systemctl reload nginx
-apt-get install -y certbot python3-certbot-nginx
+apt install -y certbot python3-certbot-nginx
 certbot --nginx -d fiber.contoh.id
 ```
 
@@ -370,30 +415,36 @@ certbot --nginx -d fiber.contoh.id
 | Gejala | Penyebab & solusi |
 | ------ | ----------------- |
 | `node:sqlite` / `DatabaseSync is not defined` | Node < 22.5. Cek `node -v`, pasang ulang dari NodeSource (Langkah 3). |
-| Halaman tidak bisa dibuka sama sekali | Service mati: `systemctl status fiberops`, cek `journalctl -u fiberops -f`. Atau port bentrok: ganti `ARENA_API_PORT`. |
-| `EADDRINUSE: address already in use` | Port 8080 sudah dipakai proses lain. Cek `ss -ltnp | grep 8080`, ganti port. |
-| `EACCES: permission denied … fiberops.db` | Folder `data/` bukan milik user service. Jalankan `chown -R fiberops:fiberops /opt/fiberops`. |
-| Halaman tampil versi lama setelah update | Cache browser — hard refresh (`Ctrl+Shift+R`), atau restart nginx/service. |
-| `npm run build` gagal (kehabisan memori) | RAM VM terlalu kecil. Tambah swap: `fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile`. |
-| Tidak bisa login | Cek jam/server: token login bergantung pada waktu sistem (`timedatectl`). |
+| `apt install nodejs` memasang versi 18 | Repo NodeSource belum aktif / belum `apt update`. Ulangi Langkah 3, lalu `apt policy nodejs`. |
+| Netplan mengeluh *"Permissions … too open"* | `chmod 600 /etc/netplan/*.yaml` lalu `netplan apply`. |
+| Container kehilangan jaringan setelah `netplan apply` | Salah nama interface/gateway. Pulihkan dari **console Proxmox** (bukan SSH). |
+| `EADDRINUSE: address already in use` | Port 8080 sudah dipakai. Cek `ss -ltnp | grep 8080`, ganti `ARENA_API_PORT`. |
+| `EACCES: permission denied … fiberops.db` | Folder `data/` bukan milik user service: `chown -R fiberops:fiberops /opt/fiberops`. |
+| `npm run build` gagal / kehabisan memori | RAM container kurang. Naikkan dari Proxmox: `pct set <CT-ID> --memory 4096` lalu restart CT (LXC tidak punya swap sendiri). |
+| Halaman tampil versi lama setelah update | Cache browser — hard refresh (`Ctrl+Shift+R`). |
+| Tidak bisa login | Cek waktu sistem container: `timedatectl` (token login bergantung pada waktu). |
+| Perlu fitur khusus (Docker, mount, NFS) di LXC | Nyalakan di Proxmox: CT → **Options → Features** → centang **Nesting** / **NFS** sesuai kebutuhan. |
 
 ---
 
-## Ringkasan perintah (copy-paste untuk VM Debian 12 yang sudah jalan)
+## Ringkasan perintah (copy-paste untuk LXC Ubuntu 24.04)
 
 ```bash
-# 1) Node.js 22.5+
-apt-get update && apt-get install -y ca-certificates curl gnupg git
+# 1) Sistem dasar
+apt update && apt upgrade -y
+apt install -y curl ca-certificates gnupg git openssh-server
+
+# 2) Node.js 22.5+
 mkdir -p /etc/apt/keyrings
 curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
 echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main" > /etc/apt/sources.list.d/nodesource.list
-apt-get update && apt-get install -y nodejs && node -v
+apt update && apt install -y nodejs && node -v
 
-# 2) Kode + build
+# 3) Kode + build
 git clone --depth 1 --branch arena/34102c90-fiber-manajement https://github.com/thiends-88/Fiber-manajement.git /opt/fiberops
 cd /opt/fiberops && npm install && npm run build && rm -rf node_modules
 
-# 3) Service
+# 4) Service
 useradd --system --home /opt/fiberops --shell /usr/sbin/nologin fiberops
 chown -R fiberops:fiberops /opt/fiberops
 cat > /etc/systemd/system/fiberops.service <<'EOF'
@@ -419,4 +470,4 @@ EOF
 systemctl daemon-reload && systemctl enable --now fiberops && systemctl status fiberops
 ```
 
-Selesai — buka `http://IP-VM:8080`.
+Selesai — buka `http://IP-CONTAINER:8080`.

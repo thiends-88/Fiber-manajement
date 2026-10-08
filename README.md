@@ -126,8 +126,9 @@ npm run test:render        # hasil: SEMUA HALAMAN TAMPIL NORMAL
 Kalau ada halaman yang kosong/error (mis. `X is not defined`), uji ini GAGAL
 dan menyebutkan rutenya. Port server bisa diganti: `ARENA_API_PORT=3000 npm run test:render`.
 
-Panduan **instalasi lengkap di Proxmox** (buat VM, install Node, service systemd,
-backup, reverse proxy, troubleshooting):
+Panduan **instalasi lengkap di Proxmox** — jalur utama **LXC Ubuntu 24.04**
+(buat container, IP statis via netplan, install Node 22.5+, service systemd,
+backup, reverse proxy, troubleshooting), plus catatan kalau pakai VM Debian 12:
 lihat **[DEPLOY-PROXMOX.md](DEPLOY-PROXMOX.md)**. Tersedia juga `Dockerfile`.
 
 ## Login demo
