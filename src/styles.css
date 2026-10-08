@@ -210,11 +210,95 @@ html[data-mode="pekat"] .card {
   @apply inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium;
 }
 
+/* ------------------- isi halaman: tabel bisa digulir --------------------- */
+/* Kolom isi harus boleh menyusut (min-width: 0). Tanpa itu, tabel yang lebih
+   lebar dari layar mendorong tata letak keluar alih-alih menggulir di dalam
+   kartunya sendiri — paling terasa di HP dan saat bilah samping dibentangkan. */
+main,
+.card {
+  min-width: 0;
+}
+.card {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+}
+/* Kolom tidak digencet: tabel mempertahankan lebar alaminya lalu menggulir */
+table {
+  min-width: 100%;
+}
+
 /* ------------------------- navigasi samping ------------------------------ */
 .sidebar {
   background-color: var(--color-panel);
   background-image: linear-gradient(180deg, var(--color-panel-hi), var(--color-panel) 58%);
   backdrop-filter: blur(8px);
+  /* HP: laci meluncur dari kiri; desktop: lebarnya yang berubah saat diciutkan */
+  transition:
+    transform 0.22s cubic-bezier(0.2, 0.7, 0.2, 1),
+    width 0.22s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+/* HP: layar redup di belakang laci menu */
+.drawer-backdrop {
+  background: rgb(2 4 10 / 0.6);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+  animation: drawer-fade 0.18s ease-out;
+}
+@keyframes drawer-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Tombol ikon kecil di bilah atas (buka laci / ciutkan bilah samping) */
+.icon-btn {
+  @apply inline-flex size-8 shrink-0 items-center justify-center rounded-lg border border-line bg-panel2 text-mut transition;
+}
+.icon-btn:hover {
+  color: var(--color-ink);
+  border-color: var(--color-acc);
+  box-shadow: 0 0 0 1px var(--color-acc-soft2);
+}
+
+/* Avatar singkat pemakai, hanya muncul saat bilah samping diciutkan */
+.user-avatar {
+  display: none;
+  background-color: var(--color-panel2);
+  color: var(--color-acc);
+  box-shadow: inset 0 0 0 1px var(--color-line);
+}
+
+/* Bilah samping diciutkan (ikon saja) — hanya berlaku di layar desktop,
+   supaya laci di HP tetap menampilkan label menu secara penuh. */
+@media (min-width: 1024px) {
+  .sidebar-mini .navlink {
+    justify-content: center;
+    padding-inline: 0;
+  }
+  .sidebar-mini .navlink-active {
+    box-shadow: inset 3px 0 0 var(--color-acc);
+  }
+  .sidebar-mini .navlink-text,
+  .sidebar-mini .brand-text,
+  .sidebar-mini .user-text,
+  .sidebar-mini .btn-label {
+    display: none;
+  }
+  .sidebar-mini .brand-mark {
+    margin-inline: auto;
+  }
+  .sidebar-mini .user-block {
+    display: flex;
+    justify-content: center;
+    padding-inline: 0;
+  }
+  .sidebar-mini .user-avatar {
+    display: flex;
+  }
 }
 .brand-mark {
   background-color: var(--color-acc);
