@@ -10,7 +10,7 @@ import {
   buildPowerBudget,
 } from "../src/lib/budget.js";
 import { getCableInfo, coresPerTube, colorForCoreInCable, SPLITTER_RATIOS, splitterPorts } from "../src/lib/fiber.js";
-import { buildTopologyGraph } from "../src/lib/topology.js";
+import { buildTopologyGraph, EDGE_STYLE } from "../src/lib/topology.js";
 import { buildCoreRoutes } from "../src/lib/jalur-core.js";
 
 let lolos = 0;
@@ -259,6 +259,43 @@ const splLingkar = [
 const petaLingkar = buildCoreRoutes({ odcs: [{ id: 9, name: "ODC-X" }], splitters: splLingkar, odcId: 9 });
 cek("cascade berlingkar ditandai 'terputus' (tidak loop tak hingga)", petaLingkar.trees[0]?.root?.children[0]?.children[0]?.kind === "terputus", petaLingkar.trees[0]?.root?.children[0]?.children[0]?.kind);
 cek("tanpa odcId / ODC tak dikenal → hasil kosong, tidak error", buildCoreRoutes({}).trees.length === 0 && buildCoreRoutes({ odcs: odcsJalur, odcId: 999 }).directLinks.length === 0);
+
+// ---------------------------------------------------------------------------
+// Warna core mengalir: core kabel ODC → splitter → cascade → ODP
+// ---------------------------------------------------------------------------
+console.log("\n=== UJI LOGIKA: warna core mengalir (topologi) ===");
+
+const warnaOdc = [{ id: 1, olt_id: 1, name: "ODC-001", cable_type: "12_core_2_tube" }]; // 6 core/tube
+const warnaOdp = [
+  { id: 1, odc_id: 1, name: "ODP-001", cable_type: "12_core_2_tube" },
+  { id: 2, odc_id: 1, name: "ODP-002", cable_type: "12_core_2_tube" },
+];
+const warnaSpl = [
+  {
+    id: 1, odc_id: 1, odp_id: null, name: "SPL-A", ratio: "1:2", input_core: 1,
+    outputs: [
+      { port: 1, target_type: "splitter", target_splitter_id: 2 }, // cascade
+      { port: 2, target_type: "odp", target_odp_id: 1 },
+    ],
+  },
+  {
+    id: 2, odc_id: 1, odp_id: null, name: "SPL-B", ratio: "1:2", input_core: null,
+    outputs: [{ port: 1, target_type: "odp", target_odp_id: 2 }],
+  },
+  { id: 3, odc_id: 1, odp_id: null, name: "SPL-C", ratio: "1:2", input_core: null, outputs: [] },
+];
+const warnaLinks = [{ id: 41, odc_id: 1, odc_core: 2, odp_id: 2, odp_core: 1, loss_db: null, notes: null }];
+const grafWarna = buildTopologyGraph({ olts, odcs: warnaOdc, odps: warnaOdp, splitters: warnaSpl, links: warnaLinks, feederPorts: [] });
+const sisiKe = (id, kind) => grafWarna.edges.find((e) => e.to === id && e.kind === kind);
+const odpWarna1 = grafWarna.nodes.find((n) => n.id === "odp-1");
+const odpWarna2 = grafWarna.nodes.find((n) => n.id === "odp-2");
+
+cek("garis feed core 1 = biru #2563eb", sisiKe("spl-1", "feed")?.color === "#2563eb", sisiKe("spl-1", "feed")?.color);
+cek("cascade mewarisi biru (cascade & feed SPL-B)", grafWarna.edges.find((e) => e.kind === "cascade")?.color === "#2563eb" && sisiKe("spl-2", "feed")?.color === "#2563eb");
+cek("output splitter → ODP ikut biru", sisiKe("odp-1", "out")?.color === "#2563eb" && sisiKe("odp-2", "out")?.color === "#2563eb");
+cek("ODP.coreIn = core 1 / Biru / ODC-001", odpWarna1?.coreIn?.length === 1 && odpWarna1.coreIn[0].core === 1 && odpWarna1.coreIn[0].colorName === "Biru" && odpWarna1.coreIn[0].odcName === "ODC-001", JSON.stringify(odpWarna1?.coreIn));
+cek("sambungan langsung core 2 = jingga #f97316", sisiKe("odp-2", "core")?.color === "#f97316" && odpWarna2?.coreIn?.some((c) => c.core === 2 && c.port === null), JSON.stringify(odpWarna2?.coreIn));
+cek("tanpa input_core & tanpa induk → warna bawaan", sisiKe("spl-3", "feed")?.color === EDGE_STYLE.feed.color, sisiKe("spl-3", "feed")?.color);
 
 console.log(`\nLOGIKA: ${lolos} lolos, ${gagal} gagal`);
 if (gagal) process.exit(1);

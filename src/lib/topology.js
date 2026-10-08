@@ -94,6 +94,74 @@ export function buildTopologyGraph({
     splitters.flatMap((s) => (s.outputs ?? []).filter((o) => o.target_type === "odc" && o.target_odc_id).map((o) => Number(o.target_odc_id))),
   );
 
+  // --- warna core mengalir ---
+  // Splitter yang diumpan core kabel (input_core) mewariskan core itu ke splitter
+  // cascade-nya HANYA dalam ODC yang sama. Warna garis = warna core di kabel ODC asal.
+  const odcById = new Map(odcs.map((d) => [Number(d.id), d]));
+  const hasOdc = (s) => s.odc_id != null && s.odc_id !== "";
+  const hasCore = (v) => v != null && v !== "";
+  const parentsOf = new Map(); // id splitter tujuan cascade -> daftar splitter induk
+  [...splitters]
+    .sort((a, b) => Number(a.id) - Number(b.id))
+    .forEach((p) => {
+      (p.outputs ?? []).forEach((o) => {
+        if (o.target_type === "splitter" && o.target_splitter_id) {
+          const tid = Number(o.target_splitter_id);
+          if (!parentsOf.has(tid)) parentsOf.set(tid, []);
+          parentsOf.get(tid).push(p);
+        }
+      });
+    });
+  const feedCache = new Map();
+  const feedBusy = new Set();
+  // feed = { odcId, core } atau null (tidak diketahui → warna bawaan)
+  const feedOf = (s) => {
+    if (!s || !hasOdc(s)) return null;
+    const sid = Number(s.id);
+    if (feedCache.has(sid)) return feedCache.get(sid);
+    if (feedBusy.has(sid)) return null; // pengaman bila cascade membentuk lingkaran
+    feedBusy.add(sid);
+    let feed = null;
+    if (hasCore(s.input_core)) {
+      feed = { odcId: Number(s.odc_id), core: Number(s.input_core) };
+    } else {
+      for (const p of parentsOf.get(sid) ?? []) {
+        const f = feedOf(p);
+        if (f && f.odcId === Number(s.odc_id)) {
+          feed = f;
+          break;
+        }
+      }
+    }
+    feedBusy.delete(sid);
+    feedCache.set(sid, feed);
+    return feed;
+  };
+  const colorOfFeed = (f) => {
+    const d = f ? odcById.get(f.odcId) : null;
+    return d ? colorForCoreInCable(f.core, coresPerTube(d.cable_type)).hex : undefined;
+  };
+  // core masuk tiap ODP: odpId -> Map(kunci -> entri)
+  const coreInByOdp = new Map();
+  const pushCoreIn = (odpId, f, port) => {
+    const d = odcById.get(f.odcId);
+    if (!d) return;
+    const c = colorForCoreInCable(f.core, coresPerTube(d.cable_type));
+    const key = `${f.odcId}:${f.core}:${port ?? "-"}`;
+    if (!coreInByOdp.has(odpId)) coreInByOdp.set(odpId, new Map());
+    const m = coreInByOdp.get(odpId);
+    if (!m.has(key)) {
+      m.set(key, {
+        odcId: f.odcId,
+        odcName: d.name ?? `ODC ${f.odcId}`,
+        core: f.core,
+        hex: c.hex,
+        colorName: c.name,
+        port: port ?? null,
+      });
+    }
+  };
+
   // OLT → ODC: gambar bila ODC punya port feeder, atau memang bukan ODC anak
   odcs.forEach((d) => {
     const fp = feederPorts.filter((f) => f.odc_id === d.id);
@@ -103,28 +171,40 @@ export function buildTopologyGraph({
   });
   // perangkat → splitter
   splitters.forEach((s) => {
-    const label = s.input_core ? `core ${s.input_core}` : "input -";
-    if (s.odc_id) addEdge(`odc-${s.odc_id}`, `spl-${s.id}`, "feed", label);
+    const f = feedOf(s);
+    const label = s.input_core ? `core ${s.input_core}` : f ? `core ${f.core}` : "input -";
+    if (s.odc_id) addEdge(`odc-${s.odc_id}`, `spl-${s.id}`, "feed", label, colorOfFeed(f));
     else if (s.odp_id) addEdge(`odp-${s.odp_id}`, `spl-${s.id}`, "feed", label);
   });
   // output splitter → ODP / cascade
   splitters.forEach((s) => {
+    const f = feedOf(s);
+    const color = colorOfFeed(f);
     (s.outputs || []).forEach((o) => {
       if (o.target_type === "splitter" && o.target_splitter_id) {
-        addEdge(`spl-${s.id}`, `spl-${o.target_splitter_id}`, "cascade", `out ${o.port}`);
+        addEdge(`spl-${s.id}`, `spl-${o.target_splitter_id}`, "cascade", `out ${o.port}`, color);
       } else if (o.target_type === "odp" && o.target_odp_id) {
-        addEdge(`spl-${s.id}`, `odp-${o.target_odp_id}`, "out", `out ${o.port}`);
+        addEdge(`spl-${s.id}`, `odp-${o.target_odp_id}`, "out", `out ${o.port}`, color);
+        if (f) pushCoreIn(Number(o.target_odp_id), f, o.port);
       } else if (o.target_type === "odc" && o.target_odc_id) {
-        addEdge(`spl-${s.id}`, `odc-${o.target_odc_id}`, "splitter-odc", `out ${o.port}`);
+        addEdge(`spl-${s.id}`, `odc-${o.target_odc_id}`, "splitter-odc", `out ${o.port}`, color);
       }
     });
   });
   // sambungan core ODC → ODP (warna mengikuti standar TIA/EIA-598)
-  const odcById = new Map(odcs.map((d) => [d.id, d]));
   links.forEach((l) => {
-    const odc = odcById.get(l.odc_id);
+    const odc = odcById.get(Number(l.odc_id));
     const color = odc ? colorForCoreInCable(l.odc_core, coresPerTube(odc.cable_type)).hex : undefined;
     addEdge(`odc-${l.odc_id}`, `odp-${l.odp_id}`, "core", `C${l.odc_core}→C${l.odp_core}`, color);
+    if (odc) pushCoreIn(Number(l.odp_id), { odcId: Number(l.odc_id), core: Number(l.odc_core) }, null);
+  });
+  // daftar core masuk per ODP (diurutkan, tanpa duplikat)
+  nodes.forEach((n) => {
+    if (n.kind !== "odp") return;
+    const m = coreInByOdp.get(Number(n.id.replace("odp-", ""))) ?? new Map();
+    n.coreIn = [...m.values()].sort(
+      (a, b) => a.odcId - b.odcId || a.core - b.core || (a.port ?? 0) - (b.port ?? 0),
+    );
   });
 
   // ODP yang belum punya sambungan core tetap ditautkan ke ODC induknya
