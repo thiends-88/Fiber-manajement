@@ -4,11 +4,6 @@ import { Zap } from "lucide-react";
 import { useAuth } from "../lib/auth.jsx";
 import ThemeMenu from "../components/ThemeMenu.jsx";
 
-const DEMO_ACCOUNTS = [
-  { label: "Admin", email: "admin@arena.test", password: "Arena123!" },
-  { label: "Operator", email: "operator@arena.test", password: "Arena123!" },
-];
-
 export default function Login() {
   const { user, signIn } = useAuth();
   const navigate = useNavigate();
@@ -48,7 +43,6 @@ export default function Login() {
               <Zap size={22} />
             </span>
             <h1 className="page-title text-center text-xl">FiberOps Arena</h1>
-            <p className="mt-1 text-sm text-mut">Manajemen jaringan fiber optik — versi mandiri</p>
           </div>
           <form onSubmit={submit} className="space-y-3">
             <div>
@@ -70,29 +64,6 @@ export default function Login() {
               {loading ? "Memproses…" : "Masuk"}
             </button>
           </form>
-          <div className="mt-5 border-t border-line pt-4">
-            <div className="mb-2 text-xs text-mut">Akun demo (klik untuk mengisi):</div>
-            <div className="flex gap-2">
-              {DEMO_ACCOUNTS.map((a) => (
-                <button
-                  key={a.email}
-                  type="button"
-                  className="btn flex-1 text-xs"
-                  onClick={() => {
-                    setEmail(a.email);
-                    setPassword(a.password);
-                  }}
-                >
-                  {a.label}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-        <div className="mt-4 flex flex-col items-center gap-2">
-          <p className="text-center text-xs text-mut">
-            Database SQLite lokal · tidak terhubung ke Supabase
-          </p>
         </div>
       </div>
     </div>
