@@ -14,7 +14,7 @@ const ROUTES = [
   ["/olt", "OLT-PST-01"],
   ["/odc", ["ODC-001", "ODC anak"]], // badge ODC anak harus tampil
   ["/odp", "ODP-001"],
-  ["/mapping", "Anggaran Daya"],
+  ["/mapping", ["Anggaran Daya", "Sambungan Kabel Langsung"]],
   ["/topologi", "SPL-1"],
   ["/laporan", "OLT-PST-01"],
   ["/users", "admin@arena.test"],

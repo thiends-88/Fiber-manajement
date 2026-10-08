@@ -5,6 +5,7 @@ import { useAuth } from "../lib/auth.jsx";
 import { Badge, Card, Empty, Field, Modal, PageHeader, Toast, useToast } from "../components/ui.jsx";
 import { STATUS, colorForCoreInCable, coresPerTube, getCableInfo } from "../lib/fiber.js";
 import { GPON, SPLITTER_LOSS, buildPowerBudget, fmtDb, fmtDbm } from "../lib/budget.js";
+import { buildCoreRoutes } from "../lib/jalur-core.js";
 
 function CoreChip({ core, cableType, small }) {
   const color = colorForCoreInCable(core, coresPerTube(cableType));
@@ -20,6 +21,82 @@ function CoreChip({ core, cableType, small }) {
 
 function Arrow() {
   return <ArrowRight size={15} className="shrink-0 text-cyan-400" />;
+}
+
+// Pohon jalur core (dari buildCoreRoutes): splitter → cascade / ODP / ODC anak.
+function PohonJalur({ node }) {
+  if (!node) return null;
+  if (node.kind === "splitter") {
+    return (
+      <div className="rounded-lg border border-line bg-panel p-2.5 text-xs">
+        <div className="flex flex-wrap items-center gap-2">
+          {node.viaPort != null && <Badge cls="bg-violet-500/15 text-violet-300">via out {node.viaPort}</Badge>}
+          <span className="font-semibold">{node.name}</span>
+          <Badge cls="bg-violet-500/15 text-violet-300">Splitter {node.ratio}</Badge>
+          {node.inputCore != null && <Badge cls="bg-slate-500/15 text-slate-300">input core {node.inputCore}</Badge>}
+          {node.children.length === 0 && node.idlePorts === 0 && (
+            <span className="text-mut">belum ada output terarah</span>
+          )}
+        </div>
+        {(node.children.length > 0 || node.idlePorts > 0) && (
+          <div className="ml-1.5 mt-2 space-y-2 border-l border-line pl-3">
+            {node.children.map((c, i) => (
+              <PohonJalur key={`${node.id}-${i}`} node={c} />
+            ))}
+            {node.idlePorts > 0 && (
+              <div className="rounded-md border border-dashed border-line px-2 py-1 text-[11px] text-mut">
+                {node.idlePorts} output belum diarahkan
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+  if (node.kind === "odp") {
+    return (
+      <div className="rounded-lg border border-emerald-500/40 bg-panel px-2.5 py-1.5 text-xs">
+        <div className="flex flex-wrap items-center gap-2">
+          {node.port != null && <Badge cls="bg-violet-500/15 text-violet-300">out {node.port}</Badge>}
+          <span className="font-semibold text-emerald-300">{node.name}</span>
+          <span className="text-mut">{node.location || "lokasi belum diisi"}</span>
+        </div>
+        {node.insideSplitters.length > 0 && (
+          <div className="mt-1 text-[11px] text-mut">
+            Splitter di dalam ODP: {node.insideSplitters.map((s) => `${s.name} (${s.ratio})`).join(" · ")}
+          </div>
+        )}
+      </div>
+    );
+  }
+  if (node.kind === "odc") {
+    return (
+      <div className="rounded-lg border border-sky-500/40 bg-panel p-2.5 text-xs">
+        <div className="flex flex-wrap items-center gap-2">
+          {node.port != null && <Badge cls="bg-violet-500/15 text-violet-300">out {node.port}</Badge>}
+          <span className="font-semibold text-sky-300">{node.name}</span>
+          <Badge cls="bg-sky-500/15 text-sky-300">ODC anak</Badge>
+        </div>
+        {node.children.length > 0 ? (
+          <div className="ml-1.5 mt-2 space-y-2 border-l border-line pl-3">
+            {node.children.map((c, i) => (
+              <PohonJalur key={`${node.odcId}-${i}`} node={c} />
+            ))}
+          </div>
+        ) : (
+          <div className="mt-1 text-[11px] text-mut">belum ada splitter dengan input core di ODC ini</div>
+        )}
+      </div>
+    );
+  }
+  if (node.kind === "terputus") {
+    return (
+      <div className="rounded-md border border-amber-500/40 bg-panel px-2 py-1 text-[11px] text-amber-300">
+        out {node.port}: {node.note}
+      </div>
+    );
+  }
+  return null;
 }
 
 const emptyLink = { odc_id: "", odc_core: "", odp_id: "", odp_core: "", loss_db: "", notes: "" };
@@ -102,6 +179,21 @@ export default function Mapping() {
     [olts, odcs, odps, splitters, links, feederPorts, odcId],
   );
   const powerCount = feederCores.filter((c) => c.power_dbm).length;
+
+  // Pohon jalur per core ODC (1 core → splitter → ODP / ODC anak) +
+  // sambungan kabel langsung yang dipisahkan
+  const peta = useMemo(
+    () =>
+      buildCoreRoutes({
+        odcs,
+        odps,
+        splitters,
+        links,
+        cores: allCores,
+        odcId: Number(odcId) || null,
+      }),
+    [odcs, odps, splitters, links, allCores, odcId],
+  );
 
   function openAdd() {
     setForm({ ...emptyLink, odc_id: odcId || odcs[0]?.id || "" });
@@ -190,24 +282,56 @@ export default function Mapping() {
 
       {odc && (
         <div className="space-y-5">
-          {/* Jalur per sambungan */}
+          {/* Peta jalur core: pohon splitter per core + sambungan langsung */}
           <Card>
             <div className="mb-3 flex items-center gap-2">
               <Workflow size={16} className="text-cyan-400" />
               <h2 className="font-semibold">Peta Jalur Core</h2>
-              <span className="text-xs text-mut">— alur dari OLT sampai ODP</span>
+              <span className="text-xs text-mut">— pohon splitter per core ODC; sambungan kabel langsung dipisah di bawah</span>
             </div>
 
-            {links.length === 0 && <Empty text="Belum ada sambungan core ODC → ODP. Klik “Tambah Sambungan” untuk memetakan." />}
+            {links.length === 0 && peta.trees.length === 0 && (
+              <Empty text="Belum ada jalur core di ODC ini. Arahkan output splitter / klik “Tambah Sambungan” untuk memetakan." />
+            )}
 
-            <div className="space-y-3">
-              {links.map((l) => {
+            {peta.trees.length > 0 && (
+              <div className="space-y-3">
+                {peta.trees.map((t) => {
+                  const feeder = t.feeder;
+                  const status = feeder ? STATUS[feeder.status] : null;
+                  return (
+                    <div key={`pohon-${t.core}`} className="rounded-xl border border-line bg-panel-soft p-3">
+                      <div className="mb-2 flex flex-wrap items-center gap-2">
+                        <CoreChip core={t.core} cableType={cable} small />
+                        {status && <Badge cls={status.cls}>{status.label}</Badge>}
+                        <span className="text-[11px] text-mut">
+                          {odc.name} · daya: {feeder?.power_dbm ? `${feeder.power_dbm} dBm` : "belum terdata"}
+                        </span>
+                      </div>
+                      <PohonJalur node={t.root} />
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {links.length > 0 && (
+              <div className={peta.trees.length > 0 ? "mt-4" : ""}>
+                <div className="mb-2 flex flex-wrap items-center gap-2">
+                  <Link2 size={14} className="text-emerald-400" />
+                  <h3 className="text-sm font-semibold">Sambungan Kabel Langsung</h3>
+                  <span className="text-xs text-mut">— 1 core ODC → 1 ODP, tanpa lewat splitter</span>
+                </div>
+
+                <div className="space-y-3">
+                  {links.map((l) => {
                 const feeder = feederByCore[l.odc_core];
                 const odp = odps.find((p) => p.id === l.odp_id);
                 const status = feeder ? STATUS[feeder.status] : null;
                 return (
                   <div key={l.id} className="rounded-xl border border-line bg-panel-soft p-3">
                     <div className="flex flex-wrap items-center gap-2">
+                      <Badge cls="bg-emerald-500/15 text-emerald-400">Kabel langsung</Badge>
                       {/* 1. OLT / port feeder */}
                       <div className="rounded-lg border border-line bg-panel px-2.5 py-1.5 text-xs">
                         <div className="font-semibold">{odc.olt_name}</div>
@@ -273,10 +397,12 @@ export default function Mapping() {
                       </div>
                     </div>
                     {l.notes && <div className="mt-2 text-[11px] text-mut">Catatan: {l.notes}</div>}
-                  </div>
-                );
-              })}
-            </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </Card>
 
           {/* Anggaran daya per jalur */}

@@ -48,6 +48,12 @@ CSV, dan manajemen user berbasis peran.
    core ODC → core ODP → pelanggan, lengkap dengan redaman (dB), daya per titik,
    dan penanda core mana yang sudah/belum tersambung. Satu core hanya boleh
    memiliki satu sambungan (dijaga di sisi server).
+   **Peta Jalur Core** menampilkan **pohon jalur per core ODC**: 1 core masuk
+   splitter lalu bercabang — output **→ ODP**, **→ cascade splitter lain**,
+   atau **→ ODC anak** (lanjut ke splitter di dalamnya); port output yang belum
+   diarahkan **diringkas** (tidak digambar satu per satu). **Sambungan kabel
+   langsung** (1 core → 1 ODP tanpa splitter) dipisahkan dan diberi label
+   tersendiri.
 8. **Topologi** — halaman dengan **dua tampilan**:
    * **Diagram** — gambar alur jaringan dari kiri ke kanan: OLT → port feeder →
      ODC → splitter (termasuk cascade bertingkat dan cabang ke **ODC anak**) →
@@ -108,9 +114,11 @@ Setelah di-build, `node server.mjs` membuka `http://server:4500` berisi
 aplikasi lengkap — tidak ada server frontend terpisah, dan `node_modules`
 tidak dibutuhkan saat runtime.
 
-> **Kode ada di cabang `arena/34102c90-fiber-manajement`** (belum di-merge ke
-> `main`), jadi saat clone di server gunakan:
-> `git clone --depth 1 --branch arena/34102c90-fiber-manajement https://github.com/thiends-88/Fiber-manajement.git`
+> Kode terbaru sudah ada di **`main`** (cabang lama
+> `arena/34102c90-fiber-manajement` sudah di-merge). Untuk clone baru di
+> server:
+> `git clone --depth 1 https://github.com/thiends-88/Fiber-manajement.git`
+> Untuk memperbarui server yang sudah ada: `git pull && npm install && npm run build`.
 
 ## Uji otomatis halaman (anti "halaman blank")
 
@@ -130,7 +138,7 @@ dan menyebutkan rutenya. Port server bisa diganti: `ARENA_API_PORT=3000 npm run 
 
 ```bash
 npm test              # logika + API + tata letak runtime (tidak butuh server jalan)
-npm run test:logic    # anggaran daya, topologi, data kabel (murni, 48 pemeriksaan)
+npm run test:logic    # anggaran daya, topologi, data kabel, peta jalur core (murni, 63 pemeriksaan)
 npm run test:api      # login, hak akses, CRUD semua entitas, penjaga validasi (77 pemeriksaan)
 npm run test:layout   # server tetap jalan hanya dengan file yang disalin Dockerfile
 npm run test:render   # semua halaman ter-render (butuh server jalan)
@@ -167,8 +175,9 @@ lihat **[DEPLOY-PROXMOX.md](DEPLOY-PROXMOX.md)**. Tersedia juga `Dockerfile`.
 | `src/lib/fiber.js` | Konstanta kabel, warna core TIA/EIA-598, status |
 | `src/lib/budget.js` | Perhitungan anggaran daya per jalur (murni, bisa diuji via node) |
 | `src/lib/topology.js` | Perhitungan tata letak diagram topologi (murni, bisa diuji via node) |
+| `src/lib/jalur-core.js` | Pohon jalur per core ODC: 1 core → splitter → ODP / ODC anak (murni, bisa diuji via node) |
 | `src/components/TopologiDiagram.jsx` | Diagram SVG interaktif OLT → ODC → splitter → ODP |
-| `src/pages/Mapping.jsx` | Peta jalur core OLT → ODC → ODP + jalur splitter bertingkat |
+| `src/pages/Mapping.jsx` | Peta jalur core per core ODC (pohon splitter + sambungan kabel langsung) + anggaran daya + jalur splitter bertingkat |
 | `src/components/SplitterManager.jsx` | Kelola splitter (rasio, input core) & arah tiap output (ODP / cascade / ODC anak) |
 | `src/lib/api.js` | Klien fetch + sesi token |
 | `src/components/CoreManager.jsx` | Grid core interaktif (dipakai ODC & ODP) |

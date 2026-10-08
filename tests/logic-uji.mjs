@@ -11,6 +11,7 @@ import {
 } from "../src/lib/budget.js";
 import { getCableInfo, coresPerTube, colorForCoreInCable, SPLITTER_RATIOS, splitterPorts } from "../src/lib/fiber.js";
 import { buildTopologyGraph } from "../src/lib/topology.js";
+import { buildCoreRoutes } from "../src/lib/jalur-core.js";
 
 let lolos = 0;
 let gagal = 0;
@@ -180,6 +181,84 @@ cek("core 1 dan 2 warnanya beda", colorForCoreInCable(1, 12) !== colorForCoreInC
 cek("core 13 = core 1 di tube 2 (warna berulang per tube)", colorForCoreInCable(13, 12).name === colorForCoreInCable(1, 12).name);
 cek("pilihan rasio splitter: 1:2 s/d 1:32", SPLITTER_RATIOS.join(",") === "1:2,1:4,1:8,1:16,1:32", SPLITTER_RATIOS.join(","));
 cek("splitterPorts membaca jumlah port", splitterPorts("1:8") === 8 && splitterPorts("asal") === 0);
+
+// ---------------------------------------------------------------------------
+// Peta jalur core per core ODC: 1 core → splitter → ODP / ODC anak (cascade)
+// ---------------------------------------------------------------------------
+console.log("\n=== UJI LOGIKA: peta jalur core per core ODC ===");
+
+const odcsJalur = [
+  { id: 1, olt_id: 1, name: "ODC-001", cable_type: "24_core_4_tube" },
+  { id: 3, olt_id: 1, name: "ODC-003", cable_type: "12_core_2_tube" },
+];
+const odpsJalur = [
+  { id: 1, odc_id: 1, name: "ODP-001", location: "Jl. Melati", cable_type: "12_core_2_tube" },
+  { id: 4, odc_id: 3, name: "ODP-004", location: "Dusun Kenanga", cable_type: "12_core_2_tube" },
+];
+const splJalur = [
+  {
+    id: 21, odc_id: 1, odp_id: null, name: "SPL-A", ratio: "1:4", input_core: 1,
+    outputs: [
+      { port: 1, target_type: "splitter", target_splitter_id: 22 }, // cascade di ODC yang sama
+      { port: 2, target_type: "odp", target_odp_id: 1 }, // output → ODP
+      { port: 3, target_type: "odc", target_odc_id: 3 }, // output → ODC anak
+      // port 4 sengaja tidak diarahkan → harus diringkas sebagai idle
+    ],
+  },
+  {
+    id: 22, odc_id: 1, odp_id: null, name: "SPL-B", ratio: "1:8", input_core: null,
+    outputs: [{ port: 1, target_type: "odp", target_odp_id: 4 }],
+  },
+  {
+    id: 23, odc_id: 3, odp_id: null, name: "SPL-C", ratio: "1:8", input_core: 1,
+    outputs: [{ port: 1, target_type: "odp", target_odp_id: 4 }],
+  },
+];
+const coresJalur = [
+  { source: "olt_to_odc", odc_id: 1, core: 1, status: "used", power_dbm: "-19.5" },
+  { source: "olt_to_odc", odc_id: 1, core: 2, status: "used", power_dbm: "-20.2" },
+];
+const linksJalur = [
+  { id: 31, odc_id: 1, odc_core: 2, odp_id: 4, odp_core: 3, loss_db: 0.3, notes: null },
+  { id: 32, odc_id: 3, odc_core: 1, odp_id: 4, odp_core: 1, loss_db: null, notes: null },
+];
+
+const peta = buildCoreRoutes({
+  odcs: odcsJalur, odps: odpsJalur, splitters: splJalur,
+  links: linksJalur, cores: coresJalur, odcId: 1,
+});
+const pohon1 = peta.trees[0]?.root;
+const splB = pohon1?.children.find((c) => c.kind === "splitter");
+const odpNode = pohon1?.children.find((c) => c.kind === "odp");
+const odcAnak = pohon1?.children.find((c) => c.kind === "odc");
+const splC = odcAnak?.children[0];
+
+cek("satu pohon per core yang masuk splitter (hanya core 1)", peta.trees.length === 1 && peta.trees[0].core === 1, `trees=${peta.trees.length}`);
+cek("akar pohon = splitter dengan input core tsb (SPL-A 1:4)", pohon1?.name === "SPL-A" && pohon1?.ratio === "1:4", pohon1?.name);
+cek("info core feeder ikut terbawa ke pohon (status & daya)", peta.trees[0]?.feeder?.status === "used" && peta.trees[0]?.feeder?.power_dbm === "-19.5");
+cek("output cascade → splitter lain (SPL-B via out 1)", splB?.name === "SPL-B" && splB?.viaPort === 1, `${splB?.name} via ${splB?.viaPort}`);
+cek("output → ODP (ODP-001 via out 2)", odpNode?.name === "ODP-001" && odpNode?.port === 2, `${odpNode?.name} port ${odpNode?.port}`);
+cek("output → ODC anak (ODC-003 via out 3)", odcAnak?.name === "ODC-003" && odcAnak?.port === 3, `${odcAnak?.name} port ${odcAnak?.port}`);
+cek("jalur berlanjut di ODC anak (SPL-C → ODP-004)", splC?.name === "SPL-C" && splC?.children[0]?.kind === "odp" && splC?.children[0]?.name === "ODP-004", `${splC?.name}`);
+cek("port belum diarahkan diringkas, bukan hilang (SPL-A sisa 1)", pohon1?.idlePorts === 1, `${pohon1?.idlePorts}`);
+cek("ringkasan idle menghitung seluruh port rasio (SPL-B 1:8 − 1 = 7)", splB?.idlePorts === 7, `${splB?.idlePorts}`);
+cek("sambungan kabel langsung dipisah dari pohon (1 link di ODC-001)", peta.directLinks.length === 1, `${peta.directLinks.length}`);
+cek("sambungan langsung diberi label 'kabel langsung'", peta.directLinks[0]?.label.includes("kabel langsung"), peta.directLinks[0]?.label);
+cek("data sambungan langsung lengkap (ODP-004 core 3, 0,3 dB)", peta.directLinks[0]?.odpName === "ODP-004" && peta.directLinks[0]?.odpCore === 3 && peta.directLinks[0]?.lossDb === 0.3);
+const petaAnak = buildCoreRoutes({
+  odcs: odcsJalur, odps: odpsJalur, splitters: splJalur,
+  links: linksJalur, cores: coresJalur, odcId: 3,
+});
+cek("peta ODC anak berdiri sendiri (core 1 → SPL-C)", petaAnak.trees[0]?.root?.name === "SPL-C" && petaAnak.directLinks.length === 1, petaAnak.trees[0]?.root?.name);
+const splLingkar = [
+  { id: 51, odc_id: 9, odp_id: null, name: "SPL-X", ratio: "1:2", input_core: 1,
+    outputs: [{ port: 1, target_type: "splitter", target_splitter_id: 52 }] },
+  { id: 52, odc_id: 9, odp_id: null, name: "SPL-Y", ratio: "1:2", input_core: null,
+    outputs: [{ port: 1, target_type: "splitter", target_splitter_id: 51 }] }, // balik ke akar
+];
+const petaLingkar = buildCoreRoutes({ odcs: [{ id: 9, name: "ODC-X" }], splitters: splLingkar, odcId: 9 });
+cek("cascade berlingkar ditandai 'terputus' (tidak loop tak hingga)", petaLingkar.trees[0]?.root?.children[0]?.children[0]?.kind === "terputus", petaLingkar.trees[0]?.root?.children[0]?.children[0]?.kind);
+cek("tanpa odcId / ODC tak dikenal → hasil kosong, tidak error", buildCoreRoutes({}).trees.length === 0 && buildCoreRoutes({ odcs: odcsJalur, odcId: 999 }).directLinks.length === 0);
 
 console.log(`\nLOGIKA: ${lolos} lolos, ${gagal} gagal`);
 if (gagal) process.exit(1);
