@@ -96,11 +96,21 @@ npm run dev            # frontend di port 8080 (proxy /api → 4500)
 
 ## Produksi / deploy (mis. Proxmox)
 
+Syarat: **Node.js 22.5+** (database memakai `node:sqlite` bawaan Node).
+
 ```bash
 npm install
 npm run build          # menghasilkan dist/
 node server.mjs        # SATU proses melayani API + frontend (port 4500)
 ```
+
+Setelah di-build, `node server.mjs` membuka `http://server:4500` berisi
+aplikasi lengkap — tidak ada server frontend terpisah, dan `node_modules`
+tidak dibutuhkan saat runtime.
+
+> **Kode ada di cabang `arena/34102c90-fiber-manajement`** (belum di-merge ke
+> `main`), jadi saat clone di server gunakan:
+> `git clone --depth 1 --branch arena/34102c90-fiber-manajement https://github.com/thiends-88/Fiber-manajement.git`
 
 ## Uji otomatis halaman (anti "halaman blank")
 
@@ -116,9 +126,8 @@ npm run test:render        # hasil: SEMUA HALAMAN TAMPIL NORMAL
 Kalau ada halaman yang kosong/error (mis. `X is not defined`), uji ini GAGAL
 dan menyebutkan rutenya. Port server bisa diganti: `ARENA_API_PORT=3000 npm run test:render`.
 
-Setelah di-build, `node server.mjs` membuka `http://server:4500` berisi
-aplikasi lengkap — tidak ada server frontend terpisah, dan `node_modules`
-tidak dibutuhkan saat runtime. Panduan lengkap (Docker, systemd, backup):
+Panduan **instalasi lengkap di Proxmox** (buat VM, install Node, service systemd,
+backup, reverse proxy, troubleshooting):
 lihat **[DEPLOY-PROXMOX.md](DEPLOY-PROXMOX.md)**. Tersedia juga `Dockerfile`.
 
 ## Login demo
