@@ -1,27 +1,27 @@
-# Dockerfile untuk FiberOps (Node.js server)
-# Build: docker build -t fiberops .
-# Run:   docker run -d -p 3000:3000 --env-file .env fiberops
+# ============================================================
+# FiberOps Arena — image produksi
+# Satu container = satu proses: API + frontend (port tunggal)
+# ============================================================
 
-FROM node:22-alpine AS builder
-
+# Tahap 1: build frontend
+FROM node:22-alpine AS build
 WORKDIR /app
-
-COPY package*.json ./
+COPY package.json package-lock.json ./
 RUN npm ci
-
-COPY . .
+COPY index.html vite.config.js ./
+COPY src ./src
 RUN npm run build
 
-FROM node:22-alpine AS runner
-
+# Tahap 2: runtime — hanya Node + server.mjs + dist/
+# (server.mjs memakai node:sqlite bawaan, tanpa node_modules)
+FROM node:22-alpine
 WORKDIR /app
-ENV NODE_ENV=production
-ENV PORT=3000
-ENV HOST=0.0.0.0
-
-COPY --from=builder /app/.output /app/.output
-COPY --from=builder /app/package*.json /app/
-
-EXPOSE 3000
-
-CMD ["node", ".output/server/index.mjs"]
+COPY --from=build /app/server.mjs ./
+# server.mjs memakai daftar rasio splitter dari src/lib/fiber.js (satu sumber kebenaran)
+COPY --from=build /app/src/lib/fiber.js ./src/lib/fiber.js
+COPY --from=build /app/dist ./dist
+ENV ARENA_API_PORT=8080
+EXPOSE 8080
+# Folder database (fiberops.db) — pasang volume agar data awet
+VOLUME /app/data
+CMD ["node", "server.mjs"]

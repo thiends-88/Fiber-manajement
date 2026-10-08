@@ -1,0 +1,71 @@
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { Zap } from "lucide-react";
+import { useAuth } from "../lib/auth.jsx";
+import ThemeMenu from "../components/ThemeMenu.jsx";
+
+export default function Login() {
+  const { user, signIn } = useAuth();
+  const navigate = useNavigate();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  // Sudah login (mis. sesi dipulihkan dari cookie) → langsung masuk.
+  useEffect(() => {
+    if (user) navigate("/", { replace: true });
+  }, [user, navigate]);
+
+  async function submit(e) {
+    e.preventDefault();
+    setLoading(true);
+    setError("");
+    try {
+      await signIn(email, password);
+      navigate("/");
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="flex min-h-screen items-center justify-center px-4">
+      <div className="fixed right-4 top-4 z-40">
+        <ThemeMenu />
+      </div>
+      <div className="w-full max-w-sm">
+        <div className="card p-6">
+          <div className="mb-5 text-center">
+            <span className="brand-mark mx-auto mb-3 flex size-12 items-center justify-center rounded-xl">
+              <Zap size={22} />
+            </span>
+            <h1 className="page-title text-center text-xl">Fiber Manajement Core</h1>
+          </div>
+          <form onSubmit={submit} className="space-y-3">
+            <div>
+              <label className="label">Email</label>
+              <input className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+            </div>
+            <div>
+              <label className="label">Password</label>
+              <input
+                className="input"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+              />
+            </div>
+            {error && <div className="rounded-lg border border-red-500/40 bg-red-950/50 px-3 py-2 text-sm text-red-300">{error}</div>}
+            <button className="btn btn-primary w-full" disabled={loading}>
+              {loading ? "Memproses…" : "Masuk"}
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
+  );
+}
