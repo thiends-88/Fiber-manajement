@@ -42,7 +42,7 @@ export default function Login() {
             <span className="brand-mark mx-auto mb-3 flex size-12 items-center justify-center rounded-xl">
               <Zap size={22} />
             </span>
-            <h1 className="page-title text-center text-xl">FiberOps Arena</h1>
+            <h1 className="page-title text-center text-xl">Fiber Manajement Core</h1>
           </div>
           <form onSubmit={submit} className="space-y-3">
             <div>

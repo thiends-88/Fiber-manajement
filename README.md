@@ -1,4 +1,4 @@
-# FiberOps Arena
+# Fiber Manajement Core
 
 Aplikasi manajemen fiber optik (OLT → ODC → ODP) yang **dibangun dari nol**
 untuk lingkungan Arena. Fitur dipelajari dari aplikasi aslinya

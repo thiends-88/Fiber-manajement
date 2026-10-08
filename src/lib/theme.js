@@ -1,4 +1,4 @@
-// Pengaturan tampilan FiberOps Arena: MODE (terang/gelap/pekat/auto)
+// Pengaturan tampilan Fiber Manajement Core: MODE (terang/gelap/pekat/auto)
 // dikombinasikan dengan AKSEN (warna). Menambah pilihan cukup menambah entri
 // di bawah + blok CSS yang sesuai di src/styles.css.
 

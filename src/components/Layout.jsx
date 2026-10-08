@@ -38,10 +38,7 @@ export default function Layout({ children }) {
           <span className="brand-mark flex size-9 items-center justify-center rounded-lg">
             <Zap size={18} />
           </span>
-          <div>
-            <div className="text-sm font-bold leading-tight">FiberOps</div>
-            <div className="text-[11px] text-mut">Versi Arena</div>
-          </div>
+          <div className="text-sm font-bold leading-tight">Fiber Manajement Core</div>
         </div>
         <nav className="flex-1 space-y-1 overflow-y-auto p-3">
           {nav.map(({ to, label, icon: Icon, end }) => (
