@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import {
   Boxes,
-  Cable,
   FileText,
   LayoutDashboard,
   Link2,
@@ -29,7 +28,6 @@ const NAV = [
   { to: "/odc", label: "ODC", icon: Boxes },
   { to: "/odp", label: "ODP", icon: Network },
   { to: "/mapping", label: "Mapping Core", icon: Link2 },
-  { to: "/topologi", label: "Topologi", icon: Cable },
   { to: "/laporan", label: "Laporan", icon: FileText },
 ];
 

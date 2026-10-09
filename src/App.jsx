@@ -90,6 +90,8 @@ export default function App() {
           </Protected>
         }
       />
+      {/* /topologi tidak punya menu sendiri — hanya pengalih untuk bookmark
+          lama, sebab isinya kini satu halaman dengan Alur Core. */}
       <Route path="/topologi" element={<Navigate to="/" replace />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
