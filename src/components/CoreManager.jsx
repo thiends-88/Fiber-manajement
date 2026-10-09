@@ -13,6 +13,7 @@ export default function CoreManager({ source, parentId, cableType, title }) {
   const canWrite = user.role === "admin" || user.role === "operator";
 
   const [cores, setCores] = useState([]);
+  const [autoUsed, setAutoUsed] = useState(new Map()); // core → keterangan pemakaian terdeteksi
   const [modal, setModal] = useState(null); // { core, assign }
   const [form, setForm] = useState({ status: "idle", destination: "", notes: "" });
   const [toastState, setToastState] = useState(null);
@@ -22,13 +23,59 @@ export default function CoreManager({ source, parentId, cableType, title }) {
   const total = info?.cores ?? 12;
   const perTube = coresPerTube(cableType);
 
-  const load = useCallback(() => {
+  const load = useCallback(async () => {
     if (!parentId) return;
-    const q = source === "olt_to_odc" ? `?source=olt_to_odc&odc_id=${parentId}` : `?source=odc_to_odp&odp_id=${parentId}`;
-    api(`/api/cores${q}`).then(setCores).catch((e) => toast(e.message, "error"));
+    try {
+      if (source === "olt_to_odc") {
+        // Core ODC terpakai bila: masuk ke input splitter di ODC ini, atau
+        // tersambung kabel langsung ke ODP — walau statusnya belum dicatat manual.
+        const [c, spl, links] = await Promise.all([
+          api(`/api/cores?source=olt_to_odc&odc_id=${parentId}`),
+          api(`/api/splitters?odc_id=${parentId}`),
+          api(`/api/links?odc_id=${parentId}`),
+        ]);
+        setCores(c);
+        const m = new Map();
+        for (const s of spl) {
+          if (s.input_core != null && s.input_core !== "") {
+            m.set(Number(s.input_core), `masuk splitter ${s.name} (${s.ratio})`);
+          }
+        }
+        for (const l of links) {
+          const ket = `kabel langsung → ${l.odp_name} core ${l.odp_core}`;
+          m.set(Number(l.odc_core), m.has(Number(l.odc_core)) ? `${m.get(Number(l.odc_core))} · ${ket}` : ket);
+        }
+        setAutoUsed(m);
+      } else {
+        // Core ODP terpakai bila: jadi input splitter di ODP ini, atau ujung
+        // sambungan kabel langsung dari ODC.
+        const [c, spl, links] = await Promise.all([
+          api(`/api/cores?source=odc_to_odp&odp_id=${parentId}`),
+          api(`/api/splitters?odp_id=${parentId}`),
+          api("/api/links"),
+        ]);
+        setCores(c);
+        const m = new Map();
+        for (const s of spl) {
+          if (s.input_core != null && s.input_core !== "") {
+            m.set(Number(s.input_core), `masuk splitter ${s.name} (${s.ratio})`);
+          }
+        }
+        for (const l of links) {
+          if (Number(l.odp_id) !== Number(parentId)) continue;
+          const ket = `kabel langsung dari ${l.odc_name ?? "ODC"} core ${l.odc_core}`;
+          m.set(Number(l.odp_core), m.has(Number(l.odp_core)) ? `${m.get(Number(l.odp_core))} · ${ket}` : ket);
+        }
+        setAutoUsed(m);
+      }
+    } catch (e) {
+      toast(e.message, "error");
+    }
   }, [source, parentId, toast]);
 
-  useEffect(load, [load]);
+  useEffect(() => {
+    load();
+  }, [load]);
 
   function openCore(n) {
     const assign = cores.find((c) => c.core === n) || null;
@@ -89,12 +136,15 @@ export default function CoreManager({ source, parentId, cableType, title }) {
             {info ? `${info.label} · ${info.tubes} tube` : "tipe kabel tidak diketahui"}
           </span>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           {Object.entries(STATUS).map(([k, v]) => (
             <Badge key={k} cls={v.cls}>
               {v.label}: {byStatus[k] ?? 0}
             </Badge>
           ))}
+          {autoUsed.size > 0 && (
+            <Badge cls="bg-emerald-500/15 text-emerald-400">Terpakai terdeteksi: {autoUsed.size}</Badge>
+          )}
         </div>
       </div>
 
@@ -104,10 +154,11 @@ export default function CoreManager({ source, parentId, cableType, title }) {
         <div className="grid grid-cols-6 gap-2 sm:grid-cols-12">
           {Array.from({ length: total }, (_, i) => i + 1).map((n) => {
             const assign = cores.find((c) => c.core === n);
+            const dipakai = autoUsed.get(n);
             const fc = colorForCoreInCable(n, perTube);
             const tube = tubeForCoreInCable(n, perTube);
             const border =
-              assign?.status === "used"
+              assign?.status === "used" || dipakai
                 ? "border-emerald-500/60"
                 : assign?.status === "reserved"
                   ? "border-amber-500/60"
@@ -121,9 +172,12 @@ export default function CoreManager({ source, parentId, cableType, title }) {
                 key={n}
                 disabled={!canWrite}
                 onClick={() => openCore(n)}
-                title={`Core ${n} · Tube ${tube} · ${fc.name}${assign ? ` · ${STATUS[assign.status].label}` : " · belum dicatat"}`}
-                className={`flex flex-col items-center gap-1 rounded-lg border bg-panel2 p-2 transition hover:border-acc ${border}`}
+                title={`Core ${n} · Tube ${tube} · ${fc.name}${assign ? ` · ${STATUS[assign.status].label}` : " · belum dicatat"}${dipakai ? ` · Terpakai: ${dipakai}` : ""}`}
+                className={`relative flex flex-col items-center gap-1 rounded-lg border bg-panel2 p-2 transition hover:border-acc ${border}`}
               >
+                {dipakai && (
+                  <span className="absolute right-1 top-1 block size-1.5 rounded-full bg-emerald-400" title="Terpakai (terdeteksi otomatis)" />
+                )}
                 <span
                   className="block size-4 rounded-full ring-1 ring-white/20"
                   style={{ background: fc.hex }}
@@ -146,6 +200,11 @@ export default function CoreManager({ source, parentId, cableType, title }) {
               />
               Warna {colorForCoreInCable(modal.core, perTube).name} · Tube {tubeForCoreInCable(modal.core, perTube)}
             </div>
+            {autoUsed.get(modal.core) && (
+              <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-300">
+                Terdeteksi terpakai: {autoUsed.get(modal.core)}
+              </div>
+            )}
             <Field label="Status">
               <select className="input" value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
                 {Object.entries(STATUS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}

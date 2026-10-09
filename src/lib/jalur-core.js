@@ -168,3 +168,28 @@ export function buildCoreRoutes({
     stats: { cores: trees.length, directLinks: directLinks.length },
   };
 }
+
+// Meratakan pohon jalur menjadi daftar rute per tujuan:
+//   { core, odpId/odcAnakId, odpName/odcAnakName, via: ["SPL-1 (1:4) out 2", ...] }
+// Dipakai untuk menandai core ODC yang TERPAKAI lewat splitter (bukan hanya
+// kabel langsung) dan menampilkan jalurnya di keterangan "Core terpakai dari ODC".
+export function daftarRuteOdp(trees = []) {
+  const hasil = [];
+  const walk = (node, core, prefix) => {
+    if (!node || node.kind !== "splitter") return;
+    const label = `${node.name} (${node.ratio})`;
+    for (const ch of node.children || []) {
+      if (ch.kind === "odp") {
+        hasil.push({ core, odpId: ch.odpId, odpName: ch.name, via: [...prefix, `${label} out ${ch.port}`] });
+      } else if (ch.kind === "splitter") {
+        walk(ch, core, [...prefix, `${label} out ${ch.viaPort ?? "?"}`]);
+      } else if (ch.kind === "odc") {
+        const jalur = [...prefix, `${label} out ${ch.port}`];
+        hasil.push({ core, odcAnakId: ch.odcId, odcAnakName: ch.name, via: jalur });
+        for (const sub of ch.children || []) walk(sub, core, [...jalur, `⇉ ${ch.name}`]);
+      }
+    }
+  };
+  for (const t of trees) walk(t.root, t.core, []);
+  return hasil;
+}

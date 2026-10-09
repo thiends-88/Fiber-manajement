@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Pencil, Plus, Server, Trash2 } from "lucide-react";
 import { api } from "../lib/api.js";
 import { useAuth } from "../lib/auth.jsx";
-import { Badge, Card, Empty, Field, Modal, PageHeader, Toast, useToast } from "../components/ui.jsx";
+import { Badge, Card, Empty, Field, Modal, PageHeader, SearchBox, Toast, matchesQuery, useToast } from "../components/ui.jsx";
 import { CARD_TYPES, OLT_TYPES, PORT_STATUS } from "../lib/fiber.js";
 
 const emptyOlt = { name: "", olt_type: OLT_TYPES[0], location: "", ip: "", notes: "" };
@@ -14,6 +14,7 @@ export default function Olts() {
   const canWrite = user.role === "admin" || user.role === "operator";
 
   const [olts, setOlts] = useState([]);
+  const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState(null);
   const [cards, setCards] = useState([]);
   const [ports, setPorts] = useState([]);
@@ -136,6 +137,7 @@ export default function Olts() {
   }
 
   const selectedOlt = olts.find((o) => o.id === selectedId);
+  const shownOlts = olts.filter((o) => matchesQuery(query, o.name, o.olt_type, o.location, o.ip));
   const portCardId = portModal?.mode === "add" ? portModal.cardId : portModal?.port?.card_id;
   const portLimit = cards.find((c) => c.id === portCardId)?.port_count ?? 32;
 
@@ -155,6 +157,18 @@ export default function Olts() {
         )}
       </PageHeader>
 
+      <div className="mb-3 flex flex-wrap items-center gap-3">
+        <SearchBox
+          value={query}
+          onChange={setQuery}
+          placeholder="Cari OLT (nama, tipe, lokasi, IP)…"
+          className="w-full sm:max-w-xs"
+        />
+        {query && (
+          <span className="text-xs text-mut">{shownOlts.length} dari {olts.length} OLT</span>
+        )}
+      </div>
+
       <Card className="overflow-x-auto p-0">
         <table className="w-full">
           <thead className="border-b border-line">
@@ -169,7 +183,7 @@ export default function Olts() {
             </tr>
           </thead>
           <tbody>
-            {olts.map((o) => (
+            {shownOlts.map((o) => (
               <tr
                 key={o.id}
                 className={`cursor-pointer border-b border-line-soft last:border-0 hover:bg-panel2 ${
@@ -206,9 +220,11 @@ export default function Olts() {
                 )}
               </tr>
             ))}
-            {olts.length === 0 && (
+            {shownOlts.length === 0 && (
               <tr>
-                <td className="td py-8 text-center text-mut" colSpan={canWrite ? 7 : 6}>Belum ada OLT.</td>
+                <td className="td py-8 text-center text-mut" colSpan={canWrite ? 7 : 6}>
+                  {olts.length === 0 ? "Belum ada OLT." : `Tidak ada OLT yang cocok dengan "${query}".`}
+                </td>
               </tr>
             )}
           </tbody>

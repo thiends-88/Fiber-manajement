@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import { X } from "lucide-react";
+import { Search, X } from "lucide-react";
 
 export function PageHeader({ title, desc, children }) {
   return (
@@ -49,6 +49,39 @@ export function Modal({ open, title, onClose, children, wide }) {
     </div>
   );
 }
+
+// Kotak pencarian seragam untuk daftar OLT / ODC / ODP
+export function SearchBox({ value, onChange, placeholder = "Cari…", className = "" }) {
+  return (
+    <div className={`relative ${className}`}>
+      <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-mut" />
+      <input
+        className="input pl-8 pr-8"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        aria-label={placeholder}
+      />
+      {value && (
+        <button
+          type="button"
+          className="absolute right-2 top-1/2 -translate-y-1/2 text-mut hover:text-ink"
+          onClick={() => onChange("")}
+          aria-label="Bersihkan pencarian"
+        >
+          <X size={14} />
+        </button>
+      )}
+    </div>
+  );
+}
+
+// true bila salah satu field mengandung query (tanpa membedakan huruf besar/kecil)
+export const matchesQuery = (query, ...fields) => {
+  const q = String(query ?? "").trim().toLowerCase();
+  if (!q) return true;
+  return fields.some((f) => String(f ?? "").toLowerCase().includes(q));
+};
 
 export function Empty({ text }) {
   return <div className="rounded-lg border border-dashed border-line p-8 text-center text-sm text-mut">{text}</div>;

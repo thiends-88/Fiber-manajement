@@ -332,6 +332,10 @@ const cableInfo = (type) => CABLE_TYPES.find((c) => c.value === type) ?? null;
 const isText = (value) => typeof value === "string" && value.trim().length > 0;
 const isOptionalText = (value) => value == null || typeof value === "string";
 const hasOwn = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
+// Urut alami: angka dalam nama dibandingkan sebagai angka (OLT-2 sebelum OLT-10)
+const naturalCollator = new Intl.Collator("id", { numeric: true, sensitivity: "base" });
+const sortByNameNatural = (rows) =>
+  rows.sort((a, b) => naturalCollator.compare(String(a.name ?? ""), String(b.name ?? "")));
 const httpError = (status, message) => Object.assign(new Error(message), { status });
 
 // Validasi daftar port feeder ODC: boleh banyak, tetapi harus milik OLT induk ODC
@@ -380,6 +384,17 @@ function syncSplitterPorts(splitterId, ratio) {
   const ins = db.prepare("INSERT OR IGNORE INTO splitter_outputs (splitter_id, port) VALUES (?,?)");
   for (let i = 1; i <= n; i++) ins.run(splitterId, i);
   return n;
+}
+
+// Setiap ODP memakai splitter 1:8 (standar lapangan) — dibuat otomatis & permanen.
+const ODP_SPLITTER_RATIO = "1:8";
+function ensureOdpSplitter(odpId, odpName) {
+  const exists = db.prepare("SELECT id FROM splitters WHERE odp_id=? LIMIT 1").get(Number(odpId));
+  if (exists) return;
+  const r = db
+    .prepare("INSERT INTO splitters (odc_id, odp_id, name, ratio, input_core, input_note, notes) VALUES (?,?,?,?,?,?,?)")
+    .run(null, Number(odpId), `SPL ${String(odpName).trim()}`, ODP_SPLITTER_RATIO, null, null, "Splitter bawaan ODP (dibuat otomatis)");
+  syncSplitterPorts(r.lastInsertRowid, ODP_SPLITTER_RATIO);
 }
 
 // Induk ODC (bila ODC ini diumpan dari output splitter ODC lain)
@@ -715,8 +730,8 @@ const server = http.createServer(async (req, res) => {
 
     // ---------------- OLT ----------------
     if (p === "/api/olts" && method === "GET") {
-      const rows = db.prepare("SELECT o.*, (SELECT COUNT(*) FROM olt_cards c WHERE c.olt_id=o.id) AS card_count, (SELECT COUNT(*) FROM odcs d WHERE d.olt_id=o.id) AS odc_count FROM olts o ORDER BY o.name").all();
-      return send(req, res, 200, rows);
+      const rows = db.prepare("SELECT o.*, (SELECT COUNT(*) FROM olt_cards c WHERE c.olt_id=o.id) AS card_count, (SELECT COUNT(*) FROM odcs d WHERE d.olt_id=o.id) AS odc_count FROM olts o").all();
+      return send(req, res, 200, sortByNameNatural(rows));
     }
     if (p === "/api/olts" && method === "POST") {
       const b = await readBody(req);
@@ -879,8 +894,8 @@ const server = http.createServer(async (req, res) => {
           (SELECT COUNT(*) FROM odps p WHERE p.odc_id=d.id) AS odp_count,
           (SELECT COUNT(*) FROM core_assignments ca WHERE ca.odc_id=d.id AND ca.source='olt_to_odc') AS core_count,
           (SELECT COUNT(*) FROM odc_feeder_ports fp WHERE fp.odc_id=d.id) AS feeder_count
-        FROM odcs d JOIN olts o ON o.id=d.olt_id ORDER BY d.name`).all();
-      return send(req, res, 200, rows);
+        FROM odcs d JOIN olts o ON o.id=d.olt_id`).all();
+      return send(req, res, 200, sortByNameNatural(rows));
     }
     if (p === "/api/odcs" && method === "POST") {
       const b = await readBody(req);
@@ -942,8 +957,8 @@ const server = http.createServer(async (req, res) => {
       const rows = db.prepare(`
         SELECT p.*, d.name AS odc_name,
           (SELECT COUNT(*) FROM core_assignments ca WHERE ca.odp_id=p.id AND ca.source='odc_to_odp') AS core_count
-        FROM odps p JOIN odcs d ON d.id=p.odc_id ORDER BY p.name`).all();
-      return send(req, res, 200, rows);
+        FROM odps p JOIN odcs d ON d.id=p.odc_id`).all();
+      return send(req, res, 200, sortByNameNatural(rows));
     }
     if (p === "/api/odps" && method === "POST") {
       const b = await readBody(req);
@@ -958,6 +973,8 @@ const server = http.createServer(async (req, res) => {
       }
       const r = db.prepare("INSERT INTO odps (odc_id, name, location, cable_type, notes) VALUES (?,?,?,?,?)")
         .run(Number(b.odc_id), b.name.trim(), b.location || null, b.cable_type, b.notes || null);
+      // ODP selalu memakai splitter 1:8 — buat otomatis agar langsung siap dipakai
+      ensureOdpSplitter(r.lastInsertRowid, b.name);
       return send(req, res, 201, db.prepare("SELECT * FROM odps WHERE id=?").get(r.lastInsertRowid));
     }
     m = p.match(/^\/api\/odps\/(\d+)$/);
@@ -1199,6 +1216,9 @@ const server = http.createServer(async (req, res) => {
         capacity = cableInfo(db.prepare("SELECT cable_type FROM odps WHERE id=?").get(parentId)?.cable_type)?.cores;
       }
       if (!capacity) return send(req, res, 400, { error: `${parentType.toUpperCase()} tidak ditemukan atau tipe kabelnya tidak valid` });
+      if (parentType === "odp" && b.ratio !== ODP_SPLITTER_RATIO) {
+        return send(req, res, 400, { error: `Splitter di ODP harus ${ODP_SPLITTER_RATIO}` });
+      }
       const inputCore = b.input_core == null || b.input_core === "" ? null : b.input_core;
       if (inputCore != null && !validIntRange(inputCore, 1, capacity)) {
         return send(req, res, 400, { error: `Input core harus antara 1 dan ${capacity}` });
@@ -1222,6 +1242,9 @@ const server = http.createServer(async (req, res) => {
         if (!isText(b.name) || !ratioSah(b.ratio)) {
           return send(req, res, 400, { error: `Nama dan rasio splitter valid wajib diisi — pilih: ${SPLITTER_RATIOS.join(", ")}` });
         }
+        if (current.odp_id != null && b.ratio !== ODP_SPLITTER_RATIO) {
+          return send(req, res, 400, { error: `Splitter di ODP harus ${ODP_SPLITTER_RATIO}` });
+        }
         const inputCore = b.input_core == null || b.input_core === "" ? null : b.input_core;
         const parentCable = b.odc_id != null
           ? db.prepare("SELECT cable_type FROM odcs WHERE id=?").get(b.odc_id)?.cable_type
@@ -1240,8 +1263,11 @@ const server = http.createServer(async (req, res) => {
         return send(req, res, 200, getSplitter(id));
       }
       if (method === "DELETE") {
-        const found = db.prepare("SELECT id FROM splitters WHERE id=?").get(id);
+        const found = db.prepare("SELECT id, odp_id FROM splitters WHERE id=?").get(id);
         if (!found) return send(req, res, 404, { error: "Splitter tidak ditemukan" });
+        if (found.odp_id != null) {
+          return send(req, res, 400, { error: "Splitter bawaan ODP bersifat permanen dan tidak bisa dihapus (ikut terhapus bila ODP-nya dihapus)" });
+        }
         db.prepare("UPDATE splitter_outputs SET target_type=NULL, target_splitter_id=NULL WHERE target_splitter_id=?").run(id);
         db.prepare("UPDATE splitter_outputs SET target_type=NULL, target_odc_id=NULL WHERE target_odc_id=?").run(id);
         db.prepare("DELETE FROM splitters WHERE id=?").run(id);
@@ -1395,6 +1421,13 @@ const server = http.createServer(async (req, res) => {
 });
 
 seedIfEmpty();
+
+// Pastikan semua ODP lama juga punya splitter 1:8 bawaan
+for (const row of db
+  .prepare("SELECT id, name FROM odps WHERE id NOT IN (SELECT odp_id FROM splitters WHERE odp_id IS NOT NULL)")
+  .all()) {
+  ensureOdpSplitter(row.id, row.name);
+}
 server.listen(PORT, HOST, () => {
   console.log(`[arena-api] FiberOps Arena API siap di http://${HOST}:${PORT}`);
 });
