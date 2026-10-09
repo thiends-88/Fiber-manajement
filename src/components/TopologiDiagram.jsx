@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { Maximize2, Minus, Plus, Tag, X } from "lucide-react";
-import { EDGE_STYLE, NODE_H, NODE_STYLE, NODE_W, buildTopologyGraph } from "../lib/topology.js";
-import { buildPowerBudget, fmtDb, fmtDbm } from "../lib/budget.js";
+import { GitBranch, Maximize2, Minus, Plus, Tag, X } from "lucide-react";
+import { EDGE_STYLE, NODE_H, NODE_STYLE, NODE_W, buildTopologyGraph, buildUpstreamChains } from "../lib/topology.js";
 import { Badge, Card, Empty } from "./ui.jsx";
 
 const ZOOMS = [0.6, 0.75, 0.9, 1, 1.15, 1.3, 1.5];
@@ -17,11 +16,8 @@ export default function TopologiDiagram({ olts, odcs, odps, splitters, links, fe
     [olts, odcs, odps, splitters, links, feederPorts],
   );
 
-  // anggaran daya per ODP, dipakai di kartu info simpul
-  const budgetByOdp = useMemo(() => {
-    const rows = buildPowerBudget({ olts, odcs, odps, splitters, links, feederPorts });
-    return new Map(rows.map((r) => [r.odpId, r]));
-  }, [olts, odcs, odps, splitters, links, feederPorts]);
+  // Alur core ke hulu dari simpul terpilih (OLT → … → simpul ini)
+  const chains = useMemo(() => (selected ? buildUpstreamChains(graph, selected) : []), [graph, selected]);
 
   // Label otomatis disembunyikan bila garisnya terlalu banyak (biar tidak penuh)
   useEffect(() => {
@@ -258,31 +254,36 @@ export default function TopologiDiagram({ olts, odcs, odps, splitters, links, fe
             </div>
           )}
 
-          {node.kind === "odp" && (() => {
-            const id = Number(node.id.replace("odp-", ""));
-            const b = budgetByOdp.get(id);
-            if (!b) return null;
-            return (
-              <div className="mt-3 rounded-lg border border-line bg-panel2 p-3 text-xs">
-                <div className="mb-1 flex flex-wrap items-center gap-2">
-                  <span className="font-semibold">Anggaran daya</span>
-                  <Badge cls={b.status.cls}>{b.status.label}</Badge>
-                  {b.topology && <Badge cls="bg-violet-500/15 text-violet-300">Topologi {b.topology}</Badge>}
-                </div>
-                <div className="text-mut">
-                  {b.routeKnown && b.tx !== null ? (
-                    <>
-                      TX {fmtDbm(b.tx)} − redaman {fmtDb(b.lossTotal)} ={" "}
-                      <span className="font-medium text-ink">{fmtDbm(b.finalOut)}</span> di ujung akhir
-                      {" · "}tiba di ODP {fmtDbm(b.arrival)}
-                    </>
-                  ) : (
-                    "Jalur belum terdata — isi TX SFP port OLT dan/atau susun splitter/core-nya."
-                  )}
-                </div>
+          {/* Alur core ke hulu: jawaban "core ini datang dari mana?" */}
+          {chains.length > 0 && (
+            <div className="mt-3">
+              <div className="mb-1 flex items-center gap-2 text-xs font-semibold">
+                <GitBranch size={13} className="text-cyan-400" /> Alur core sampai ke sini
               </div>
-            );
-          })()}
+              <div className="space-y-1.5">
+                {chains.map((c, i) => (
+                  <div key={i} className="flex flex-wrap items-center gap-1 text-[11px]">
+                    {c.langkah.map((l, j) => (
+                      <span key={l.node.id} className="flex items-center gap-1">
+                        {j > 0 && (
+                          <span className="text-mut">
+                            {l.edge?.label ? <span className="mr-0.5 rounded bg-panel2 px-1">{l.edge.label}</span> : null}→
+                          </span>
+                        )}
+                        <span
+                          className="rounded-md border border-line bg-panel2 px-1.5 py-0.5 font-medium"
+                          style={{ borderLeftColor: NODE_STYLE[l.node.kind]?.color, borderLeftWidth: 3 }}
+                        >
+                          {l.node.title}
+                        </span>
+                      </span>
+                    ))}
+                    {!c.lengkap && <span className="text-amber-300">(jalur terpotong — periksa data cascade)</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </Card>
       )}
     </div>

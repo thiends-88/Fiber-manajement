@@ -170,11 +170,21 @@ export function buildTopologyGraph({
     addEdge(`olt-${d.olt_id}`, `odc-${d.id}`, "feeder", label);
   });
   // perangkat → splitter
+  // Splitter yang diumpan lewat CASCADE tidak digambar menerima core langsung
+  // dari ODC: di lapangan ia disambung dari output splitter induknya, bukan
+  // dari core kabel. Garis cascade sudah menunjukkan asal core-nya (ikut
+  // berwarna). Splitter tanpa induk tetap digambar ke ODC agar tidak mengambang.
   splitters.forEach((s) => {
     const f = feedOf(s);
-    const label = s.input_core ? `core ${s.input_core}` : f ? `core ${f.core}` : "input -";
-    if (s.odc_id) addEdge(`odc-${s.odc_id}`, `spl-${s.id}`, "feed", label, colorOfFeed(f));
-    else if (s.odp_id) addEdge(`odp-${s.odp_id}`, `spl-${s.id}`, "feed", label);
+    const label = hasCore(s.input_core) ? `core ${s.input_core}` : f ? `core ${f.core}` : "core belum diisi";
+    const punyaInduk = (parentsOf.get(Number(s.id)) ?? []).length > 0;
+    if (s.odc_id) {
+      if (hasCore(s.input_core) || !punyaInduk) {
+        addEdge(`odc-${s.odc_id}`, `spl-${s.id}`, "feed", label, colorOfFeed(f));
+      }
+    } else if (s.odp_id) {
+      addEdge(`odp-${s.odp_id}`, `spl-${s.id}`, "feed", label);
+    }
   });
   // output splitter → ODP / cascade
   splitters.forEach((s) => {
@@ -305,4 +315,56 @@ export function buildTopologyGraph({
       edges: edges.length,
     },
   };
+}
+
+/**
+ * Telusuri alur core ke HULU dari sebuah simpul: dari mana core ini berasal,
+ * langkah demi langkah sampai ke sumbernya (biasanya port OLT).
+ *
+ *   OLT-PST-01 → ODC-001 → SPL-1 (1:4) → SPL-2 (1:8) → ODP-003
+ *
+ * Berguna untuk menjawab pertanyaan teknisi "core ini datang dari mana?"
+ * tanpa harus menelusuri garis di diagram. Fungsi murni supaya bisa diuji.
+ *
+ * @returns {Array<{langkah: Array<{node, edge}>, lengkap: boolean}>}
+ *   tiap unsur = satu jalur hulu, urut dari sumber ke simpul yang ditanya.
+ *   `lengkap: false` berarti jalur terpotong batas kedalaman (data berputar).
+ */
+export function buildUpstreamChains(graph, nodeId, { maxJalur = 6, maxKedalaman = 12 } = {}) {
+  if (!graph || !nodeId) return [];
+  const byId = new Map((graph.nodes ?? []).map((n) => [n.id, n]));
+  const mulai = byId.get(nodeId);
+  if (!mulai) return [];
+
+  const hasil = [];
+  const lihat = new Set();
+
+  const telusuri = (id, jejak, kedalaman) => {
+    if (hasil.length >= maxJalur) return;
+    const masuk = graph.incoming?.get(id) ?? [];
+    if (masuk.length === 0) {
+      simpan(jejak, true);
+      return;
+    }
+    if (kedalaman >= maxKedalaman) {
+      simpan(jejak, false);
+      return;
+    }
+    for (const e of masuk) {
+      if (hasil.length >= maxJalur) return;
+      const induk = byId.get(e.from);
+      if (!induk) continue;
+      telusuri(e.from, [{ node: induk, edge: e }, ...jejak], kedalaman + 1);
+    }
+  };
+
+  function simpan(jejak, lengkap) {
+    const kunci = jejak.map((j) => j.node.id).join(">");
+    if (lihat.has(kunci)) return; // jalur kembar (data ganda) cukup sekali
+    lihat.add(kunci);
+    hasil.push({ langkah: jejak, lengkap });
+  }
+
+  telusuri(nodeId, [{ node: mulai, edge: null }], 0);
+  return hasil;
 }

@@ -305,7 +305,7 @@ export default function SplitterManager({ parentType, parentId, title }) {
                   <span className="font-medium text-ink">Cascade</span> = output splitter ini disambung ke{" "}
                   <span className="font-medium text-ink">masukan splitter berikutnya</span> (splitter bertingkat),
                   bukan langsung ke ODP. Contoh topologi <span className="font-medium text-ink">4:8:8</span>:
-                  1:4 → 1:8 → 1:8. Redaman menumpuk, jadi tetap perhitungkan budget daya.
+                  1:4 → 1:8 → 1:8 — urutannya ikut terlihat di halaman Alur Core.
                 </p>
                 <Field label="Pilih splitter lanjutan">
                   <select

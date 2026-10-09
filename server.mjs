@@ -148,7 +148,6 @@ db.exec(`
     status TEXT NOT NULL DEFAULT 'idle' CHECK (status IN ('idle','used','reserved','damaged')),
     customer TEXT,
     destination TEXT,
-    power_dbm TEXT,
     notes TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -159,10 +158,6 @@ db.exec(`
 // Migrasi ringan: database lama otomatis mendapat kolom/tabel baru
 // ---------------------------------------------------------------------------
 const MIGRATIONS = [
-  "ALTER TABLE core_assignments ADD COLUMN power_dbm REAL",
-  "ALTER TABLE odcs ADD COLUMN feeder_loss_db REAL",
-  "ALTER TABLE olt_ports ADD COLUMN tx_power REAL",
-  "ALTER TABLE olt_ports ADD COLUMN rx_power REAL",
   `CREATE TABLE IF NOT EXISTS splitters (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     odc_id INTEGER REFERENCES odcs(id) ON DELETE CASCADE,
@@ -192,7 +187,6 @@ const MIGRATIONS = [
     odc_core INTEGER NOT NULL,
     odp_id INTEGER NOT NULL REFERENCES odps(id) ON DELETE CASCADE,
     odp_core INTEGER NOT NULL,
-    loss_db REAL,
     notes TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -202,6 +196,28 @@ const MIGRATIONS = [
 ];
 for (const stmt of MIGRATIONS) {
   try { db.exec(stmt); } catch { /* kolom/tabel sudah ada */ }
+}
+
+// ---------------------------------------------------------------------------
+// Bersih-bersih: kolom hitungan redaman/daya sudah TIDAK dipakai lagi.
+// Aplikasi ini memetakan ALUR CORE saja (OLT → ODC → ODP), jadi kolom daya
+// dibuang supaya tidak ada field menganggur yang membingungkan teknisi.
+// Butuh SQLite 3.35+ untuk DROP COLUMN (Node 22 membawa SQLite 3.4x/3.5x).
+// ---------------------------------------------------------------------------
+const KOLOM_TIDAK_DIPAKAI = [
+  ["core_assignments", "power_dbm"],
+  ["odcs", "feeder_loss_db"],
+  ["olt_ports", "tx_power"],
+  ["olt_ports", "rx_power"],
+  ["core_links", "loss_db"],
+];
+for (const [tabel, kolom] of KOLOM_TIDAK_DIPAKAI) {
+  try {
+    const ada = db.prepare("SELECT 1 FROM pragma_table_info(?) WHERE name=?").get(tabel, kolom);
+    if (ada) db.exec(`ALTER TABLE ${tabel} DROP COLUMN ${kolom}`);
+  } catch (err) {
+    console.warn(`[arena-api] kolom ${tabel}.${kolom} gagal dibuang: ${err.message}`);
+  }
 }
 
 // Bangun ulang splitter_outputs pada database lama agar menerima target 'odc'
@@ -265,16 +281,10 @@ if (!feederTableExisted) {
   const odp1 = db.prepare("SELECT id FROM odps WHERE name='ODP-001'").get();
   if (!odc1 || !odc2 || !odp1) return;
   if (db.prepare("SELECT COUNT(*) n FROM core_links").get().n === 0) {
-    const ins = db.prepare("INSERT INTO core_links (odc_id, odc_core, odp_id, odp_core, loss_db, notes) VALUES (?,?,?,?,?,?)");
-    ins.run(odc1.id, 1, odp1.id, 1, 0.15, "Closure Perempatan");
-    ins.run(odc1.id, 2, odp1.id, 2, 0.2, null);
+    const ins = db.prepare("INSERT INTO core_links (odc_id, odc_core, odp_id, odp_core, notes) VALUES (?,?,?,?,?)");
+    ins.run(odc1.id, 1, odp1.id, 1, "Closure Perempatan");
+    ins.run(odc1.id, 2, odp1.id, 2, null);
   }
-  db.prepare("UPDATE odcs SET feeder_loss_db=COALESCE(feeder_loss_db,0.5) WHERE name='ODC-001'").run();
-  db.prepare("UPDATE odcs SET feeder_loss_db=COALESCE(feeder_loss_db,0.7) WHERE name='ODC-002'").run();
-  db.prepare("UPDATE core_assignments SET power_dbm=COALESCE(power_dbm,'-19.5') WHERE odc_id=? AND core=1 AND source='olt_to_odc'").run(odc1.id);
-  db.prepare("UPDATE core_assignments SET power_dbm=COALESCE(power_dbm,'-20.2') WHERE odc_id=? AND core=2 AND source='olt_to_odc'").run(odc1.id);
-  db.prepare("UPDATE olt_ports SET tx_power=COALESCE(tx_power,'2.5'), rx_power=COALESCE(rx_power,'-18.4') WHERE notes LIKE '%Feeder ODC-001%'").run();
-  db.prepare("UPDATE olt_ports SET tx_power=COALESCE(tx_power,'2.6'), rx_power=COALESCE(rx_power,'-19.1') WHERE notes LIKE '%Feeder ODC-002%'").run();
 })();
 
 // ---------------------------------------------------------------------------
@@ -445,21 +455,21 @@ function seedIfEmpty() {
   const card3 = insCard.run(olt2, 1, "GPFA", null, 8, ts, ts).lastInsertRowid;
 
   const insPort = db.prepare(
-    "INSERT INTO olt_ports (card_id, port, sfp, serial, status, notes, tx_power, rx_power, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+    "INSERT INTO olt_ports (card_id, port, sfp, serial, status, notes, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
   );
-  const p1 = insPort.run(card1, 1, "XGS-PON", "ZTE23A0001", "active", "Feeder ODC-001", "7.0", "-18.4", ts, ts).lastInsertRowid;
-  const p2 = insPort.run(card1, 2, "XGS-PON", "ZTE23A0002", "active", null, "2.3", "-19.0", ts, ts).lastInsertRowid;
-  insPort.run(card1, 3, null, null, "inactive", null, null, null, ts, ts);
-  insPort.run(card2, 1, "GPON", "ZTE23B0001", "active", null, "2.1", "-20.3", ts, ts);
-  insPort.run(card2, 2, null, null, "reserved", "Rencana ODC-003", null, null, ts, ts);
-  const p6 = insPort.run(card3, 1, "GPON", "HW23C0001", "active", "Feeder ODC-002", "2.6", "-19.1", ts, ts).lastInsertRowid;
+  const p1 = insPort.run(card1, 1, "XGS-PON", "ZTE23A0001", "active", "Feeder ODC-001", ts, ts).lastInsertRowid;
+  const p2 = insPort.run(card1, 2, "XGS-PON", "ZTE23A0002", "active", null, ts, ts).lastInsertRowid;
+  insPort.run(card1, 3, null, null, "inactive", null, ts, ts);
+  insPort.run(card2, 1, "GPON", "ZTE23B0001", "active", null, ts, ts);
+  insPort.run(card2, 2, null, null, "reserved", "Rencana ODC-003", ts, ts);
+  const p6 = insPort.run(card3, 1, "GPON", "HW23C0001", "active", "Feeder ODC-002", ts, ts).lastInsertRowid;
 
   const insOdc = db.prepare(
-    "INSERT INTO odcs (olt_id, name, location, cable_type, feeder_loss_db, notes, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
+    "INSERT INTO odcs (olt_id, name, location, cable_type, notes, created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
   );
-  const odc1 = insOdc.run(olt1, "ODC-001", "Perempatan Kota", "24_core_4_tube", 0.5, "Closure utama", ts, ts).lastInsertRowid;
-  const odc2 = insOdc.run(olt2, "ODC-002", "Kawasan Industri", "48_core_8_tube", 0.7, null, ts, ts).lastInsertRowid;
-  const odc3 = insOdc.run(olt1, "ODC-003", "Dusun Kenanga (anak ODC-001)", "12_core_2_tube", 0.4, "ODC anak dari ODC-001", ts, ts).lastInsertRowid;
+  const odc1 = insOdc.run(olt1, "ODC-001", "Perempatan Kota", "24_core_4_tube", "Closure utama", ts, ts).lastInsertRowid;
+  const odc2 = insOdc.run(olt2, "ODC-002", "Kawasan Industri", "48_core_8_tube", null, ts, ts).lastInsertRowid;
+  const odc3 = insOdc.run(olt1, "ODC-003", "Dusun Kenanga (anak ODC-001)", "12_core_2_tube", "ODC anak dari ODC-001", ts, ts).lastInsertRowid;
 
   const insOdp = db.prepare(
     "INSERT INTO odps (odc_id, name, location, cable_type, notes, created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
@@ -494,18 +504,16 @@ function seedIfEmpty() {
 
   // Sambungan core end-to-end (mapping ODC core <-> ODP core)
   const insLink = db.prepare(
-    "INSERT INTO core_links (odc_id, odc_core, odp_id, odp_core, loss_db, notes, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
+    "INSERT INTO core_links (odc_id, odc_core, odp_id, odp_core, notes, created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
   );
-  insLink.run(odc1, 1, odp1, 1, 0.15, "Closure Perempatan", ts, ts);
-  insLink.run(odc1, 2, odp1, 2, 0.2, null, ts, ts);
+  insLink.run(odc1, 1, odp1, 1, "Closure Perempatan", ts, ts);
+  insLink.run(odc1, 2, odp1, 2, null, ts, ts);
 
   // Port feeder ODC — satu ODC boleh beberapa port (contoh: ODC-001 memakai 2 port)
   const insFeeder = db.prepare("INSERT OR IGNORE INTO odc_feeder_ports (odc_id, port_id) VALUES (?,?)");
   insFeeder.run(odc1, p1);
   insFeeder.run(odc1, p2);
   insFeeder.run(odc2, p6);
-  db.prepare("UPDATE core_assignments SET power_dbm='-19.5' WHERE odc_id=? AND core=1 AND source='olt_to_odc'").run(odc1);
-  db.prepare("UPDATE core_assignments SET power_dbm='-20.2' WHERE odc_id=? AND core=2 AND source='olt_to_odc'").run(odc1);
 
   // Splitter bertingkat sesuai logika lapangan:
   //   OLT → ODC: SPL-1 (1:4) ─cascade─ SPL-2 (1:8)  [keduanya DI DALAM ODC]
@@ -680,8 +688,8 @@ const server = http.createServer(async (req, res) => {
     if (p === "/api/ports" && method === "POST") {
       const b = await readBody(req);
       if (!b.card_id || !b.port) return send(req, res, 400, { error: "card_id dan nomor port wajib diisi" });
-      const r = db.prepare("INSERT INTO olt_ports (card_id, port, sfp, serial, status, tx_power, rx_power, notes) VALUES (?,?,?,?,?,?,?,?)")
-        .run(b.card_id, b.port, b.sfp || null, b.serial || null, b.status || "inactive", b.tx_power || null, b.rx_power || null, b.notes || null);
+      const r = db.prepare("INSERT INTO olt_ports (card_id, port, sfp, serial, status, notes) VALUES (?,?,?,?,?,?)")
+        .run(b.card_id, b.port, b.sfp || null, b.serial || null, b.status || "inactive", b.notes || null);
       return send(req, res, 201, db.prepare("SELECT * FROM olt_ports WHERE id=?").get(r.lastInsertRowid));
     }
     m = p.match(/^\/api\/ports\/(\d+)$/);
@@ -689,8 +697,8 @@ const server = http.createServer(async (req, res) => {
       const id = Number(m[1]);
       if (method === "PATCH") {
         const b = await readBody(req);
-        db.prepare("UPDATE olt_ports SET port=?, sfp=?, serial=?, status=?, tx_power=?, rx_power=?, notes=?, updated_at=? WHERE id=?")
-          .run(b.port, b.sfp || null, b.serial || null, b.status || "inactive", b.tx_power || null, b.rx_power || null, b.notes || null, now(), id);
+        db.prepare("UPDATE olt_ports SET port=?, sfp=?, serial=?, status=?, notes=?, updated_at=? WHERE id=?")
+          .run(b.port, b.sfp || null, b.serial || null, b.status || "inactive", b.notes || null, now(), id);
         return send(req, res, 200, db.prepare("SELECT * FROM olt_ports WHERE id=?").get(id));
       }
       if (method === "DELETE") {
@@ -714,8 +722,8 @@ const server = http.createServer(async (req, res) => {
       if (!b.name?.trim() || !b.olt_id || !b.cable_type) return send(req, res, 400, { error: "Nama, OLT, dan tipe kabel wajib diisi" });
       const badFeeder = checkFeederPorts(b.olt_id, b.feeder_port_ids);
       if (badFeeder) return send(req, res, 400, { error: badFeeder });
-      const r = db.prepare("INSERT INTO odcs (olt_id, name, location, cable_type, feeder_loss_db, notes) VALUES (?,?,?,?,?,?)")
-        .run(b.olt_id, b.name.trim(), b.location || null, b.cable_type, b.feeder_loss_db ?? null, b.notes || null);
+      const r = db.prepare("INSERT INTO odcs (olt_id, name, location, cable_type, notes) VALUES (?,?,?,?,?)")
+        .run(b.olt_id, b.name.trim(), b.location || null, b.cable_type, b.notes || null);
       syncFeederPorts(r.lastInsertRowid, b.feeder_port_ids);
       return send(req, res, 201, db.prepare("SELECT * FROM odcs WHERE id=?").get(r.lastInsertRowid));
     }
@@ -728,8 +736,8 @@ const server = http.createServer(async (req, res) => {
         const oltId = b.olt_id ?? cur?.olt_id;
         const badFeeder = checkFeederPorts(oltId, b.feeder_port_ids);
         if (badFeeder) return send(req, res, 400, { error: badFeeder });
-        db.prepare("UPDATE odcs SET olt_id=?, name=?, location=?, cable_type=?, feeder_loss_db=?, notes=?, updated_at=? WHERE id=?")
-          .run(oltId, b.name, b.location || null, b.cable_type, b.feeder_loss_db ?? null, b.notes || null, now(), id);
+        db.prepare("UPDATE odcs SET olt_id=?, name=?, location=?, cable_type=?, notes=?, updated_at=? WHERE id=?")
+          .run(oltId, b.name, b.location || null, b.cable_type, b.notes || null, now(), id);
         if (b.feeder_port_ids !== undefined) syncFeederPorts(id, b.feeder_port_ids);
         return send(req, res, 200, db.prepare("SELECT * FROM odcs WHERE id=?").get(id));
       }
@@ -791,8 +799,8 @@ const server = http.createServer(async (req, res) => {
     if (p === "/api/cores" && method === "POST") {
       const b = await readBody(req);
       if (!b.source || !b.core) return send(req, res, 400, { error: "source dan nomor core wajib diisi" });
-      const r = db.prepare("INSERT INTO core_assignments (source, odc_id, odp_id, core, status, destination, power_dbm, notes) VALUES (?,?,?,?,?,?,?,?)")
-        .run(b.source, b.odc_id || null, b.odp_id || null, b.core, b.status || "idle", b.destination || null, b.power_dbm || null, b.notes || null);
+      const r = db.prepare("INSERT INTO core_assignments (source, odc_id, odp_id, core, status, destination, notes) VALUES (?,?,?,?,?,?,?)")
+        .run(b.source, b.odc_id || null, b.odp_id || null, b.core, b.status || "idle", b.destination || null, b.notes || null);
       return send(req, res, 201, db.prepare("SELECT * FROM core_assignments WHERE id=?").get(r.lastInsertRowid));
     }
     m = p.match(/^\/api\/cores\/(\d+)$/);
@@ -800,8 +808,8 @@ const server = http.createServer(async (req, res) => {
       const id = Number(m[1]);
       if (method === "PATCH") {
         const b = await readBody(req);
-        db.prepare("UPDATE core_assignments SET status=?, destination=?, power_dbm=?, notes=?, updated_at=? WHERE id=?")
-          .run(b.status || "idle", b.destination || null, b.power_dbm || null, b.notes || null, now(), id);
+        db.prepare("UPDATE core_assignments SET status=?, destination=?, notes=?, updated_at=? WHERE id=?")
+          .run(b.status || "idle", b.destination || null, b.notes || null, now(), id);
         return send(req, res, 200, db.prepare("SELECT * FROM core_assignments WHERE id=?").get(id));
       }
       if (method === "DELETE") {
@@ -817,7 +825,7 @@ const server = http.createServer(async (req, res) => {
         SELECT fp.id, fp.odc_id, fp.port_id,
           o.id AS olt_id, o.name AS olt_name,
           c.slot, c.label AS card_label,
-          pt.port, pt.sfp, pt.tx_power, pt.rx_power
+          pt.port, pt.sfp
         FROM odc_feeder_ports fp
         JOIN olt_ports pt ON pt.id = fp.port_id
         JOIN olt_cards c ON c.id = pt.card_id
@@ -853,8 +861,8 @@ const server = http.createServer(async (req, res) => {
       if (db.prepare("SELECT id FROM core_links WHERE odp_id=? AND odp_core=?").get(b.odp_id, b.odp_core)) {
         return send(req, res, 409, { error: `Core ${b.odp_core} di ODP tersebut sudah terpakai sambungan lain` });
       }
-      const r = db.prepare("INSERT INTO core_links (odc_id, odc_core, odp_id, odp_core, loss_db, notes) VALUES (?,?,?,?,?,?)")
-        .run(b.odc_id, b.odc_core, b.odp_id, b.odp_core, b.loss_db ?? null, b.notes || null);
+      const r = db.prepare("INSERT INTO core_links (odc_id, odc_core, odp_id, odp_core, notes) VALUES (?,?,?,?,?)")
+        .run(b.odc_id, b.odc_core, b.odp_id, b.odp_core, b.notes || null);
       return send(req, res, 201, db.prepare("SELECT * FROM core_links WHERE id=?").get(r.lastInsertRowid));
     }
     m = p.match(/^\/api\/links\/(\d+)$/);
@@ -862,8 +870,8 @@ const server = http.createServer(async (req, res) => {
       const id = Number(m[1]);
       if (method === "PATCH") {
         const b = await readBody(req);
-        db.prepare("UPDATE core_links SET loss_db=?, notes=?, updated_at=? WHERE id=?")
-          .run(b.loss_db ?? null, b.notes || null, now(), id);
+        db.prepare("UPDATE core_links SET notes=?, updated_at=? WHERE id=?")
+          .run(b.notes || null, now(), id);
         return send(req, res, 200, db.prepare("SELECT * FROM core_links WHERE id=?").get(id));
       }
       if (method === "DELETE") {

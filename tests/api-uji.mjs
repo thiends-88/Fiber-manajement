@@ -10,7 +10,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildPowerBudget } from "../src/lib/budget.js";
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const PORT = Number(process.env.UJI_API_PORT || 4599);
@@ -175,19 +174,19 @@ async function main() {
 
   const port = await POST(
     "/api/ports",
-    { card_id: kartuId, port: 1, sfp: "Class B+", status: "active", tx_power: 7, rx_power: -24 },
+    { card_id: kartuId, port: 1, sfp: "Class B+", status: "active" },
     admin,
   );
-  cek("tambah port OLT → 201 (dengan TX/RX dBm)", port.status === 201 && Number(port.data?.tx_power) === 7, `status ${port.status}`);
+  cek("tambah port OLT → 201", port.status === 201, `status ${port.status}`);
   const portId = port.data?.id;
   const portTanpaNomor = await POST("/api/ports", { card_id: kartuId }, admin);
   cek("port tanpa nomor → 400", portTanpaNomor.status === 400, `status ${portTanpaNomor.status}`);
 
-  const portOltLain = await POST("/api/ports", { card_id: kartuId, port: 2, tx_power: 5 }, admin);
-  const portOltLain2 = await POST("/api/ports", { card_id: kartuId, port: 3, tx_power: 3 }, admin);
+  const portOltLain = await POST("/api/ports", { card_id: kartuId, port: 2, sfp: "GPON" }, admin);
+  const portOltLain2 = await POST("/api/ports", { card_id: kartuId, port: 3, sfp: "GPON" }, admin);
 
-  const portUbah = await PATCH(`/api/ports/${portId}`, { card_id: kartuId, port: 1, tx_power: 7.5, status: "active" }, admin);
-  cek("ubah port (TX 7,5 dBm) → 200", portUbah.status === 200 && Number(portUbah.data?.tx_power) === 7.5, `tx=${portUbah.data?.tx_power}`);
+  const portUbah = await PATCH(`/api/ports/${portId}`, { card_id: kartuId, port: 1, serial: "SFP-0001", status: "active" }, admin);
+  cek("ubah port (serial + status) → 200", portUbah.status === 200 && portUbah.data?.serial === "SFP-0001", `serial=${portUbah.data?.serial}`);
 
   // ---------------------------------------------------- 4. ODC + port feeder
   console.log("\n--- 4) ODC dan port feeder (banyak input) ---");
@@ -207,7 +206,6 @@ async function main() {
       name: "ODC-UJI-01",
       olt_id: oltId,
       cable_type: "48_core_8_tube",
-      feeder_loss_db: 2.3,
       feeder_port_ids: [portId, portOltLain.data.id], // banyak input feeder
     },
     admin,
@@ -299,7 +297,7 @@ async function main() {
   // ODC anak: ODC kedua diumpan dari output splitter ODC pertama
   const odcAnak = await POST(
     "/api/odcs",
-    { name: "ODC-UJI-ANAK", olt_id: oltId, cable_type: "24_core_4_tube", feeder_loss_db: 1.5, feeder_port_ids: [portOltLain2.data.id] },
+    { name: "ODC-UJI-ANAK", olt_id: oltId, cable_type: "24_core_4_tube", feeder_port_ids: [portOltLain2.data.id] },
     admin,
   );
   const odcAnakId = odcAnak.data?.id;
@@ -336,7 +334,7 @@ async function main() {
   const linkTanpaField = await POST("/api/links", { odc_id: odcId }, admin);
   cek("link tanpa field wajib → 400", linkTanpaField.status === 400, `status ${linkTanpaField.status}`);
 
-  const link = await POST("/api/links", { odc_id: odcId, odc_core: 1, odp_id: odpId, odp_core: 1, loss_db: 0.4 }, admin);
+  const link = await POST("/api/links", { odc_id: odcId, odc_core: 1, odp_id: odpId, odp_core: 1, notes: "Closure uji" }, admin);
   cek("sambungkan core ODC → ODP → 201", link.status === 201, `status ${link.status}`);
 
   const linkGandaOdc = await POST("/api/links", { odc_id: odcId, odc_core: 1, odp_id: odpId, odp_core: 2 }, admin);
@@ -402,49 +400,38 @@ async function main() {
   const sesiMatl = await GET("/api/me", loginBaru.data?.token);
   cek("token setelah logout tidak berlaku → 401", sesiMatl.status === 401, `status ${sesiMatl.status}`);
 
-  // ---------------------------------------------------- 12. Anggaran daya (data nyata)
-  console.log("\n--- 12) Anggaran daya dari data server (seed demo) ---");
-  const [olts, odcs, odps, splitters, links, feederPorts] = await Promise.all([
+  // ------------------------------------------- 12. Data alur core (tanpa redaman)
+  console.log("\n--- 12) Data alur core dari server (seed demo) ---");
+  const [olts, odcs, odps, splitters, links, feederPorts, cores] = await Promise.all([
     GET("/api/olts", admin),
     GET("/api/odcs", admin),
     GET("/api/odps", admin),
     GET("/api/splitters", admin),
     GET("/api/links", admin),
     GET("/api/feeder-ports", admin),
+    GET("/api/cores", admin),
   ]);
-  cek("semua data terbaca", [olts, odcs, odps, splitters, links, feederPorts].every((r) => r.status === 200));
+  cek("semua data terbaca", [olts, odcs, odps, splitters, links, feederPorts, cores].every((r) => r.status === 200));
   cek(
     "data demo tersedia (≥2 OLT, ≥3 ODC, ODP, splitter)",
     olts.data?.length >= 2 && odcs.data?.length >= 3 && odps.data?.length >= 1 && splitters.data?.length >= 1,
     `olt=${olts.data?.length} odc=${odcs.data?.length} odp=${odps.data?.length} spl=${splitters.data?.length}`,
   );
-  const budget = buildPowerBudget({
-    olts: olts.data,
-    odcs: odcs.data,
-    odps: odps.data,
-    splitters: splitters.data,
-    links: links.data,
-    feederPorts: feederPorts.data,
-  });
-  cek("anggaran daya terhitung untuk setiap ODP", budget.length === odps.data?.length, `${budget.length}/${odps.data?.length}`);
   cek(
-    "setiap ODP punya status — yang belum terpetakan ditandai 'jalur belum terdata' (bukan angka palsu)",
-    budget.every((b) => typeof b.status?.level === "string") &&
-      budget.filter((b) => !b.routeKnown).every((b) => b.status.level === "unknown" && b.finalOut === null),
-    budget.map((b) => `${b.odpName}:${b.status.level}`).join(", "),
+    "splitter demo punya output terarah (alur core bisa digambar)",
+    splitters.data?.some((sp) => (sp.outputs ?? []).some((o) => o.target_type)),
   );
-  const odpUtama = budget.find((b) => b.odpName === "ODP-001");
   cek(
-    "ODP-001 (4:8:8, TX +7 dBm) → ≈ −21,8 dBm, status aman",
-    odpUtama && Math.abs(odpUtama.finalOut - -21.8) <= 0.3 && odpUtama.status.level === "ok",
-    odpUtama ? `${odpUtama.finalOut} dBm (${odpUtama.status.label}), total ${odpUtama.lossTotal} dB` : "tidak ada",
+    "setiap ODC tahu port feeder-nya (awal alur core)",
+    feederPorts.data?.length >= 1 && feederPorts.data?.every((f) => f.olt_name && f.port != null),
+    `${feederPorts.data?.length} port feeder`,
   );
-  const odpAnak = budget.find((b) => b.odpName === "ODP-004");
-  cek(
-    "ODP-004 (lewat ODC anak) → jalur memuat ODC-001 & ODC-003, ≈ −22,2 dBm",
-    odpAnak && JSON.stringify(odpAnak.odcPath) === '["ODC-001","ODC-003"]' && Math.abs(odpAnak.finalOut - -22.2) <= 0.3,
-    odpAnak ? `${JSON.stringify(odpAnak.odcPath)} → ${odpAnak.finalOut} dBm` : "tidak ada",
-  );
+  // Penjaga: perhitungan redaman/daya sudah dibuang total, termasuk dari API.
+  const bocor = JSON.stringify({
+    olt: olts.data, odc: odcs.data, odp: odps.data, spl: splitters.data,
+    link: links.data, feeder: feederPorts.data, core: cores.data,
+  }).match(/"(tx_power|rx_power|power_dbm|feeder_loss_db|loss_db)"/g);
+  cek("API tidak lagi mengirim field redaman/daya", !bocor, bocor ? [...new Set(bocor)].join(", ") : "");
 
   // ---------------------------------------------------- ringkasan
   console.log(`\nAPI: ${lolos} lolos, ${gagal} gagal`);

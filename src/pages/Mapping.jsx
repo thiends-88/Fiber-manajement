@@ -1,120 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowRight, Gauge, GitBranch, Link2, Pencil, Plus, Trash2, Workflow } from "lucide-react";
+import { GitBranch, Link2, Pencil, Plus, Trash2, Workflow } from "lucide-react";
 import { api } from "../lib/api.js";
 import { useAuth } from "../lib/auth.jsx";
 import { Badge, Card, Empty, Field, Modal, PageHeader, Toast, useToast } from "../components/ui.jsx";
-import { STATUS, colorForCoreInCable, coresPerTube, getCableInfo } from "../lib/fiber.js";
-import { GPON, SPLITTER_LOSS, buildPowerBudget, fmtDb, fmtDbm } from "../lib/budget.js";
+import { STATUS, getCableInfo } from "../lib/fiber.js";
 import { buildCoreRoutes } from "../lib/jalur-core.js";
+import { Arrow, CoreChip, PohonJalur } from "../components/JalurCore.jsx";
 
-function CoreChip({ core, cableType, small }) {
-  const color = colorForCoreInCable(core, coresPerTube(cableType));
-  const tube = Math.floor((core - 1) / coresPerTube(cableType)) + 1;
-  return (
-    <span className={`inline-flex items-center gap-1.5 rounded-md border border-line bg-panel2 px-2 ${small ? "py-0.5 text-[11px]" : "py-1 text-xs"}`}>
-      <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-full border border-black/30" style={{ background: color.hex }} title={color.name} />
-      <span className="font-medium">Core {core}</span>
-      <span className="text-mut">· {color.name} · Tube {tube}</span>
-    </span>
-  );
-}
-
-function Arrow() {
-  return <ArrowRight size={15} className="shrink-0 text-cyan-400" />;
-}
-
-// Chip warna core masuk ODP (warna TIA/EIA-598 dari kabel ODC asal)
-function FeedChip({ feed }) {
-  if (!feed) return null;
-  const color = colorForCoreInCable(feed.core, coresPerTube(feed.cableType));
-  return (
-    <span className="inline-flex items-center gap-1 rounded-md border border-line bg-panel2 px-1.5 py-0.5 text-[11px]">
-      <span className="inline-block h-2 w-2 shrink-0 rounded-full border border-black/30" style={{ background: color.hex }} title={color.name} />
-      <span className="font-medium">core {feed.core}</span>
-      <span className="text-mut">· {color.name}</span>
-    </span>
-  );
-}
-
-// Pohon jalur core (dari buildCoreRoutes): splitter → cascade / ODP / ODC anak.
-// feed = { core, cableType } core ODC yang mengalir ke pohon ini (untuk warna).
-function PohonJalur({ node, feed }) {
-  if (!node) return null;
-  if (node.kind === "splitter") {
-    return (
-      <div className="rounded-lg border border-line bg-panel p-2.5 text-xs">
-        <div className="flex flex-wrap items-center gap-2">
-          {node.viaPort != null && <Badge cls="bg-violet-500/15 text-violet-300">via out {node.viaPort}</Badge>}
-          <span className="font-semibold">{node.name}</span>
-          <Badge cls="bg-violet-500/15 text-violet-300">Splitter {node.ratio}</Badge>
-          {node.inputCore != null && <Badge cls="bg-slate-500/15 text-slate-300">input core {node.inputCore}</Badge>}
-          {node.children.length === 0 && node.idlePorts === 0 && (
-            <span className="text-mut">belum ada output terarah</span>
-          )}
-        </div>
-        {(node.children.length > 0 || node.idlePorts > 0) && (
-          <div className="ml-1.5 mt-2 space-y-2 border-l border-line pl-3">
-            {node.children.map((c, i) => (
-              <PohonJalur key={`${node.id}-${i}`} node={c} feed={feed} />
-            ))}
-            {node.idlePorts > 0 && (
-              <div className="rounded-md border border-dashed border-line px-2 py-1 text-[11px] text-mut">
-                {node.idlePorts} output belum diarahkan
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-    );
-  }
-  if (node.kind === "odp") {
-    return (
-      <div className="rounded-lg border border-emerald-500/40 bg-panel px-2.5 py-1.5 text-xs">
-        <div className="flex flex-wrap items-center gap-2">
-          {node.port != null && <Badge cls="bg-violet-500/15 text-violet-300">out {node.port}</Badge>}
-          <span className="font-semibold text-emerald-300">{node.name}</span>
-          <span className="text-mut">{node.location || "lokasi belum diisi"}</span>
-          <FeedChip feed={feed} />
-        </div>
-        {node.insideSplitters.length > 0 && (
-          <div className="mt-1 text-[11px] text-mut">
-            Splitter di dalam ODP: {node.insideSplitters.map((s) => `${s.name} (${s.ratio})`).join(" · ")}
-          </div>
-        )}
-      </div>
-    );
-  }
-  if (node.kind === "odc") {
-    return (
-      <div className="rounded-lg border border-sky-500/40 bg-panel p-2.5 text-xs">
-        <div className="flex flex-wrap items-center gap-2">
-          {node.port != null && <Badge cls="bg-violet-500/15 text-violet-300">out {node.port}</Badge>}
-          <span className="font-semibold text-sky-300">{node.name}</span>
-          <Badge cls="bg-sky-500/15 text-sky-300">ODC anak</Badge>
-        </div>
-        {node.children.length > 0 ? (
-          <div className="ml-1.5 mt-2 space-y-2 border-l border-line pl-3">
-            {node.children.map((c, i) => (
-              <PohonJalur key={`${node.odcId}-${i}`} node={c} feed={feed} />
-            ))}
-          </div>
-        ) : (
-          <div className="mt-1 text-[11px] text-mut">belum ada splitter dengan input core di ODC ini</div>
-        )}
-      </div>
-    );
-  }
-  if (node.kind === "terputus") {
-    return (
-      <div className="rounded-md border border-amber-500/40 bg-panel px-2 py-1 text-[11px] text-amber-300">
-        out {node.port}: {node.note}
-      </div>
-    );
-  }
-  return null;
-}
-
-const emptyLink = { odc_id: "", odc_core: "", odp_id: "", odp_core: "", loss_db: "", notes: "" };
+const emptyLink = { odc_id: "", odc_core: "", odp_id: "", odp_core: "", notes: "" };
 
 export default function Mapping() {
   const { user } = useAuth();
@@ -185,16 +78,6 @@ export default function Mapping() {
 
   const cable = odc?.cable_type;
 
-  // Anggaran daya per jalur (ODC terpilih)
-  const budget = useMemo(
-    () =>
-      buildPowerBudget({ olts, odcs, odps, splitters, links, feederPorts }).filter(
-        (r) => r.odcId === Number(odcId),
-      ),
-    [olts, odcs, odps, splitters, links, feederPorts, odcId],
-  );
-  const powerCount = feederCores.filter((c) => c.power_dbm).length;
-
   // Pohon jalur per core ODC (1 core → splitter → ODP / ODC anak) +
   // sambungan kabel langsung yang dipisahkan
   const peta = useMemo(
@@ -223,7 +106,6 @@ export default function Mapping() {
         odc_core: Number(form.odc_core),
         odp_id: Number(form.odp_id),
         odp_core: Number(form.odp_core),
-        loss_db: form.loss_db === "" ? null : Number(form.loss_db),
         notes: form.notes,
       };
       if (modal.mode === "add") await api("/api/links", { method: "POST", body });
@@ -255,7 +137,7 @@ export default function Mapping() {
     <div>
       <PageHeader
         title="Mapping Core OLT → ODC → ODP"
-        desc="Peta jalur core end-to-end: port feeder OLT, core ODC, core ODP, redaman, dan daya optik (dBm)."
+        desc="Catat sambungan core: core ODC mana yang tersambung ke ODP mana."
       >
         {canWrite && (
           <button className="btn btn-primary" onClick={openAdd}>
@@ -283,11 +165,10 @@ export default function Mapping() {
                 {feederPortsForOdc.length === 0
                   ? "belum diatur"
                   : feederPortsForOdc
-                      .map((f) => `${feederLabel(f)}${f.tx_power || f.rx_power ? ` (TX ${f.tx_power || "-"}/RX ${f.rx_power || "-"} dBm)` : ""}`)
+                      .map(feederLabel)
                       .join(" · ")}
               </Badge>
               <Badge cls="bg-emerald-500/15 text-emerald-400">Core ODC: {feederCores.length} terdata · {links.length} tersambung</Badge>
-              <Badge cls="bg-amber-500/15 text-amber-300">Daya optik: {powerCount}/{feederCores.length} core</Badge>
             </div>
           )}
         </div>
@@ -319,9 +200,7 @@ export default function Mapping() {
                       <div className="mb-2 flex flex-wrap items-center gap-2">
                         <CoreChip core={t.core} cableType={cable} small />
                         {status && <Badge cls={status.cls}>{status.label}</Badge>}
-                        <span className="text-[11px] text-mut">
-                          {odc.name} · daya: {feeder?.power_dbm ? `${feeder.power_dbm} dBm` : "belum terdata"}
-                        </span>
+                        <span className="text-[11px] text-mut">{odc.name}</span>
                       </div>
                       <PohonJalur node={t.root} feed={{ core: t.core, cableType: cable }} />
                     </div>
@@ -363,16 +242,13 @@ export default function Mapping() {
                           <CoreChip core={l.odc_core} cableType={cable} small />
                           {status && <Badge cls={status.cls}>{status.label}</Badge>}
                         </div>
-                        <div className="text-mut">
-                          {odc.name} · daya: {feeder?.power_dbm ? `${feeder.power_dbm} dBm` : "belum terdata"}
-                        </div>
+                        <div className="text-mut">{odc.name}</div>
                       </div>
                       <Arrow />
                       {/* 3. Core ODP */}
                       <div className="rounded-lg border border-line bg-panel px-2.5 py-1.5 text-xs">
                         <div className="mb-1 flex items-center gap-2">
                           <CoreChip core={l.odp_core} cableType={odp?.cable_type} small />
-                          <Badge cls="bg-slate-500/15 text-slate-300">Redaman {l.loss_db != null ? `${l.loss_db} dB` : "-"}</Badge>
                         </div>
                         <div className="text-mut">{l.odp_name} · {odp?.location || "lokasi belum diisi"}</div>
                       </div>
@@ -397,7 +273,7 @@ export default function Mapping() {
                               onClick={() => {
                                 setForm({
                                   odc_id: l.odc_id, odc_core: l.odc_core, odp_id: l.odp_id, odp_core: l.odp_core,
-                                  loss_db: l.loss_db ?? "", notes: l.notes || "",
+                                  notes: l.notes || "",
                                 });
                                 setModal({ mode: "edit", link: l });
                               }}
@@ -416,78 +292,6 @@ export default function Mapping() {
                     );
                   })}
                 </div>
-              </div>
-            )}
-          </Card>
-
-          {/* Anggaran daya per jalur */}
-          <Card>
-            <div className="mb-1 flex flex-wrap items-center gap-2">
-              <Gauge size={16} className="text-emerald-400" />
-              <h2 className="font-semibold">Anggaran Daya per Jalur (Power Budget)</h2>
-              <span className="text-xs text-mut">
-                daya tiba = TX SFP di OLT − redaman kabel feeder − redaman splitter
-              </span>
-            </div>
-            <p className="mb-3 text-[11px] text-mut">
-              Redaman splitter dipakai standar: {Object.entries(SPLITTER_LOSS).map(([r, v]) => `${r} = ${v} dB`).join(" · ")}. Patokan GPON kelas B+:
-              sensitivitas {GPON.sensitivity} dBm, aman bila hasil ≥ {GPON.sensitivity + GPON.warnMargin} dBm.
-            </p>
-
-            {budget.length === 0 ? (
-              <Empty text="ODC ini belum punya ODP tujuan." />
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead className="border-b border-line">
-                    <tr>
-                      <th className="th">ODP</th>
-                      <th className="th">Jalur</th>
-                      <th className="th">TX SFP</th>
-                      <th className="th">Total redaman</th>
-                      <th className="th">Tiba di ODP</th>
-                      <th className="th">Ujung akhir</th>
-                      <th className="th">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {budget.map((b) => (
-                      <tr key={b.odpId} className="border-b border-line-soft align-top last:border-0">
-                        <td className="td">
-                          <div className="font-medium">{b.odpName}</div>
-                          {b.topology && <Badge cls="bg-violet-500/15 text-violet-300">Topologi {b.topology}</Badge>}
-                          {(b.odcPath?.length ?? 0) > 1 && (
-                            <Badge cls="bg-sky-500/15 text-sky-300">via {b.odcPath.join(" → ")}</Badge>
-                          )}
-                        </td>
-                        <td className="td max-w-[280px] text-[11px] text-mut">{b.route}</td>
-                        <td className="td text-mut">
-                          {b.tx === null ? <span className="text-amber-300">belum diisi</span> : fmtDbm(b.tx)}
-                          {b.txLabel && <div className="text-[10px] text-mut-soft">{b.txLabel}</div>}
-                        </td>
-                        <td className="td text-[11px] text-mut">
-                          <div>
-                            {b.lossTotal === null || b.lossTotal === 0 ? "belum ada data" : fmtDb(b.lossTotal)}
-                            {b.chain.length > 0 && <span> · splitter {b.chain.map((c) => `${c.ratio} (${c.loss})`).join(" + ")}</span>}
-                            {b.insideLoss > 0 && <span> + dalam ODP {b.insideSplitters.map((c) => `${c.ratio} (${c.loss})`).join(" + ")}</span>}
-                            {!b.viaSplitter && b.cableLoss > 0 && <span> + kabel {b.cableLoss}</span>}
-                            {b.feederLoss > 0 && <span> + feeder {b.feederLoss}</span>}
-                          </div>
-                          {b.tx !== null && b.lossTotal > 0 && (
-                            <div className="font-medium text-ink">
-                              {b.tx} − {b.lossTotal} = {fmtDbm(b.finalOut)}
-                            </div>
-                          )}
-                        </td>
-                        <td className="td text-mut">{b.routeKnown ? fmtDbm(b.arrival) : "—"}</td>
-                        <td className="td font-medium">{b.routeKnown ? fmtDbm(b.finalOut) : "—"}</td>
-                        <td className="td">
-                          <Badge cls={b.status.cls}>{b.status.label}</Badge>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
               </div>
             )}
           </Card>
@@ -607,7 +411,6 @@ export default function Mapping() {
                     <tr>
                       <th className="th">Core</th>
                       <th className="th">Status</th>
-                      <th className="th">Daya</th>
                       <th className="th">Tujuan</th>
                       <th className="th">Sambungan ODP</th>
                     </tr>
@@ -619,7 +422,6 @@ export default function Mapping() {
                         <tr key={c.id} className="border-b border-line-soft last:border-0">
                           <td className="td"><CoreChip core={c.core} cableType={cable} small /></td>
                           <td className="td"><Badge cls={st.cls}>{st.label}</Badge></td>
-                          <td className="td text-mut">{c.power_dbm ? `${c.power_dbm} dBm` : "-"}</td>
                           <td className="td text-mut">{c.destination || "-"}</td>
                           <td className="td text-mut">
                             {linkedOdcCores.has(c.core)
@@ -729,13 +531,6 @@ export default function Mapping() {
                 onChange={(e) => setForm({ ...form, odp_core: e.target.value })}
                 disabled={modal?.mode === "edit"}
                 required
-              />
-            </Field>
-            <Field label="Redaman / Loss (dB) — opsional">
-              <input
-                type="number" step="0.01" className="input" value={form.loss_db}
-                onChange={(e) => setForm({ ...form, loss_db: e.target.value })}
-                placeholder="mis. 0.25"
               />
             </Field>
             <Field label="Catatan">

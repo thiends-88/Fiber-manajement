@@ -10,15 +10,15 @@ import { AuthProvider } from "../src/lib/auth.jsx";
 // Rute + teks DATA yang wajib muncul. Halaman yang error/blank biasanya masih
 // menampilkan header tapi data demo tidak ikut ter-render, jadi penanda ini kuat.
 const ROUTES = [
-  ["/", "Core Terdaftar"],
+  ["/", ["Alur Core", "SPL-1"]], // halaman utama: pohon jalur core benar-benar tergambar
+  ["/dashboard", "Core Terdaftar"],
   ["/olt", "OLT-PST-01"],
   ["/odc", ["ODC-001", "ODC anak"]], // badge ODC anak harus tampil
   ["/odp", "ODP-001"],
-  ["/mapping", ["Anggaran Daya", "Sambungan Kabel Langsung"]],
-  ["/topologi", "SPL-1"],
+  ["/mapping", "Sambungan Kabel Langsung"],
   ["/laporan", "OLT-PST-01"],
   ["/users", "admin@arena.test"],
-  ["/login", "Dashboard"], // sudah login → dialihkan ke Dashboard
+  ["/login", "Alur Core"], // sudah login → dialihkan ke halaman utama
 ];
 
 // Jejak error yang TIDAK boleh muncul di halaman

@@ -148,7 +148,6 @@ export function buildCoreRoutes({
         odpId: l.odp_id,
         odpName: namaOdp,
         odpCore: l.odp_core,
-        lossDb: l.loss_db ?? null,
         notes: l.notes || null,
         label: `Core ${l.odc_core} → ${namaOdp} core ${l.odp_core} (kabel langsung)`,
       };

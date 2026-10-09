@@ -7,7 +7,7 @@ import CoreManager from "../components/CoreManager.jsx";
 import SplitterManager from "../components/SplitterManager.jsx";
 import { CABLE_TYPES, getCableInfo } from "../lib/fiber.js";
 
-const empty = { name: "", olt_id: "", location: "", cable_type: CABLE_TYPES[0].value, feeder_port_ids: [], feeder_loss_db: "", notes: "" };
+const empty = { name: "", olt_id: "", location: "", cable_type: CABLE_TYPES[0].value, feeder_port_ids: [], notes: "" };
 
 export default function Odcs() {
   const { user } = useAuth();
@@ -46,7 +46,6 @@ export default function Odcs() {
         ...form,
         olt_id: Number(form.olt_id),
         feeder_port_ids: form.feeder_port_ids.map(Number),
-        feeder_loss_db: form.feeder_loss_db === "" ? null : Number(form.feeder_loss_db),
       };
 
       if (modal.mode === "add") await api("/api/odcs", { method: "POST", body });
@@ -158,7 +157,6 @@ export default function Odcs() {
                             name: d.name, olt_id: d.olt_id, location: d.location || "",
                             cable_type: d.cable_type, notes: d.notes || "",
                             feeder_port_ids: feederOf(d.id).map((f) => f.port_id),
-                            feeder_loss_db: d.feeder_loss_db ?? "",
                           });
                           setModal({ mode: "edit", odc: d });
                         }}
@@ -237,17 +235,10 @@ export default function Odcs() {
                   <span className="font-medium">{p.card_label || `Card ${p.slot}`} port {p.port}</span>
                   <span className="text-mut">
                     {p.sfp ? `${p.sfp} · ` : ""}{p.status === "active" ? "aktif" : p.status}
-                    {p.tx_power || p.rx_power ? ` · TX ${p.tx_power || "-"} / RX ${p.rx_power || "-"} dBm` : ""}
                   </span>
                 </label>
               ))}
             </div>
-          </Field>
-          <Field label="Redaman kabel feeder (dB) — opsional">
-            <input
-              className="input" type="number" step="0.1" min={0} placeholder="mis. 0.5 (kabel + konektor dari OLT)"
-              value={form.feeder_loss_db} onChange={(e) => setForm({ ...form, feeder_loss_db: e.target.value })}
-            />
           </Field>
           <Field label="Lokasi">
             <input className="input" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} />

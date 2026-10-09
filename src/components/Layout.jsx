@@ -5,6 +5,7 @@ import {
   Cable,
   FileText,
   LayoutDashboard,
+  Link2,
   LogOut,
   Menu,
   Network,
@@ -21,11 +22,13 @@ import { getStoredUser } from "../lib/api.js";
 import ThemeMenu from "./ThemeMenu.jsx";
 
 const NAV = [
-  { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
+  // Alur Core di urutan pertama: ini yang paling sering dibuka teknisi.
+  { to: "/", label: "Alur Core", icon: Workflow, end: true },
+  { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { to: "/olt", label: "OLT", icon: Server },
   { to: "/odc", label: "ODC", icon: Boxes },
   { to: "/odp", label: "ODP", icon: Network },
-  { to: "/mapping", label: "Mapping Core", icon: Workflow },
+  { to: "/mapping", label: "Mapping Core", icon: Link2 },
   { to: "/topologi", label: "Topologi", icon: Cable },
   { to: "/laporan", label: "Laporan", icon: FileText },
 ];

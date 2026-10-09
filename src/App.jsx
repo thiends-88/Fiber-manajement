@@ -24,8 +24,18 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      {/* Halaman utama = Alur Core (OLT → ODC → ODP), yang paling sering
+          dibutuhkan teknisi. Dashboard ringkasan pindah ke /dashboard. */}
       <Route
         path="/"
+        element={
+          <Protected>
+            <Topologi />
+          </Protected>
+        }
+      />
+      <Route
+        path="/dashboard"
         element={
           <Protected>
             <Dashboard />
@@ -65,14 +75,6 @@ export default function App() {
         }
       />
       <Route
-        path="/topologi"
-        element={
-          <Protected>
-            <Topologi />
-          </Protected>
-        }
-      />
-      <Route
         path="/laporan"
         element={
           <Protected>
@@ -88,6 +90,7 @@ export default function App() {
           </Protected>
         }
       />
+      <Route path="/topologi" element={<Navigate to="/" replace />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
