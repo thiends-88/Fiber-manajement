@@ -131,6 +131,7 @@ export default function Mapping() {
 
   const formOdc = odcs.find((d) => d.id === Number(form.odc_id));
   const formOdps = odps.filter((p) => p.odc_id === Number(form.odc_id));
+  const formOdp = formOdps.find((p) => p.id === Number(form.odp_id));
   const usedFormCores = links.filter((l) => l.odc_id === Number(form.odc_id)).map((l) => l.odc_core);
 
   return (
@@ -435,7 +436,7 @@ export default function Mapping() {
                       );
                     })}
                     {feederCores.length === 0 && (
-                      <tr><td className="td py-6 text-center text-mut" colSpan={5}>Belum ada core OLT → ODC terdata.</td></tr>
+                      <tr><td className="td py-6 text-center text-mut" colSpan={4}>Belum ada core OLT → ODC terdata.</td></tr>
                     )}
                   </tbody>
                 </table>
@@ -507,7 +508,7 @@ export default function Mapping() {
             </Field>
             <Field label={`Core ODC${formOdc ? ` (kabel ${getCableInfo(formOdc.cable_type)?.label ?? "-"})` : ""}`}>
               <input
-                type="number" min={1} max={96} className="input" value={form.odc_core}
+                type="number" min={1} max={getCableInfo(formOdc?.cable_type)?.cores ?? 96} className="input" value={form.odc_core}
                 onChange={(e) => setForm({ ...form, odc_core: e.target.value })}
                 disabled={modal?.mode === "edit"}
                 required
@@ -527,7 +528,7 @@ export default function Mapping() {
             </Field>
             <Field label="Core ODP">
               <input
-                type="number" min={1} max={96} className="input" value={form.odp_core}
+                type="number" min={1} max={getCableInfo(formOdp?.cable_type)?.cores ?? 96} className="input" value={form.odp_core}
                 onChange={(e) => setForm({ ...form, odp_core: e.target.value })}
                 disabled={modal?.mode === "edit"}
                 required

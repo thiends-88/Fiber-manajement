@@ -3,7 +3,7 @@ import { GitBranch, Pencil, Plus, Trash2 } from "lucide-react";
 import { api } from "../lib/api.js";
 import { useAuth } from "../lib/auth.jsx";
 import { Badge, Empty, Field, Modal, Toast, useToast } from "./ui.jsx";
-import { SPLITTER_RATIOS } from "../lib/fiber.js";
+import { SPLITTER_RATIOS, getCableInfo } from "../lib/fiber.js";
 
 const emptySplitter = { name: "", ratio: "1:8", input_core: "", input_note: "", notes: "" };
 
@@ -36,6 +36,10 @@ export default function SplitterManager({ parentType, parentId, title }) {
   const toast = useToast(setToastState);
 
   const q = parentType === "odc" ? `odc_id=${parentId}` : `odp_id=${parentId}`;
+  const parent = parentType === "odc"
+    ? odcs.find((d) => d.id === Number(parentId))
+    : odps.find((d) => d.id === Number(parentId));
+  const inputCoreMax = getCableInfo(parent?.cable_type)?.cores;
 
   const load = useCallback(async () => {
     const [mine, o, all, ds] = await Promise.all([
@@ -231,7 +235,7 @@ export default function SplitterManager({ parentType, parentId, title }) {
             </Field>
             <Field label="Input dari Core (opsional)">
               <input
-                className="input" type="number" min={1} placeholder="mis. 1"
+                className="input" type="number" min={1} max={inputCoreMax} placeholder="mis. 1"
                 value={form.input_core} onChange={(e) => setForm({ ...form, input_core: e.target.value })}
               />
             </Field>

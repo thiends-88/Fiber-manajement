@@ -19,13 +19,13 @@ import { buildCoreRoutes } from "../lib/jalur-core.js";
  * Tidak ada hitung-hitungan redaman/daya di sini: hanya alur dan nama perangkat.
  */
 
-const KOSONG = { olts: [], odcs: [], odps: [], splitters: [], links: [], feederPorts: [], cores: [] };
-
 export default function Topologi() {
   const [data, setData] = useState(null);
+  const [error, setError] = useState("");
   const [view, setView] = useState("alur");
 
   const load = useCallback(async () => {
+    setError("");
     const [olts, odcs, odps, links, feederPorts, splitters, cores] = await Promise.all([
       api("/api/olts"),
       api("/api/odcs"),
@@ -39,7 +39,7 @@ export default function Topologi() {
   }, []);
 
   useEffect(() => {
-    load().catch(() => setData(KOSONG));
+    load().catch((e) => setError(e.message));
   }, [load]);
 
   // Pohon jalur per ODC, dihitung sekali untuk semua ODC
@@ -62,6 +62,17 @@ export default function Topologi() {
     return hasil;
   }, [data]);
 
+  if (error) {
+    return (
+      <div className="card flex flex-wrap items-center justify-between gap-3 border-red-500/30 p-4" role="alert">
+        <div>
+          <div className="font-semibold">Data Alur Core tidak dapat dimuat</div>
+          <div className="mt-1 text-sm text-mut">{error}</div>
+        </div>
+        <button className="btn" onClick={() => { setData(null); load().catch((e) => setError(e.message)); }}>Coba lagi</button>
+      </div>
+    );
+  }
   if (!data) return <div className="text-sm text-mut">Memuat…</div>;
 
   const coreTerpetakan = data.links.length + data.splitters.filter((s) => s.input_core != null && s.input_core !== "").length;

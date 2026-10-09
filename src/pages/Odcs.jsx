@@ -173,7 +173,7 @@ export default function Odcs() {
             ))}
             {odcs.length === 0 && (
               <tr>
-                <td className="td py-8 text-center text-mut" colSpan={8}>Belum ada ODC.</td>
+                <td className="td py-8 text-center text-mut" colSpan={canWrite ? 8 : 7}>Belum ada ODC.</td>
               </tr>
             )}
           </tbody>
@@ -203,7 +203,7 @@ export default function Odcs() {
             <input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
           </Field>
           <Field label="Induk OLT">
-            <select className="input" value={form.olt_id} onChange={(e) => setForm({ ...form, olt_id: e.target.value })} required>
+            <select className="input" value={form.olt_id} onChange={(e) => setForm({ ...form, olt_id: e.target.value, feeder_port_ids: [] })} required>
               <option value="" disabled>Pilih OLT…</option>
               {olts.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
             </select>

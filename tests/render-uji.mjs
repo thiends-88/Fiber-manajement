@@ -64,8 +64,8 @@ async function main() {
   }
 
   const { token, user } = await login();
-  siapkanDom(token, user);
-  const { run } = await import("../.uji-out/render-uji.js");
+  const dom = siapkanDom(token, user);
+  const { run, renderOne } = await import("../.uji-out/render-uji.js");
   const hasil = await run();
 
   let gagal = 0;
@@ -77,6 +77,20 @@ async function main() {
         (r.ok ? `"${r.sample}…"` : `→ ${r.problem}`),
     );
   }
+
+  const operatorResponse = await nodeFetch(`${API}/api/login`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email: "operator@arena.test", password: "Arena123!" }),
+  });
+  const operatorSession = await operatorResponse.json();
+  dom.window.localStorage.setItem("fiberops_arena_token", operatorSession.token);
+  dom.window.localStorage.setItem("fiberops_arena_user", JSON.stringify(operatorSession.user));
+  const operatorUsersPage = await renderOne("/users", 1500);
+  const operatorBlocked = operatorResponse.ok && operatorUsersPage.text.includes("Alur Core") && !operatorUsersPage.text.includes("Manajemen User");
+  if (!operatorBlocked) gagal++;
+  console.log(`${operatorBlocked ? "OK   " : "GAGAL"} /users operator dialihkan sebelum memuat halaman admin`);
+
   console.log(gagal === 0 ? "\nSEMUA HALAMAN TAMPIL NORMAL" : `\n${gagal} HALAMAN BERMASALAH`);
   process.exit(gagal ? 1 : 0);
 }

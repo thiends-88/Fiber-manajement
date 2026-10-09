@@ -124,7 +124,7 @@ export default function Odps() {
             ))}
             {odps.length === 0 && (
               <tr>
-                <td className="td py-8 text-center text-mut" colSpan={6}>Belum ada ODP.</td>
+                <td className="td py-8 text-center text-mut" colSpan={canWrite ? 6 : 5}>Belum ada ODP.</td>
               </tr>
             )}
           </tbody>

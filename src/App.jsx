@@ -12,11 +12,13 @@ import Mapping from "./pages/Mapping.jsx";
 import Laporan from "./pages/Laporan.jsx";
 import Users from "./pages/Users.jsx";
 
-function Protected({ children }) {
+function Protected({ children, requireAdmin = false }) {
   const { user } = useAuth();
   // Fallback ke localStorage: menghindari redirect keliru saat state context
   // belum ter-commit (mis. tepat setelah login).
-  if (!user && !getStoredUser()) return <Navigate to="/login" replace />;
+  const currentUser = user ?? getStoredUser();
+  if (!currentUser) return <Navigate to="/login" replace />;
+  if (requireAdmin && currentUser.role !== "admin") return <Navigate to="/" replace />;
   return <Layout>{children}</Layout>;
 }
 
@@ -85,7 +87,7 @@ export default function App() {
       <Route
         path="/users"
         element={
-          <Protected>
+          <Protected requireAdmin>
             <Users />
           </Protected>
         }

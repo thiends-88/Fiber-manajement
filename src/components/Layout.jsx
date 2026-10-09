@@ -21,13 +21,13 @@ import { getStoredUser } from "../lib/api.js";
 import ThemeMenu from "./ThemeMenu.jsx";
 
 const NAV = [
-  // Alur Core di urutan pertama: ini yang paling sering dibuka teknisi.
-  { to: "/", label: "Alur Core", icon: Workflow, end: true },
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { to: "/olt", label: "OLT", icon: Server },
   { to: "/odc", label: "ODC", icon: Boxes },
   { to: "/odp", label: "ODP", icon: Network },
   { to: "/mapping", label: "Mapping Core", icon: Link2 },
+  // Alur Core diletakkan tepat setelah Mapping Core sebagai alur visualnya.
+  { to: "/", label: "Alur Core", icon: Workflow, end: true },
   { to: "/laporan", label: "Laporan", icon: FileText },
 ];
 

@@ -136,6 +136,8 @@ export default function Olts() {
   }
 
   const selectedOlt = olts.find((o) => o.id === selectedId);
+  const portCardId = portModal?.mode === "add" ? portModal.cardId : portModal?.port?.card_id;
+  const portLimit = cards.find((c) => c.id === portCardId)?.port_count ?? 32;
 
   return (
     <div>
@@ -206,7 +208,7 @@ export default function Olts() {
             ))}
             {olts.length === 0 && (
               <tr>
-                <td className="td py-8 text-center text-mut" colSpan={7}>Belum ada OLT.</td>
+                <td className="td py-8 text-center text-mut" colSpan={canWrite ? 7 : 6}>Belum ada OLT.</td>
               </tr>
             )}
           </tbody>
@@ -390,7 +392,7 @@ export default function Olts() {
         <form onSubmit={savePort} className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <Field label="Nomor Port">
-              <input className="input" type="number" min={1} value={portForm.port} onChange={(e) => setPortForm({ ...portForm, port: e.target.value })} required />
+              <input className="input" type="number" min={1} max={portLimit} value={portForm.port} onChange={(e) => setPortForm({ ...portForm, port: e.target.value })} required />
             </Field>
             <Field label="Status">
               <select className="input" value={portForm.status} onChange={(e) => setPortForm({ ...portForm, status: e.target.value })}>

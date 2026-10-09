@@ -18,6 +18,7 @@ const ROUTES = [
   ["/mapping", "Sambungan Kabel Langsung"],
   ["/laporan", "OLT-PST-01"],
   ["/users", "admin@arena.test"],
+  ["/topologi", ["Alur Core", "SPL-1"]], // bookmark lama → halaman utama
   ["/login", "Alur Core"], // sudah login → dialihkan ke halaman utama
 ];
 
@@ -57,6 +58,10 @@ export async function run(tunggu = 1200) {
       thrown = e;
     }
     const text = (div.textContent || "").replace(/\s+/g, " ").trim();
+    const navLabels = [...div.querySelectorAll("nav a")].map((a) => a.textContent.replace(/\s+/g, " ").trim());
+    const mappingIndex = navLabels.indexOf("Mapping Core");
+    const alurIndex = navLabels.indexOf("Alur Core");
+    const navOrderOk = mappingIndex >= 0 && alurIndex === mappingIndex + 1;
     const bad = errors.filter((e) => /is not defined|Cannot read|not a function|Minified React error|Objects are not valid|Cannot access/.test(e));
     const wajibArr = Array.isArray(wajib) ? wajib : [wajib];
     const kurang = wajibArr.filter((w) => !text.includes(w));
@@ -67,16 +72,18 @@ export async function run(tunggu = 1200) {
       chars: text.length,
       sample: text.slice(0, 70),
       text,
-      ok: !thrown && bad.length === 0 && adaData && !terlarang,
+      ok: !thrown && bad.length === 0 && adaData && navOrderOk && !terlarang,
       problem: thrown
         ? String(thrown.message).slice(0, 200)
         : bad[0]
           ? bad[0].slice(0, 240)
-          : terlarang
-            ? `halaman memuat pesan error "${terlarang}" (ekor teks: ${text.slice(-160)})`
-            : !adaData
-              ? `data tidak ter-render — "${kurang.join('", "')}" tidak muncul (ekor teks: ${text.slice(-200)})`
-              : "",
+          : !navOrderOk
+            ? `urutan menu sidebar tidak sesuai: ${navLabels.join(" → ")}`
+            : terlarang
+              ? `halaman memuat pesan error "${terlarang}" (ekor teks: ${text.slice(-160)})`
+              : !adaData
+                ? `data tidak ter-render — "${kurang.join('", "')}" tidak muncul (ekor teks: ${text.slice(-200)})`
+                : "",
     });
     try { root.unmount(); } catch { /* abaikan */ }
     div.remove();
