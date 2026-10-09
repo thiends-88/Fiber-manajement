@@ -115,9 +115,18 @@ export default function TopologiDiagram({ olts, odcs, odps, splitters, links, fe
             {v.label}
           </span>
         ))}
+        <span className="mx-1 opacity-40">|</span>
+        <span className="flex items-center gap-1.5">
+          <span className="inline-block h-2.5 w-2.5 rounded-full border border-black/40 bg-mut" />
+          core masuk ODP
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="inline-block h-2.5 w-2.5 rounded-sm border border-black/40 bg-mut" />
+          core power ODP
+        </span>
       </div>
       <p className="mb-3 text-[11px] text-mut">
-        Warna garis feed, cascade, dan output mengikuti warna core kabel ODC asal (TIA/EIA-598); titik kecil di kanan-bawah ODP menunjukkan core yang masuk.
+        Warna garis feed, cascade, dan output mengikuti warna core kabel ODC asal (TIA/EIA-598). Pada kotak ODP: titik bulat di kanan-bawah adalah core yang masuk, kotak kecil di kiri-bawah adalah core power ODP (kabel ODP sendiri). Klik simpul untuk rincian core dan alur hulu.
       </p>
 
       <Card className="overflow-x-auto p-3">
@@ -207,8 +216,25 @@ export default function TopologiDiagram({ olts, odcs, odps, splitters, links, fe
                       stroke="var(--color-line)"
                       strokeWidth={0.8}
                     >
-                      <title>{`core ${c.core} • Warna dari ${c.odcName} (${c.port != null ? `out ${c.port}` : "sambungan langsung"})`}</title>
+                      <title>{`core masuk: core ${c.core} • Warna dari ${c.odcName} (${c.port != null ? `out ${c.port}` : "sambungan langsung"})`}</title>
                     </circle>
+                  ))}
+                {/* core power ODP (kabel ODP sendiri) — kotak warna di kiri-bawah */}
+                {n.kind === "odp" &&
+                  (n.powerCores ?? []).slice(0, 6).map((c, i) => (
+                    <rect
+                      key={`pw-${c.core}`}
+                      x={10 + i * 12}
+                      y={NODE_H - 15}
+                      width={9}
+                      height={9}
+                      rx={2}
+                      fill={c.hex}
+                      stroke="var(--color-line)"
+                      strokeWidth={0.8}
+                    >
+                      <title>{`core power ODP: core ${c.core} • ${c.colorName} • ${STATUS[c.status]?.label ?? c.status}`}</title>
+                    </rect>
                   ))}
               </g>
             );
