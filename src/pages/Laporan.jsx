@@ -6,11 +6,15 @@ import { STATUS, getCableInfo } from "../lib/fiber.js";
 
 export default function Laporan() {
   const [rows, setRows] = useState(null);
+  const [error, setError] = useState("");
   const [source, setSource] = useState("all");
   const [status, setStatus] = useState("all");
 
   useEffect(() => {
-    api("/api/laporan").then(setRows).catch(() => setRows([]));
+    api("/api/laporan").then(setRows).catch((e) => {
+      setError(e.message);
+      setRows([]);
+    });
   }, []);
 
   const filtered = useMemo(() => {
@@ -21,6 +25,11 @@ export default function Laporan() {
   }, [rows, source, status]);
 
   function exportCsv() {
+    const cell = (value) => {
+      let text = String(value ?? "");
+      if (/^\s*[=+@-]/.test(text)) text = `'${text}`;
+      return `"${text.replaceAll('"', '""')}"`;
+    };
     const head = ["Sumber", "Link", "Uplink", "Kabel", "Core", "Status", "Tujuan", "Catatan"];
     const lines = [
       head.join(";"),
@@ -35,16 +44,17 @@ export default function Laporan() {
           r.destination ?? "",
           r.notes ?? "",
         ]
-          .map((v) => `"${String(v).replaceAll('"', '""')}"`)
+          .map(cell)
           .join(";"),
       ),
     ];
     const blob = new Blob(["\uFEFF" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
     const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
+    const objectUrl = URL.createObjectURL(blob);
+    a.href = objectUrl;
     a.download = `laporan-core-${new Date().toISOString().slice(0, 10)}.csv`;
     a.click();
-    URL.revokeObjectURL(a.href);
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
   }
 
   return (
@@ -75,7 +85,9 @@ export default function Laporan() {
       </Card>
 
       <Card className="overflow-x-auto p-0">
-        {!rows ? (
+        {error ? (
+          <div className="p-6 text-sm text-red-300" role="alert">Data laporan tidak dapat dimuat: {error}</div>
+        ) : !rows ? (
           <div className="p-6 text-sm text-mut">Memuat…</div>
         ) : filtered.length === 0 ? (
           <div className="p-6"><Empty text="Tidak ada data sesuai filter." /></div>

@@ -3,29 +3,42 @@
 Aplikasi manajemen fiber optik (OLT → ODC → ODP) yang **dibangun dari nol**
 untuk lingkungan Arena. Fitur dipelajari dari aplikasi aslinya
 (tanpa memakai kode aplikasi lama): manajemen OLT + card + port GPON, ODC/ODC dengan
-tipe kabel standar, penugasan core berwarna TIA/EIA-598, topologi, laporan
-CSV, dan manajemen user berbasis peran.
+tipe kabel standar, penugasan core berwarna TIA/EIA-598, laporan CSV, dan
+manajemen user berbasis peran.
+
+Fokusnya satu: **memperlihatkan alur core kabel dari OLT → ODC → ODP dengan
+jelas** — port GPON mana, core warna apa, lewat splitter berapa tingkat, sampai
+ke ODP mana. Aplikasi ini **tidak menghitung redaman/daya optik**; yang
+ditampilkan hanya alur dan nama perangkat, supaya cepat dibaca teknisi di
+lapangan.
 
 ## Fitur inti
 
-1. **OLT** — perangkat, card (slot/tipe), port GPON + status, SFP/serial,
-   serta **daya TX/RX (dBm)** per port.
+1. **OLT** — perangkat, card (slot/tipe), port GPON + status, SFP/serial.
 2. **ODC** — induk OLT, tipe kabel, lokasi, dan **port feeder OLT** yang
    menyuplai ODC tersebut — **boleh lebih dari satu port** (satu ODC bisa
    ditarik dari beberapa port feeder). Port feeder wajib milik OLT induk ODC.
 3. **ODP** — induk ODC, tipe kabel, lokasi.
 4. **Core** — penugasan core per kabel dengan warna standar TIA/EIA-598
    (12 warna per tube), status idle/terpakai/reserved/rusak, pelanggan,
-   tujuan, dan **daya optik terukur (dBm)** per core.
-5. **Anggaran daya per jalur (power budget)** — otomatis menghitung daya
-   sampai ODP: **TX SFP di OLT (dBm) − redaman kabel feeder − redaman splitter
-   sepanjang jalur = daya di ujung**. Contoh: TX +7 dBm dengan topologi 4:8:8
-   (1:4 + 1:8 + 1:8 = 28,3 dB) → 7 − 28,3 = **−21,3 dBm**.
-   Tabel redaman splitter yang dipakai: 1:2 = 3,6 · 1:4 = 7,3 · 1:8 = 10,5 ·
-   1:16 = 13,8 · 1:32 = 17,0 dB. Status otomatis dibandingkan sensitivitas GPON
-   kelas B+ (−28 dBm): **aman**, **mendekati batas**, atau **gagal**.
-   Bisa dilihat di menu **Mapping Core** (tabel per ODP) dan dengan mengklik
-   simpul ODP pada **Topologi**.
+   dan tujuan per core.
+5. **Alur Core (halaman utama)** — begitu masuk, teknisi langsung melihat
+   pohon jalur per core, urut seperti kenyataan di lapangan:
+
+   ```
+   OLT-PST-01 → ODC-001 (kabel 24 core)
+     └─ Core 1 · Biru · Tube 1
+         └─ SPL-1 (Splitter 1:4, input core 1)
+             ├─ via out 1 → SPL-2 (Splitter 1:8)
+             │     ├─ out 1 → ODP-001  (Splitter di dalam ODP: SPL-ODP1 1:8)
+             │     └─ out 2 → ODP-003
+             └─ 2 output belum diarahkan
+   ```
+
+   Contoh di atas berarti **1 port GPON** dipecah 1:4 lalu 1:8 di dalam ODC, dan
+   tiap ODP memecah lagi 1:8 — cukup untuk menggambarkan kapasitas satu port
+   tanpa perlu angka redaman. Sambungan **kabel langsung** (1 core ODC → 1 ODP
+   tanpa splitter) dipisahkan di bawah pohon supaya tidak tercampur.
 6. **Splitter bertingkat** — pilih rasio **1:2 / 1:4 / 1:8 / 1:16 / 1:32**,
    ditempatkan **di dalam ODC maupun di dalam ODP**. Setiap output splitter bisa
    diarahkan **ke ODP**, **di-cascade ke splitter lain**, atau **ke ODC anak**.
@@ -41,20 +54,19 @@ CSV, dan manajemen user berbasis peran.
    (anak → cucu). Server menolak arah yang membentuk **lingkaran**
    (mis. ODC anak diarahkan balik ke induknya) dengan pesan
    *"Akan membentuk lingkaran ODC induk/anak"*, dan hanya splitter di dalam ODC
-   yang boleh menargetkan ODC. Anggaran daya otomatis menelusuri seluruh rantai
-   ODC induk → anak, menjumlahkan redaman feeder tiap ODC dan splitter tiap
-   tingkat (contoh demo: ODP-004 lewat ODC-001 → ODC-003 = 29,2 dB).
-7. **Mapping Core** — peta jalur **end-to-end**: dari port feeder OLT →
-   core ODC → core ODP → pelanggan, lengkap dengan redaman (dB), daya per titik,
-   dan penanda core mana yang sudah/belum tersambung. Satu core hanya boleh
-   memiliki satu sambungan (dijaga di sisi server).
+   yang boleh menargetkan ODC. Halaman **Alur Core** menelusuri seluruh rantai
+   ODC induk → anak sampai ke ODP-nya.
+7. **Mapping Core** — tempat **mencatat** sambungan: core ODC mana tersambung
+   ke ODP mana, lengkap dengan penanda core yang sudah/belum tersambung. Satu
+   core hanya boleh memiliki satu sambungan (dijaga di sisi server).
    **Peta Jalur Core** menampilkan **pohon jalur per core ODC**: 1 core masuk
    splitter lalu bercabang — output **→ ODP**, **→ cascade splitter lain**,
    atau **→ ODC anak** (lanjut ke splitter di dalamnya); port output yang belum
    diarahkan **diringkas** (tidak digambar satu per satu). **Sambungan kabel
    langsung** (1 core → 1 ODP tanpa splitter) dipisahkan dan diberi label
    tersendiri.
-8. **Topologi** — halaman dengan **dua tampilan**:
+8. **Alur Core / Diagram** — halaman utama dengan **dua tampilan**:
+   * **Alur Core** (bawaan) — pohon jalur per core seperti contoh di poin 5.
    * **Diagram** — gambar alur jaringan dari kiri ke kanan: OLT → port feeder →
      ODC → splitter (termasuk cascade bertingkat dan cabang ke **ODC anak**) →
      ODP → splitter di dalam ODP.
@@ -63,7 +75,9 @@ CSV, dan manajemen user berbasis peran.
      menyorot seluruh jalurnya, bisa zoom, dan label bisa disembunyikan.
      ODP yang belum dipetakan core ditandai garis putus-putus.
      **Warna core mengalir**: garis feed, cascade, dan output diwarnai sesuai core kabel ODC asal (TIA/EIA-598); titik warna di kanan-bawah ODP menunjukkan core yang masuk, dan Mapping menampilkan chip "core N · Warna" di tiap ODP.
-   * **Daftar** — pohon OLT → ODC → ODP yang bisa dibuka-tutup (tampilan lama).
+     Klik simpul untuk menyorot jalurnya dan melihat **"Alur core sampai ke
+     sini"** — rantai penuh dari OLT ke simpul itu (mis. `OLT-PST-01 → ODC-001 →
+     SPL-1 → SPL-2 → ODP-001`), jawaban cepat untuk "core ini datang dari mana?".
 9. **Laporan** — ekspor CSV + manajemen user berbasis peran (admin/operator/user).
 
 **Database sederhana versi Arena:** SQLite bawaan Node (`node:sqlite`) dalam
@@ -124,8 +138,8 @@ tidak dibutuhkan saat runtime.
 ## Uji otomatis halaman (anti "halaman blank")
 
 Uji ini merender **semua halaman** memakai jsdom + data sungguhan dari server,
-lalu memastikan data demo ikut tampil (mis. `ODC-001`, badge `ODC anak`,
-`Anggaran Daya`, `SPL-1`) dan tidak ada pesan error render:
+lalu memastikan data demo ikut tampil (mis. `Alur Core`, `SPL-1`, `ODC-001`,
+badge `ODC anak`, `Sambungan Kabel Langsung`) dan tidak ada pesan error render:
 
 ```bash
 node server.mjs            # server harus jalan (data demo)
@@ -139,8 +153,8 @@ dan menyebutkan rutenya. Port server bisa diganti: `ARENA_API_PORT=3000 npm run 
 
 ```bash
 npm test              # logika + API + tata letak runtime (tidak butuh server jalan)
-npm run test:logic    # anggaran daya, topologi, data kabel, peta jalur core (murni, 69 pemeriksaan)
-npm run test:api      # login, hak akses, CRUD semua entitas, penjaga validasi (77 pemeriksaan)
+npm run test:logic    # topologi, alur core, data kabel, peta jalur core (murni, 45 pemeriksaan)
+npm run test:api      # login, hak akses, CRUD semua entitas, penjaga validasi (76 pemeriksaan)
 npm run test:layout   # server tetap jalan hanya dengan file yang disalin Dockerfile
 npm run test:render   # semua halaman ter-render (butuh server jalan)
 ```
@@ -149,8 +163,9 @@ Yang diperiksa `npm run test:api`: login/logout & token, hak akses per peran
 (admin/operator/user), CRUD OLT–kartu–port, ODC + port feeder banyak input, ODP,
 splitter (rasio sah, tempat di ODC/ODP, cascade, output → ODC anak, cegah
 lingkaran), mapping core (core ganda → 409), manajemen user, dashboard/laporan,
-input rusak tidak membuat server mati, serta angka anggaran daya dari data demo
-(ODP-001 ≈ −21,8 dBm, ODP-004 lewat ODC anak ≈ −22,2 dBm).
+input rusak tidak membuat server mati, serta penjaga bahwa **API tidak lagi
+mengirim field redaman/daya** (`tx_power`, `rx_power`, `power_dbm`,
+`feeder_loss_db`, `loss_db`).
 
 Panduan **instalasi lengkap di Proxmox** — jalur utama **LXC Ubuntu 24.04**
 (buat container, IP statis via netplan, install Node 22.5+, service systemd,
@@ -174,13 +189,14 @@ lihat **[DEPLOY-PROXMOX.md](DEPLOY-PROXMOX.md)**. Tersedia juga `Dockerfile`.
 | --- | --- |
 | `server.mjs` | API HTTP + skema & seed SQLite (tanpa dependensi npm), termasuk migrasi otomatis DB lama |
 | `src/lib/fiber.js` | Konstanta kabel, warna core TIA/EIA-598, status |
-| `src/lib/budget.js` | Perhitungan anggaran daya per jalur (murni, bisa diuji via node) |
-| `src/lib/topology.js` | Perhitungan tata letak diagram topologi (murni, bisa diuji via node) |
+| `src/lib/topology.js` | Tata letak diagram + `buildUpstreamChains()` (alur core ke hulu) — murni, bisa diuji via node |
+| `src/components/JalurCore.jsx` | Komponen gambar alur core (chip warna core, pohon jalur) — dipakai Alur Core & Mapping |
 | `src/lib/jalur-core.js` | Pohon jalur per core ODC: 1 core → splitter → ODP / ODC anak (murni, bisa diuji via node) |
 | `src/components/TopologiDiagram.jsx` | Diagram SVG interaktif OLT → ODC → splitter → ODP |
-| `src/pages/Mapping.jsx` | Peta jalur core per core ODC (pohon splitter + sambungan kabel langsung) + anggaran daya + jalur splitter bertingkat |
+| `src/pages/Mapping.jsx` | Catat sambungan core ODC → ODP (pohon splitter + sambungan kabel langsung) |
+| `src/pages/Topologi.jsx` | **Halaman utama "Alur Core"**: pohon jalur per core + tampilan Diagram |
 | `src/components/SplitterManager.jsx` | Kelola splitter (rasio, input core) & arah tiap output (ODP / cascade / ODC anak) |
 | `src/lib/api.js` | Klien fetch + sesi token |
 | `src/components/CoreManager.jsx` | Grid core interaktif (dipakai ODC & ODP) |
-| `src/pages/*` | Dashboard, OLT, ODC, ODP, Topologi, Laporan, Users |
+| `src/pages/*` | Alur Core (halaman utama), Dashboard, OLT, ODC, ODP, Mapping Core, Laporan, Users |
 | `data/fiberops.db` | Database (di-gitignore, di-seed otomatis) |

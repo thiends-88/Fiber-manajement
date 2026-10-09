@@ -6,11 +6,12 @@
 // jadi aman dijalankan kapan saja tanpa mengganggu data produksi:
 //   npm run test:api
 import { spawn } from "node:child_process";
+import crypto from "node:crypto";
+import { DatabaseSync } from "node:sqlite";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildPowerBudget } from "../src/lib/budget.js";
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const PORT = Number(process.env.UJI_API_PORT || 4599);
@@ -97,6 +98,9 @@ async function main() {
   const tanpaToken = await GET("/api/me");
   cek("akses API tanpa login → 401", tanpaToken.status === 401, `status ${tanpaToken.status}`);
 
+  const cookieRusak = await fetch(`${BASE}/api/me`, { headers: { cookie: "fiberops_token=%E0%A4%A" } });
+  cek("cookie rusak → 401, bukan 500", cookieRusak.status === 401, `status ${cookieRusak.status}`);
+
   const tokenPalsu = await GET("/api/olts", "token-yang-tidak-ada");
   cek("token palsu → 401", tokenPalsu.status === 401, `status ${tokenPalsu.status}`);
 
@@ -110,6 +114,17 @@ async function main() {
   const admin = loginAdmin.data?.token;
   cek("login admin → 200 + token", loginAdmin.status === 200 && !!admin);
   cek("data user admin lengkap", loginAdmin.data?.user?.role === "admin" && !!loginAdmin.data?.user?.email);
+  const dbHashCheck = new DatabaseSync(DB);
+  const seededPasswordHash = dbHashCheck.prepare("SELECT password_hash FROM users WHERE email='admin@arena.test'").get()?.password_hash;
+  cek("password baru disimpan dengan scrypt bersalt", /^scrypt\$[a-f0-9]{32}\$[a-f0-9]{128}$/.test(seededPasswordHash || ""));
+  const legacyHash = crypto.createHash("sha256").update("Arena123!").digest("hex");
+  dbHashCheck.prepare("UPDATE users SET password_hash=? WHERE email='admin@arena.test'").run(legacyHash);
+  dbHashCheck.close();
+  const legacyLogin = await POST("/api/login", { email: "admin@arena.test", password: "Arena123!" });
+  const dbMigratedHash = new DatabaseSync(DB);
+  const migratedPasswordHash = dbMigratedHash.prepare("SELECT password_hash FROM users WHERE email='admin@arena.test'").get()?.password_hash;
+  dbMigratedHash.close();
+  cek("hash SHA-256 lama dimigrasikan saat login sukses", legacyLogin.status === 200 && migratedPasswordHash?.startsWith("scrypt$"));
 
   const me = await GET("/api/me", admin);
   cek("GET /api/me → data admin", me.status === 200 && me.data?.user?.email === "admin@arena.test");
@@ -162,7 +177,9 @@ async function main() {
   cek("OLT baru punya id", Number.isInteger(oltId));
 
   const oltUbah = await PATCH(`/api/olts/${oltId}`, { name: "OLT-UJI-01B", olt_type: "Huawei MA5800", location: "POP Uji" }, admin);
-  cek("ubah OLT → 200 + nama berubah", oltUbah.status === 200 && oltUbah.data?.name === "OLT-UJI-01B");
+  cek("PATCH OLT hanya mengubah field yang dikirim", oltUbah.status === 200 && oltUbah.data?.name === "OLT-UJI-01B" && oltUbah.data?.ip === "10.99.0.1" && oltUbah.data?.notes === "dibuat oleh uji");
+  const oltTidakAda = await PATCH("/api/olts/999999", { name: "tidak ada" }, admin);
+  cek("PATCH OLT yang tidak ada → 404", oltTidakAda.status === 404, `status ${oltTidakAda.status}`);
 
   const daftarOlt = await GET("/api/olts", admin);
   cek("OLT muncul di daftar (dengan jumlah kartu/ODC)", Array.isArray(daftarOlt.data) && daftarOlt.data.some((o) => o.id === oltId && "card_count" in o && "odc_count" in o));
@@ -172,27 +189,39 @@ async function main() {
   const kartuId = kartu.data?.id;
   const kartuTanpaSlot = await POST("/api/cards", { olt_id: oltId }, admin);
   cek("kartu tanpa slot → 400", kartuTanpaSlot.status === 400, `status ${kartuTanpaSlot.status}`);
+  const kartuTerlaluBesar = await POST("/api/cards", { olt_id: oltId, slot: 2, port_count: 100 }, admin);
+  cek("card dengan lebih dari 32 port → 400", kartuTerlaluBesar.status === 400, `status ${kartuTerlaluBesar.status}`);
+  const slotGanda = await POST("/api/cards", { olt_id: oltId, slot: 1, port_count: 8 }, admin);
+  cek("nomor slot ganda pada OLT yang sama → 409", slotGanda.status === 409, `status ${slotGanda.status}`);
 
   const port = await POST(
     "/api/ports",
-    { card_id: kartuId, port: 1, sfp: "Class B+", status: "active", tx_power: 7, rx_power: -24 },
+    { card_id: kartuId, port: 1, sfp: "Class B+", status: "active" },
     admin,
   );
-  cek("tambah port OLT → 201 (dengan TX/RX dBm)", port.status === 201 && Number(port.data?.tx_power) === 7, `status ${port.status}`);
+  cek("tambah port OLT → 201", port.status === 201, `status ${port.status}`);
   const portId = port.data?.id;
   const portTanpaNomor = await POST("/api/ports", { card_id: kartuId }, admin);
   cek("port tanpa nomor → 400", portTanpaNomor.status === 400, `status ${portTanpaNomor.status}`);
+  const portMelebihiKapasitas = await POST("/api/ports", { card_id: kartuId, port: 9 }, admin);
+  cek("nomor port melebihi kapasitas card → 400", portMelebihiKapasitas.status === 400, `status ${portMelebihiKapasitas.status}`);
+  const portGanda = await POST("/api/ports", { card_id: kartuId, port: 1 }, admin);
+  cek("nomor port ganda pada card yang sama → 409", portGanda.status === 409, `status ${portGanda.status}`);
 
-  const portOltLain = await POST("/api/ports", { card_id: kartuId, port: 2, tx_power: 5 }, admin);
-  const portOltLain2 = await POST("/api/ports", { card_id: kartuId, port: 3, tx_power: 3 }, admin);
+  const portOltLain = await POST("/api/ports", { card_id: kartuId, port: 2, sfp: "GPON" }, admin);
+  const portOltLain2 = await POST("/api/ports", { card_id: kartuId, port: 3, sfp: "GPON" }, admin);
+  const kecilkanCard = await PATCH(`/api/cards/${kartuId}`, { port_count: 2 }, admin);
+  cek("jumlah port card tidak bisa diperkecil hingga menyembunyikan port terdaftar → 400", kecilkanCard.status === 400, `status ${kecilkanCard.status}`);
 
-  const portUbah = await PATCH(`/api/ports/${portId}`, { card_id: kartuId, port: 1, tx_power: 7.5, status: "active" }, admin);
-  cek("ubah port (TX 7,5 dBm) → 200", portUbah.status === 200 && Number(portUbah.data?.tx_power) === 7.5, `tx=${portUbah.data?.tx_power}`);
+  const portUbah = await PATCH(`/api/ports/${portId}`, { card_id: kartuId, port: 1, serial: "SFP-0001", status: "active" }, admin);
+  cek("ubah port (serial + status) → 200", portUbah.status === 200 && portUbah.data?.serial === "SFP-0001", `serial=${portUbah.data?.serial}`);
 
   // ---------------------------------------------------- 4. ODC + port feeder
   console.log("\n--- 4) ODC dan port feeder (banyak input) ---");
   const odcTanpaKabel = await POST("/api/odcs", { name: "ODC-UJI", olt_id: oltId }, admin);
   cek("ODC tanpa tipe kabel → 400", odcTanpaKabel.status === 400, `status ${odcTanpaKabel.status}`);
+  const odcTipeKabelSalah = await POST("/api/odcs", { name: "ODC-UJI", olt_id: oltId, cable_type: "96_core" }, admin);
+  cek("tipe kabel ODC yang tidak didukung → 400", odcTipeKabelSalah.status === 400, `status ${odcTipeKabelSalah.status}`);
 
   const odcFeederSalahOlt = await POST(
     "/api/odcs",
@@ -207,7 +236,6 @@ async function main() {
       name: "ODC-UJI-01",
       olt_id: oltId,
       cable_type: "48_core_8_tube",
-      feeder_loss_db: 2.3,
       feeder_port_ids: [portId, portOltLain.data.id], // banyak input feeder
     },
     admin,
@@ -226,14 +254,24 @@ async function main() {
   cek("ubah feeder ODC → 200", odcUbahFeeder.status === 200);
   const feederSetelahUbah = await GET(`/api/feeder-ports?odc_id=${odcId}`, admin);
   cek("feeder terganti (bukan menumpuk) → 1 port", feederSetelahUbah.data?.length === 1, `${feederSetelahUbah.data?.length}`);
+  const coreOdcMaks = await POST("/api/cores", { source: "olt_to_odc", odc_id: odcId, core: 48 }, admin);
+  cek("assignment core ODC dalam kapasitas kabel → 201", coreOdcMaks.status === 201, `status ${coreOdcMaks.status}`);
+  const kecilkanKabelOdc = await PATCH(`/api/odcs/${odcId}`, { cable_type: "24_core_4_tube" }, admin);
+  cek("tipe kabel ODC tidak bisa diperkecil melewati core terdaftar → 400", kecilkanKabelOdc.status === 400, `status ${kecilkanKabelOdc.status}`);
 
   // ---------------------------------------------------- 5. ODP
   console.log("\n--- 5) ODP ---");
+  const odpTipeSalah = await POST("/api/odps", { odc_id: odcId, name: "ODP-UJI-SALAH", cable_type: "96_core" }, admin);
+  cek("tipe kabel ODP yang tidak didukung → 400", odpTipeSalah.status === 400, `status ${odpTipeSalah.status}`);
   const odp = await POST("/api/odps", { odc_id: odcId, name: "ODP-UJI-01", cable_type: "12_core_2_tube" }, admin);
   cek("tambah ODP → 201", odp.status === 201, `status ${odp.status}`);
   const odpId = odp.data?.id;
   const odpUbah = await PATCH(`/api/odps/${odpId}`, { odc_id: odcId, name: "ODP-UJI-01B", cable_type: "12_core_2_tube" }, admin);
   cek("ubah ODP → 200", odpUbah.status === 200 && odpUbah.data?.name === "ODP-UJI-01B");
+  const coreOdpMaks = await POST("/api/cores", { source: "odc_to_odp", odp_id: odpId, core: 12 }, admin);
+  cek("assignment core ODP dalam kapasitas kabel → 201", coreOdpMaks.status === 201, `status ${coreOdpMaks.status}`);
+  const kecilkanKabelOdp = await PATCH(`/api/odps/${odpId}`, { cable_type: "figure8_6_core" }, admin);
+  cek("tipe kabel ODP tidak bisa diperkecil melewati core terdaftar → 400", kecilkanKabelOdp.status === 400, `status ${kecilkanKabelOdp.status}`);
 
   // ---------------------------------------------------- 6. Splitter
   console.log("\n--- 6) Splitter: rasio, penempatan, cascade, ODC anak ---");
@@ -279,6 +317,26 @@ async function main() {
   );
   cek("cascade ke diri sendiri → 400", cascadeSendiri.status === 400, `status ${cascadeSendiri.status}`);
 
+  const splSiklus = await POST("/api/splitters", { name: "SPL-UJI-3", ratio: "1:8", odc_id: odcId }, admin);
+  const cascadeKeSiklus = await PATCH(
+    `/api/splitter-outputs/${splInduk.data?.outputs?.[2].id}`,
+    { target_type: "splitter", target_id: splSiklus.data?.id },
+    admin,
+  );
+  cek("cascade ke splitter lain → 200", cascadeKeSiklus.status === 200, `status ${cascadeKeSiklus.status}`);
+  const cascadeMelingkar = await PATCH(
+    `/api/splitter-outputs/${splSiklus.data?.outputs?.[0].id}`,
+    { target_type: "splitter", target_id: splIndukId },
+    admin,
+  );
+  cek("cascade berantai yang membentuk lingkaran → 400", cascadeMelingkar.status === 400 && /lingkaran/.test(cascadeMelingkar.data?.error || ""), cascadeMelingkar.data?.error);
+  const targetTypeSalah = await PATCH(
+    `/api/splitter-outputs/${splSiklus.data?.outputs?.[1].id}`,
+    { target_type: "bukan-target", target_id: splAnakId },
+    admin,
+  );
+  cek("tipe target output yang tidak dikenal → 400", targetTypeSalah.status === 400, `status ${targetTypeSalah.status}`);
+
   // output splitter di ODC → ODP
   const outKeOdp = splAnak.data?.outputs?.[0];
   const keOdp = await PATCH(`/api/splitter-outputs/${outKeOdp.id}`, { target_type: "odp", target_id: odpId }, admin);
@@ -299,7 +357,7 @@ async function main() {
   // ODC anak: ODC kedua diumpan dari output splitter ODC pertama
   const odcAnak = await POST(
     "/api/odcs",
-    { name: "ODC-UJI-ANAK", olt_id: oltId, cable_type: "24_core_4_tube", feeder_loss_db: 1.5, feeder_port_ids: [portOltLain2.data.id] },
+    { name: "ODC-UJI-ANAK", olt_id: oltId, cable_type: "24_core_4_tube", feeder_port_ids: [portOltLain2.data.id] },
     admin,
   );
   const odcAnakId = odcAnak.data?.id;
@@ -308,6 +366,12 @@ async function main() {
   const outKeOdcAnak = splInduk.data?.outputs?.[1];
   const keOdcAnak = await PATCH(`/api/splitter-outputs/${outKeOdcAnak.id}`, { target_type: "odc", target_id: odcAnakId }, admin);
   cek("output splitter ODC → ODC anak → 200", keOdcAnak.status === 200 && keOdcAnak.data?.target_type === "odc", `status ${keOdcAnak.status}`);
+  const outputGandaOdcAnak = await PATCH(
+    `/api/splitter-outputs/${splSiklus.data?.outputs?.[2].id}`,
+    { target_type: "odc", target_id: odcAnakId },
+    admin,
+  );
+  cek("ODC anak hanya boleh punya satu koneksi output splitter → 409", outputGandaOdcAnak.status === 409, `status ${outputGandaOdcAnak.status}`);
 
   // lingkaran: coba jadikan ODC induk sebagai anak dari ODC anak-nya
   const splDiAnak = await POST("/api/splitters", { name: "SPL-UJI-ANAK1", ratio: "1:8", odc_id: odcAnakId }, admin);
@@ -324,20 +388,39 @@ async function main() {
 
   // ---------------------------------------------------- 7. Core & mapping
   console.log("\n--- 7) Core dan mapping (sambungan ODC → ODP) ---");
+  const coreTanpaInduk = await POST("/api/cores", { source: "odc_to_odp", odc_id: odcId, odp_id: odpId, core: 1 }, admin);
+  cek("assignment core tidak boleh menunjuk ODC dan ODP sekaligus → 400", coreTanpaInduk.status === 400, `status ${coreTanpaInduk.status}`);
+  const coreMelebihiKabel = await POST("/api/cores", { source: "odc_to_odp", odp_id: odpId, core: 13 }, admin);
+  cek("assignment core melebihi jumlah core kabel ODP → 400", coreMelebihiKabel.status === 400, `status ${coreMelebihiKabel.status}`);
+  const coreStatusSalah = await POST("/api/cores", { source: "odc_to_odp", odp_id: odpId, core: 1, status: "online" }, admin);
+  cek("status assignment core yang tidak dikenal → 400", coreStatusSalah.status === 400, `status ${coreStatusSalah.status}`);
+
   const core = await POST(
     "/api/cores",
-    { source: "odc_to_odp", odc_id: odcId, odp_id: odpId, core: 1, status: "used", destination: "ODP-UJI-01B" },
+    { source: "odc_to_odp", odp_id: odpId, core: 1, status: "used", destination: "ODP-UJI-01B" },
     admin,
   );
   cek("tambah penugasan core → 201", core.status === 201, `status ${core.status}`);
+  const coreGanda = await POST("/api/cores", { source: "odc_to_odp", odp_id: odpId, core: 1 }, admin);
+  cek("core pada satu kabel tidak boleh memiliki assignment ganda → 409", coreGanda.status === 409, `status ${coreGanda.status}`);
   const coreUbah = await PATCH(`/api/cores/${core.data?.id}`, { status: "idle" }, admin);
-  cek("ubah status core → 200", coreUbah.status === 200 && coreUbah.data?.status === "idle");
+  cek("PATCH status core hanya mengubah field yang dikirim", coreUbah.status === 200 && coreUbah.data?.status === "idle" && coreUbah.data?.destination === "ODP-UJI-01B");
+  const coreTidakAda = await PATCH("/api/cores/999999", { status: "idle" }, admin);
+  cek("PATCH assignment yang tidak ada → 404", coreTidakAda.status === 404, `status ${coreTidakAda.status}`);
 
   const linkTanpaField = await POST("/api/links", { odc_id: odcId }, admin);
   cek("link tanpa field wajib → 400", linkTanpaField.status === 400, `status ${linkTanpaField.status}`);
+  const linkSalahInduk = await POST("/api/links", { odc_id: odcAnakId, odc_core: 1, odp_id: odpId, odp_core: 1 }, admin);
+  cek("ODP di luar ODC terpilih tidak bisa dimapping → 400", linkSalahInduk.status === 400, `status ${linkSalahInduk.status}`);
+  const linkCoreOdcTerlaluBesar = await POST("/api/links", { odc_id: odcId, odc_core: 49, odp_id: odpId, odp_core: 1 }, admin);
+  cek("nomor core mapping melebihi kapasitas kabel ODC → 400", linkCoreOdcTerlaluBesar.status === 400, `status ${linkCoreOdcTerlaluBesar.status}`);
+  const linkCoreOdpTerlaluBesar = await POST("/api/links", { odc_id: odcId, odc_core: 1, odp_id: odpId, odp_core: 13 }, admin);
+  cek("nomor core mapping melebihi kapasitas kabel ODP → 400", linkCoreOdpTerlaluBesar.status === 400, `status ${linkCoreOdpTerlaluBesar.status}`);
 
-  const link = await POST("/api/links", { odc_id: odcId, odc_core: 1, odp_id: odpId, odp_core: 1, loss_db: 0.4 }, admin);
+  const link = await POST("/api/links", { odc_id: odcId, odc_core: 1, odp_id: odpId, odp_core: 1, notes: "Closure uji" }, admin);
   cek("sambungkan core ODC → ODP → 201", link.status === 201, `status ${link.status}`);
+  const pindahOdpTerlacak = await PATCH(`/api/odps/${odpId}`, { odc_id: odcAnakId }, admin);
+  cek("ODP dengan mapping aktif tidak bisa dipindah ke ODC lain → 400", pindahOdpTerlacak.status === 400, `status ${pindahOdpTerlacak.status}`);
 
   const linkGandaOdc = await POST("/api/links", { odc_id: odcId, odc_core: 1, odp_id: odpId, odp_core: 2 }, admin);
   cek("core ODC yang sama dua kali → 409", linkGandaOdc.status === 409, `status ${linkGandaOdc.status}`);
@@ -350,6 +433,8 @@ async function main() {
 
   const linkHapus = await DEL(`/api/links/${link.data?.id}`, admin);
   cek("hapus sambungan core → 200", linkHapus.status === 200);
+  const linkTidakAda = await PATCH("/api/links/999999", { notes: "x" }, admin);
+  cek("PATCH sambungan yang tidak ada → 404", linkTidakAda.status === 404, `status ${linkTidakAda.status}`);
 
   // ---------------------------------------------------- 8. User
   console.log("\n--- 8) Manajemen user ---");
@@ -364,6 +449,10 @@ async function main() {
 
   const turunkanDiri = await PATCH(`/api/users/${me.data?.user?.id}`, { full_name: "Admin", role: "operator" }, admin);
   cek("admin tidak bisa menurunkan peran dirinya sendiri → 400", turunkanDiri.status === 400, `status ${turunkanDiri.status}`);
+  const userPatchInvalid = await PATCH(`/api/users/${userBaru.data?.id}`, { role: "bos" }, admin);
+  cek("peran user saat PATCH harus valid → 400", userPatchInvalid.status === 400, `status ${userPatchInvalid.status}`);
+  const userPatchTidakAda = await PATCH("/api/users/999999", { full_name: "x", role: "user" }, admin);
+  cek("PATCH user yang tidak ada → 404", userPatchTidakAda.status === 404, `status ${userPatchTidakAda.status}`);
   const hapusDiri = await DEL(`/api/users/${me.data?.user?.id}`, admin);
   cek("admin tidak bisa menghapus akunnya sendiri → 400", hapusDiri.status === 400, `status ${hapusDiri.status}`);
 
@@ -390,7 +479,19 @@ async function main() {
     headers: { "content-type": "application/json", authorization: `Bearer ${admin}` },
     body: "{ini bukan json",
   });
-  cek("body JSON rusak tidak membuat server mati (respons error, bukan crash)", jsonRusak.status >= 400 && jsonRusak.status < 600, `status ${jsonRusak.status}`);
+  cek("body JSON rusak → 400", jsonRusak.status === 400, `status ${jsonRusak.status}`);
+  const jsonBukanObjek = await fetch(BASE + "/api/olts", {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${admin}` },
+    body: "[]",
+  });
+  cek("JSON array bukan body objek → 400", jsonBukanObjek.status === 400, `status ${jsonBukanObjek.status}`);
+  const bodyTerlaluBesar = await fetch(BASE + "/api/olts", {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${admin}` },
+    body: JSON.stringify({ name: "x".repeat(1_000_001) }),
+  });
+  cek("body lebih dari 1 MB → 413", bodyTerlaluBesar.status === 413, `status ${bodyTerlaluBesar.status}`);
   const masihHidup = await GET("/healthz");
   cek("server masih hidup setelah input rusak", masihHidup.status === 200);
 
@@ -402,49 +503,38 @@ async function main() {
   const sesiMatl = await GET("/api/me", loginBaru.data?.token);
   cek("token setelah logout tidak berlaku → 401", sesiMatl.status === 401, `status ${sesiMatl.status}`);
 
-  // ---------------------------------------------------- 12. Anggaran daya (data nyata)
-  console.log("\n--- 12) Anggaran daya dari data server (seed demo) ---");
-  const [olts, odcs, odps, splitters, links, feederPorts] = await Promise.all([
+  // ------------------------------------------- 12. Data alur core (tanpa redaman)
+  console.log("\n--- 12) Data alur core dari server (seed demo) ---");
+  const [olts, odcs, odps, splitters, links, feederPorts, cores] = await Promise.all([
     GET("/api/olts", admin),
     GET("/api/odcs", admin),
     GET("/api/odps", admin),
     GET("/api/splitters", admin),
     GET("/api/links", admin),
     GET("/api/feeder-ports", admin),
+    GET("/api/cores", admin),
   ]);
-  cek("semua data terbaca", [olts, odcs, odps, splitters, links, feederPorts].every((r) => r.status === 200));
+  cek("semua data terbaca", [olts, odcs, odps, splitters, links, feederPorts, cores].every((r) => r.status === 200));
   cek(
     "data demo tersedia (≥2 OLT, ≥3 ODC, ODP, splitter)",
     olts.data?.length >= 2 && odcs.data?.length >= 3 && odps.data?.length >= 1 && splitters.data?.length >= 1,
     `olt=${olts.data?.length} odc=${odcs.data?.length} odp=${odps.data?.length} spl=${splitters.data?.length}`,
   );
-  const budget = buildPowerBudget({
-    olts: olts.data,
-    odcs: odcs.data,
-    odps: odps.data,
-    splitters: splitters.data,
-    links: links.data,
-    feederPorts: feederPorts.data,
-  });
-  cek("anggaran daya terhitung untuk setiap ODP", budget.length === odps.data?.length, `${budget.length}/${odps.data?.length}`);
   cek(
-    "setiap ODP punya status — yang belum terpetakan ditandai 'jalur belum terdata' (bukan angka palsu)",
-    budget.every((b) => typeof b.status?.level === "string") &&
-      budget.filter((b) => !b.routeKnown).every((b) => b.status.level === "unknown" && b.finalOut === null),
-    budget.map((b) => `${b.odpName}:${b.status.level}`).join(", "),
+    "splitter demo punya output terarah (alur core bisa digambar)",
+    splitters.data?.some((sp) => (sp.outputs ?? []).some((o) => o.target_type)),
   );
-  const odpUtama = budget.find((b) => b.odpName === "ODP-001");
   cek(
-    "ODP-001 (4:8:8, TX +7 dBm) → ≈ −21,8 dBm, status aman",
-    odpUtama && Math.abs(odpUtama.finalOut - -21.8) <= 0.3 && odpUtama.status.level === "ok",
-    odpUtama ? `${odpUtama.finalOut} dBm (${odpUtama.status.label}), total ${odpUtama.lossTotal} dB` : "tidak ada",
+    "setiap ODC tahu port feeder-nya (awal alur core)",
+    feederPorts.data?.length >= 1 && feederPorts.data?.every((f) => f.olt_name && f.port != null),
+    `${feederPorts.data?.length} port feeder`,
   );
-  const odpAnak = budget.find((b) => b.odpName === "ODP-004");
-  cek(
-    "ODP-004 (lewat ODC anak) → jalur memuat ODC-001 & ODC-003, ≈ −22,2 dBm",
-    odpAnak && JSON.stringify(odpAnak.odcPath) === '["ODC-001","ODC-003"]' && Math.abs(odpAnak.finalOut - -22.2) <= 0.3,
-    odpAnak ? `${JSON.stringify(odpAnak.odcPath)} → ${odpAnak.finalOut} dBm` : "tidak ada",
-  );
+  // Penjaga: perhitungan redaman/daya sudah dibuang total, termasuk dari API.
+  const bocor = JSON.stringify({
+    olt: olts.data, odc: odcs.data, odp: odps.data, spl: splitters.data,
+    link: links.data, feeder: feederPorts.data, core: cores.data,
+  }).match(/"(tx_power|rx_power|power_dbm|feeder_loss_db|loss_db)"/g);
+  cek("API tidak lagi mengirim field redaman/daya", !bocor, bocor ? [...new Set(bocor)].join(", ") : "");
 
   // ---------------------------------------------------- ringkasan
   console.log(`\nAPI: ${lolos} lolos, ${gagal} gagal`);

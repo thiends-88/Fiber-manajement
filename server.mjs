@@ -13,7 +13,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
-import { SPLITTER_RATIOS } from "./src/lib/fiber.js";
+import { CABLE_TYPES, SPLITTER_RATIOS } from "./src/lib/fiber.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Lokasi database bisa diatur lewat ARENA_DB_PATH (berguna untuk uji coba / multi-instance)
@@ -38,10 +38,11 @@ const MIME = {
 };
 
 // Mode produksi: satu proses melayani API + frontend hasil build (dist/).
-function sendFile(res, filePath) {
+function sendFile(req, res, filePath) {
+  const data = fs.readFileSync(filePath);
   const type = MIME[path.extname(filePath).toLowerCase()] || "application/octet-stream";
-  res.writeHead(200, { "Content-Type": type });
-  res.end(fs.readFileSync(filePath));
+  res.writeHead(200, { "Content-Type": type, "Content-Length": data.length });
+  res.end(req.method === "HEAD" ? undefined : data);
 }
 
 function serveStatic(req, res, p) {
@@ -54,10 +55,13 @@ function serveStatic(req, res, p) {
       hint: "Frontend belum di-build. Jalankan 'npm run build' dulu, atau pakai 'npm run dev' saat pengembangan.",
     });
   }
-  const filePath = path.normalize(path.join(DIST_DIR, p));
-  if (!filePath.startsWith(DIST_DIR)) return send(req, res, 403, { error: "Forbidden" });
-  if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) return sendFile(res, filePath);
-  return sendFile(res, path.join(DIST_DIR, "index.html")); // fallback SPA (route /login, /olt, dst.)
+  const filePath = path.resolve(DIST_DIR, `.${p}`);
+  const relativePath = path.relative(DIST_DIR, filePath);
+  if (relativePath === ".." || relativePath.startsWith(`..${path.sep}`) || path.isAbsolute(relativePath)) {
+    return send(req, res, 403, { error: "Forbidden" });
+  }
+  if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) return sendFile(req, res, filePath);
+  return sendFile(req, res, path.join(DIST_DIR, "index.html")); // fallback SPA (route /login, /olt, dst.)
 }
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -148,7 +152,6 @@ db.exec(`
     status TEXT NOT NULL DEFAULT 'idle' CHECK (status IN ('idle','used','reserved','damaged')),
     customer TEXT,
     destination TEXT,
-    power_dbm TEXT,
     notes TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -159,10 +162,6 @@ db.exec(`
 // Migrasi ringan: database lama otomatis mendapat kolom/tabel baru
 // ---------------------------------------------------------------------------
 const MIGRATIONS = [
-  "ALTER TABLE core_assignments ADD COLUMN power_dbm REAL",
-  "ALTER TABLE odcs ADD COLUMN feeder_loss_db REAL",
-  "ALTER TABLE olt_ports ADD COLUMN tx_power REAL",
-  "ALTER TABLE olt_ports ADD COLUMN rx_power REAL",
   `CREATE TABLE IF NOT EXISTS splitters (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     odc_id INTEGER REFERENCES odcs(id) ON DELETE CASCADE,
@@ -192,7 +191,6 @@ const MIGRATIONS = [
     odc_core INTEGER NOT NULL,
     odp_id INTEGER NOT NULL REFERENCES odps(id) ON DELETE CASCADE,
     odp_core INTEGER NOT NULL,
-    loss_db REAL,
     notes TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -202,6 +200,28 @@ const MIGRATIONS = [
 ];
 for (const stmt of MIGRATIONS) {
   try { db.exec(stmt); } catch { /* kolom/tabel sudah ada */ }
+}
+
+// ---------------------------------------------------------------------------
+// Bersih-bersih: kolom hitungan redaman/daya sudah TIDAK dipakai lagi.
+// Aplikasi ini memetakan ALUR CORE saja (OLT → ODC → ODP), jadi kolom daya
+// dibuang supaya tidak ada field menganggur yang membingungkan teknisi.
+// Butuh SQLite 3.35+ untuk DROP COLUMN (Node 22 membawa SQLite 3.4x/3.5x).
+// ---------------------------------------------------------------------------
+const KOLOM_TIDAK_DIPAKAI = [
+  ["core_assignments", "power_dbm"],
+  ["odcs", "feeder_loss_db"],
+  ["olt_ports", "tx_power"],
+  ["olt_ports", "rx_power"],
+  ["core_links", "loss_db"],
+];
+for (const [tabel, kolom] of KOLOM_TIDAK_DIPAKAI) {
+  try {
+    const ada = db.prepare("SELECT 1 FROM pragma_table_info(?) WHERE name=?").get(tabel, kolom);
+    if (ada) db.exec(`ALTER TABLE ${tabel} DROP COLUMN ${kolom}`);
+  } catch (err) {
+    console.warn(`[arena-api] kolom ${tabel}.${kolom} gagal dibuang: ${err.message}`);
+  }
 }
 
 // Bangun ulang splitter_outputs pada database lama agar menerima target 'odc'
@@ -265,35 +285,70 @@ if (!feederTableExisted) {
   const odp1 = db.prepare("SELECT id FROM odps WHERE name='ODP-001'").get();
   if (!odc1 || !odc2 || !odp1) return;
   if (db.prepare("SELECT COUNT(*) n FROM core_links").get().n === 0) {
-    const ins = db.prepare("INSERT INTO core_links (odc_id, odc_core, odp_id, odp_core, loss_db, notes) VALUES (?,?,?,?,?,?)");
-    ins.run(odc1.id, 1, odp1.id, 1, 0.15, "Closure Perempatan");
-    ins.run(odc1.id, 2, odp1.id, 2, 0.2, null);
+    const ins = db.prepare("INSERT INTO core_links (odc_id, odc_core, odp_id, odp_core, notes) VALUES (?,?,?,?,?)");
+    ins.run(odc1.id, 1, odp1.id, 1, "Closure Perempatan");
+    ins.run(odc1.id, 2, odp1.id, 2, null);
   }
-  db.prepare("UPDATE odcs SET feeder_loss_db=COALESCE(feeder_loss_db,0.5) WHERE name='ODC-001'").run();
-  db.prepare("UPDATE odcs SET feeder_loss_db=COALESCE(feeder_loss_db,0.7) WHERE name='ODC-002'").run();
-  db.prepare("UPDATE core_assignments SET power_dbm=COALESCE(power_dbm,'-19.5') WHERE odc_id=? AND core=1 AND source='olt_to_odc'").run(odc1.id);
-  db.prepare("UPDATE core_assignments SET power_dbm=COALESCE(power_dbm,'-20.2') WHERE odc_id=? AND core=2 AND source='olt_to_odc'").run(odc1.id);
-  db.prepare("UPDATE olt_ports SET tx_power=COALESCE(tx_power,'2.5'), rx_power=COALESCE(rx_power,'-18.4') WHERE notes LIKE '%Feeder ODC-001%'").run();
-  db.prepare("UPDATE olt_ports SET tx_power=COALESCE(tx_power,'2.6'), rx_power=COALESCE(rx_power,'-19.1') WHERE notes LIKE '%Feeder ODC-002%'").run();
 })();
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-const hash = (pw) => crypto.createHash("sha256").update(pw).digest("hex");
+const PASSWORD_HASH_PREFIX = "scrypt";
+function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString("hex");
+  const derived = crypto.scryptSync(String(password), salt, 64).toString("hex");
+  return `${PASSWORD_HASH_PREFIX}$${salt}$${derived}`;
+}
+function secretMatches(actual, expected) {
+  const a = Buffer.from(actual, "hex");
+  const b = Buffer.from(expected, "hex");
+  return a.length === b.length && a.length > 0 && crypto.timingSafeEqual(a, b);
+}
+function verifyPassword(password, stored) {
+  if (typeof stored !== "string") return false;
+  const parts = stored.split("$");
+  if (parts.length === 3 && parts[0] === PASSWORD_HASH_PREFIX) {
+    const [, salt, expected] = parts;
+    if (!/^[a-f0-9]{32}$/.test(salt) || !/^[a-f0-9]{128}$/.test(expected)) return false;
+    const actual = crypto.scryptSync(String(password), salt, 64).toString("hex");
+    return secretMatches(actual, expected);
+  }
+  // Hash SHA-256 tanpa salt dari versi lama: verifikasi sekali lalu migrasikan
+  // ke scrypt saat login berhasil, tanpa memaksa reset password pengguna.
+  const legacy = crypto.createHash("sha256").update(String(password)).digest("hex");
+  return /^[a-f0-9]{64}$/.test(stored) && secretMatches(legacy, stored);
+}
 const now = () => new Date().toISOString();
+const CORE_STATUSES = new Set(["idle", "used", "reserved", "damaged"]);
+const PORT_STATUSES = new Set(["active", "inactive", "reserved", "damaged"]);
+const USER_ROLES = new Set(["admin", "operator", "user"]);
+const validPositiveInt = (value) => {
+  const n = typeof value === "number" ? value : typeof value === "string" && /^\d+$/.test(value.trim()) ? Number(value) : NaN;
+  return Number.isSafeInteger(n) && n > 0;
+};
+const validIntRange = (value, min, max) => validPositiveInt(value) && Number(value) >= min && Number(value) <= max;
+const cableInfo = (type) => CABLE_TYPES.find((c) => c.value === type) ?? null;
+const isText = (value) => typeof value === "string" && value.trim().length > 0;
+const isOptionalText = (value) => value == null || typeof value === "string";
+const hasOwn = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
+const httpError = (status, message) => Object.assign(new Error(message), { status });
 
 // Validasi daftar port feeder ODC: boleh banyak, tetapi harus milik OLT induk ODC
 function checkFeederPorts(oltId, ids) {
-  if (!ids || !ids.length) return null;
+  if (!validPositiveInt(oltId)) return "OLT tidak valid";
   const olt = db.prepare("SELECT name FROM olts WHERE id=?").get(Number(oltId));
+  if (!olt) return `OLT #${oltId} tidak ditemukan`;
+  if (ids == null) return null;
+  if (!Array.isArray(ids)) return "Daftar port feeder harus berupa array";
+  if (!ids.every(validPositiveInt)) return "Setiap port feeder harus memiliki ID bilangan bulat positif";
   for (const raw of ids) {
     const row = db.prepare(
       "SELECT c.olt_id FROM olt_ports p JOIN olt_cards c ON c.id=p.card_id WHERE p.id=?",
     ).get(Number(raw));
     if (!row) return `Port feeder id ${raw} tidak ditemukan`;
     if (row.olt_id !== Number(oltId)) {
-      return `Port feeder harus milik OLT induk ODC (${olt?.name ?? `OLT #${oltId}`})`;
+      return `Port feeder harus milik OLT induk ODC (${olt.name})`;
     }
   }
   return null;
@@ -337,9 +392,30 @@ const odcParentId = (childId) =>
 // Apakah `ancestorId` ada di rantai atas dari `nodeId` (dipakai cegah lingkaran)
 function odcIsAncestor(ancestorId, nodeId) {
   let cur = Number(nodeId);
-  for (let i = 0; i < 20 && cur; i++) {
+  const visited = new Set();
+  while (cur && !visited.has(cur)) {
     if (cur === Number(ancestorId)) return true;
+    visited.add(cur);
     cur = odcParentId(cur);
+  }
+  return false;
+}
+
+// Cascade splitter harus tetap berupa pohon: menautkan A → B ditolak bila
+// B sudah dapat mencapai A melalui salah satu output cascade.
+function splitterReaches(startId, targetId) {
+  const target = Number(targetId);
+  const stack = [Number(startId)];
+  const visited = new Set();
+  while (stack.length) {
+    const id = stack.pop();
+    if (id === target) return true;
+    if (visited.has(id)) continue;
+    visited.add(id);
+    const next = db.prepare(
+      "SELECT target_splitter_id FROM splitter_outputs WHERE splitter_id=? AND target_type='splitter' AND target_splitter_id IS NOT NULL",
+    ).all(id);
+    next.forEach((row) => stack.push(Number(row.target_splitter_id)));
   }
   return false;
 }
@@ -350,37 +426,50 @@ function syncFeederPorts(odcId, ids) {
   for (const raw of ids || []) ins.run(odcId, Number(raw));
 }
 
-let extraCookies = null;
-function setCookie(value) {
-  extraCookies = value;
-}
-function send(req, res, status, body) {
-  const headers = { "Content-Type": "application/json" };
-  if (extraCookies) {
-    headers["Set-Cookie"] = extraCookies;
-    extraCookies = null;
-  }
+function send(req, res, status, body, extraHeaders = {}) {
+  if (res.headersSent || res.destroyed) return;
+  const headers = { "Content-Type": "application/json", ...extraHeaders };
   res.writeHead(status, headers);
   const safeUrl = req.url.replace(/([?&]token=)[^&]+/g, "$1***");
-  console.log(`[arena-api] ${req.method} ${safeUrl} -> ${status}${authVia ? ` (auth:${authVia})` : ""}`);
-  res.end(JSON.stringify(body));
+  console.log(`[arena-api] ${req.method} ${safeUrl} -> ${status}${req.authVia ? ` (auth:${req.authVia})` : ""}`);
+  res.end(req.method === "HEAD" ? undefined : JSON.stringify(body));
 }
 
 function readBody(req) {
   return new Promise((resolve, reject) => {
-    let raw = "";
-    req.on("data", (c) => {
-      raw += c;
-      if (raw.length > 1e6) reject(new Error("Body terlalu besar"));
+    const chunks = [];
+    let size = 0;
+    let settled = false;
+    const fail = (status, message) => {
+      if (settled) return;
+      settled = true;
+      chunks.length = 0;
+      reject(httpError(status, message));
+    };
+
+    req.on("data", (chunk) => {
+      if (settled) return;
+      size += chunk.length;
+      if (size > 1e6) return fail(413, "Body terlalu besar");
+      chunks.push(chunk);
     });
     req.on("end", () => {
-      if (!raw) return resolve({});
+      if (settled) return;
+      settled = true;
+      if (size === 0) return resolve({});
+      let body;
       try {
-        resolve(JSON.parse(raw));
+        body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
       } catch {
-        reject(new Error("JSON tidak valid"));
+        return reject(httpError(400, "JSON tidak valid"));
       }
+      if (!body || typeof body !== "object" || Array.isArray(body)) {
+        return reject(httpError(400, "Body harus berupa objek JSON"));
+      }
+      resolve(body);
     });
+    req.on("error", (error) => fail(400, error.message || "Request body gagal dibaca"));
+    req.on("aborted", () => fail(400, "Request body terputus"));
   });
 }
 
@@ -388,25 +477,34 @@ function parseCookies(req) {
   const out = {};
   for (const part of String(req.headers["cookie"] || "").split(";")) {
     const i = part.indexOf("=");
-    if (i > -1) out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+    if (i > -1) {
+      const key = part.slice(0, i).trim();
+      const value = part.slice(i + 1).trim();
+      try {
+        out[key] = decodeURIComponent(value);
+      } catch {
+        // Cookie rusak tidak boleh mengubah permintaan biasa menjadi 500.
+        out[key] = null;
+      }
+    }
   }
   return out;
 }
 
-let authVia = null;
 function authUser(req, url) {
   const header = req.headers["authorization"] || "";
+  const cookieToken = parseCookies(req)["fiberops_token"];
   let token = null;
-  authVia = null;
+  req.authVia = null;
   if (header.startsWith("Bearer ")) {
     token = header.slice(7);
-    authVia = "header";
-  } else if (parseCookies(req)["fiberops_token"]) {
-    token = parseCookies(req)["fiberops_token"];
-    authVia = "cookie";
+    req.authVia = "header";
+  } else if (cookieToken) {
+    token = cookieToken;
+    req.authVia = "cookie";
   } else if (url && url.searchParams.get("token")) {
     token = url.searchParams.get("token");
-    authVia = "param";
+    req.authVia = "param";
   }
   if (!token) return null;
   const row = db
@@ -428,8 +526,8 @@ function seedIfEmpty() {
   const insUser = db.prepare(
     "INSERT INTO users (email, password_hash, full_name, role, created_at) VALUES (?,?,?,?,?)",
   );
-  insUser.run("admin@arena.test", hash("Arena123!"), "Admin Arena", "admin", ts);
-  insUser.run("operator@arena.test", hash("Arena123!"), "Operator Demo", "operator", ts);
+  insUser.run("admin@arena.test", hashPassword("Arena123!"), "Admin Arena", "admin", ts);
+  insUser.run("operator@arena.test", hashPassword("Arena123!"), "Operator Demo", "operator", ts);
 
   const insOlt = db.prepare(
     "INSERT INTO olts (name, olt_type, location, ip, notes, created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
@@ -445,21 +543,21 @@ function seedIfEmpty() {
   const card3 = insCard.run(olt2, 1, "GPFA", null, 8, ts, ts).lastInsertRowid;
 
   const insPort = db.prepare(
-    "INSERT INTO olt_ports (card_id, port, sfp, serial, status, notes, tx_power, rx_power, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+    "INSERT INTO olt_ports (card_id, port, sfp, serial, status, notes, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
   );
-  const p1 = insPort.run(card1, 1, "XGS-PON", "ZTE23A0001", "active", "Feeder ODC-001", "7.0", "-18.4", ts, ts).lastInsertRowid;
-  const p2 = insPort.run(card1, 2, "XGS-PON", "ZTE23A0002", "active", null, "2.3", "-19.0", ts, ts).lastInsertRowid;
-  insPort.run(card1, 3, null, null, "inactive", null, null, null, ts, ts);
-  insPort.run(card2, 1, "GPON", "ZTE23B0001", "active", null, "2.1", "-20.3", ts, ts);
-  insPort.run(card2, 2, null, null, "reserved", "Rencana ODC-003", null, null, ts, ts);
-  const p6 = insPort.run(card3, 1, "GPON", "HW23C0001", "active", "Feeder ODC-002", "2.6", "-19.1", ts, ts).lastInsertRowid;
+  const p1 = insPort.run(card1, 1, "XGS-PON", "ZTE23A0001", "active", "Feeder ODC-001", ts, ts).lastInsertRowid;
+  const p2 = insPort.run(card1, 2, "XGS-PON", "ZTE23A0002", "active", null, ts, ts).lastInsertRowid;
+  insPort.run(card1, 3, null, null, "inactive", null, ts, ts);
+  insPort.run(card2, 1, "GPON", "ZTE23B0001", "active", null, ts, ts);
+  insPort.run(card2, 2, null, null, "reserved", "Rencana ODC-003", ts, ts);
+  const p6 = insPort.run(card3, 1, "GPON", "HW23C0001", "active", "Feeder ODC-002", ts, ts).lastInsertRowid;
 
   const insOdc = db.prepare(
-    "INSERT INTO odcs (olt_id, name, location, cable_type, feeder_loss_db, notes, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
+    "INSERT INTO odcs (olt_id, name, location, cable_type, notes, created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
   );
-  const odc1 = insOdc.run(olt1, "ODC-001", "Perempatan Kota", "24_core_4_tube", 0.5, "Closure utama", ts, ts).lastInsertRowid;
-  const odc2 = insOdc.run(olt2, "ODC-002", "Kawasan Industri", "48_core_8_tube", 0.7, null, ts, ts).lastInsertRowid;
-  const odc3 = insOdc.run(olt1, "ODC-003", "Dusun Kenanga (anak ODC-001)", "12_core_2_tube", 0.4, "ODC anak dari ODC-001", ts, ts).lastInsertRowid;
+  const odc1 = insOdc.run(olt1, "ODC-001", "Perempatan Kota", "24_core_4_tube", "Closure utama", ts, ts).lastInsertRowid;
+  const odc2 = insOdc.run(olt2, "ODC-002", "Kawasan Industri", "48_core_8_tube", null, ts, ts).lastInsertRowid;
+  const odc3 = insOdc.run(olt1, "ODC-003", "Dusun Kenanga (anak ODC-001)", "12_core_2_tube", "ODC anak dari ODC-001", ts, ts).lastInsertRowid;
 
   const insOdp = db.prepare(
     "INSERT INTO odps (odc_id, name, location, cable_type, notes, created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
@@ -494,18 +592,16 @@ function seedIfEmpty() {
 
   // Sambungan core end-to-end (mapping ODC core <-> ODP core)
   const insLink = db.prepare(
-    "INSERT INTO core_links (odc_id, odc_core, odp_id, odp_core, loss_db, notes, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
+    "INSERT INTO core_links (odc_id, odc_core, odp_id, odp_core, notes, created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
   );
-  insLink.run(odc1, 1, odp1, 1, 0.15, "Closure Perempatan", ts, ts);
-  insLink.run(odc1, 2, odp1, 2, 0.2, null, ts, ts);
+  insLink.run(odc1, 1, odp1, 1, "Closure Perempatan", ts, ts);
+  insLink.run(odc1, 2, odp1, 2, null, ts, ts);
 
   // Port feeder ODC — satu ODC boleh beberapa port (contoh: ODC-001 memakai 2 port)
   const insFeeder = db.prepare("INSERT OR IGNORE INTO odc_feeder_ports (odc_id, port_id) VALUES (?,?)");
   insFeeder.run(odc1, p1);
   insFeeder.run(odc1, p2);
   insFeeder.run(odc2, p6);
-  db.prepare("UPDATE core_assignments SET power_dbm='-19.5' WHERE odc_id=? AND core=1 AND source='olt_to_odc'").run(odc1);
-  db.prepare("UPDATE core_assignments SET power_dbm='-20.2' WHERE odc_id=? AND core=2 AND source='olt_to_odc'").run(odc1);
 
   // Splitter bertingkat sesuai logika lapangan:
   //   OLT → ODC: SPL-1 (1:4) ─cascade─ SPL-2 (1:8)  [keduanya DI DALAM ODC]
@@ -551,13 +647,22 @@ const server = http.createServer(async (req, res) => {
     if (p === "/api/login" && method === "POST") {
       const body = await readBody(req);
       const user = db.prepare("SELECT * FROM users WHERE email = ?").get(String(body.email || "").toLowerCase().trim());
-      if (!user || user.password_hash !== hash(String(body.password || ""))) {
+      const password = String(body.password || "");
+      if (!user || !verifyPassword(password, user.password_hash)) {
         return send(req, res, 401, { error: "Email atau password salah" });
+      }
+      if (!user.password_hash.startsWith(`${PASSWORD_HASH_PREFIX}$`)) {
+        db.prepare("UPDATE users SET password_hash=? WHERE id=?").run(hashPassword(password), user.id);
       }
       const token = crypto.randomBytes(24).toString("base64url");
       db.prepare("INSERT INTO sessions (token, user_id) VALUES (?,?)").run(token, user.id);
-      setCookie(`fiberops_token=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800`);
-      return send(req, res, 200, { token, user: { id: user.id, email: user.email, full_name: user.full_name, role: user.role } });
+      return send(
+        req,
+        res,
+        200,
+        { token, user: { id: user.id, email: user.email, full_name: user.full_name, role: user.role } },
+        { "Set-Cookie": `fiberops_token=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800` },
+      );
     }
 
     if (!p.startsWith("/api/")) return serveStatic(req, res, p);
@@ -575,8 +680,7 @@ const server = http.createServer(async (req, res) => {
           : parseCookies(req)["fiberops_token"] || url.searchParams.get("token");
         if (token) db.prepare("DELETE FROM sessions WHERE token = ?").run(token);
       }
-      setCookie("fiberops_token=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0");
-      return send(req, res, 200, { ok: true });
+      return send(req, res, 200, { ok: true }, { "Set-Cookie": "fiberops_token=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0" });
     }
 
     if (p === "/api/me" && method === "GET") return send(req, res, 200, { user });
@@ -616,7 +720,10 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === "/api/olts" && method === "POST") {
       const b = await readBody(req);
-      if (!b.name?.trim()) return send(req, res, 400, { error: "Nama OLT wajib diisi" });
+      if (!isText(b.name)) return send(req, res, 400, { error: "Nama OLT wajib diisi" });
+      if ([b.olt_type, b.location, b.ip, b.notes].some((v) => !isOptionalText(v))) {
+        return send(req, res, 400, { error: "Tipe, lokasi, IP, dan catatan harus berupa teks" });
+      }
       const r = db.prepare("INSERT INTO olts (name, olt_type, location, ip, notes) VALUES (?,?,?,?,?)")
         .run(b.name.trim(), b.olt_type || null, b.location || null, b.ip || null, b.notes || null);
       return send(req, res, 201, db.prepare("SELECT * FROM olts WHERE id=?").get(r.lastInsertRowid));
@@ -625,13 +732,21 @@ const server = http.createServer(async (req, res) => {
     if (m) {
       const id = Number(m[1]);
       if (method === "PATCH") {
-        const b = await readBody(req);
+        const body = await readBody(req);
+        const current = db.prepare("SELECT * FROM olts WHERE id=?").get(id);
+        if (!current) return send(req, res, 404, { error: "OLT tidak ditemukan" });
+        const b = { ...current, ...body };
+        if (!isText(b.name)) return send(req, res, 400, { error: "Nama OLT wajib diisi" });
+        if ([b.olt_type, b.location, b.ip, b.notes].some((v) => !isOptionalText(v))) {
+          return send(req, res, 400, { error: "Tipe, lokasi, IP, dan catatan harus berupa teks" });
+        }
         db.prepare("UPDATE olts SET name=?, olt_type=?, location=?, ip=?, notes=?, updated_at=? WHERE id=?")
-          .run(b.name, b.olt_type || null, b.location || null, b.ip || null, b.notes || null, now(), id);
+          .run(b.name.trim(), b.olt_type || null, b.location || null, b.ip || null, b.notes || null, now(), id);
         return send(req, res, 200, db.prepare("SELECT * FROM olts WHERE id=?").get(id));
       }
       if (method === "DELETE") {
-        db.prepare("DELETE FROM olts WHERE id=?").run(id);
+        const result = db.prepare("DELETE FROM olts WHERE id=?").run(id);
+        if (!result.changes) return send(req, res, 404, { error: "OLT tidak ditemukan" });
         return send(req, res, 200, { ok: true });
       }
     }
@@ -646,22 +761,52 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === "/api/cards" && method === "POST") {
       const b = await readBody(req);
-      if (!b.olt_id || !b.slot) return send(req, res, 400, { error: "olt_id dan slot wajib diisi" });
+      const portCount = b.port_count ?? 8;
+      const cardType = b.card_type ?? "OTHER";
+      if (!validPositiveInt(b.olt_id) || !validIntRange(b.slot, 1, 256)) {
+        return send(req, res, 400, { error: "OLT dan nomor slot yang valid wajib diisi" });
+      }
+      if (!db.prepare("SELECT id FROM olts WHERE id=?").get(Number(b.olt_id))) {
+        return send(req, res, 400, { error: "OLT tidak ditemukan" });
+      }
+      if (!validIntRange(portCount, 1, 32)) return send(req, res, 400, { error: "Jumlah port card harus antara 1 dan 32" });
+      if (!isText(cardType) || !isOptionalText(b.label) || !isOptionalText(b.notes)) {
+        return send(req, res, 400, { error: "Tipe card, label, dan catatan harus berupa teks" });
+      }
+      if (db.prepare("SELECT id FROM olt_cards WHERE olt_id=? AND slot=?").get(Number(b.olt_id), Number(b.slot))) {
+        return send(req, res, 409, { error: `Slot ${b.slot} sudah dipakai pada OLT ini` });
+      }
       const r = db.prepare("INSERT INTO olt_cards (olt_id, slot, card_type, label, port_count, notes) VALUES (?,?,?,?,?,?)")
-        .run(b.olt_id, b.slot, b.card_type || "OTHER", b.label || null, b.port_count || 8, b.notes || null);
+        .run(Number(b.olt_id), Number(b.slot), cardType.trim(), b.label || null, Number(portCount), b.notes || null);
       return send(req, res, 201, db.prepare("SELECT * FROM olt_cards WHERE id=?").get(r.lastInsertRowid));
     }
     m = p.match(/^\/api\/cards\/(\d+)$/);
     if (m) {
       const id = Number(m[1]);
       if (method === "PATCH") {
-        const b = await readBody(req);
+        const body = await readBody(req);
+        const current = db.prepare("SELECT * FROM olt_cards WHERE id=?").get(id);
+        if (!current) return send(req, res, 404, { error: "Card tidak ditemukan" });
+        const b = { ...current, ...body };
+        if (!validIntRange(b.slot, 1, 256)) return send(req, res, 400, { error: "Nomor slot harus bilangan bulat antara 1 dan 256" });
+        if (!validIntRange(b.port_count, 1, 32)) return send(req, res, 400, { error: "Jumlah port card harus antara 1 dan 32" });
+        if (!isText(b.card_type) || !isOptionalText(b.label) || !isOptionalText(b.notes)) {
+          return send(req, res, 400, { error: "Tipe card, label, dan catatan harus berupa teks" });
+        }
+        if (db.prepare("SELECT id FROM olt_cards WHERE olt_id=? AND slot=? AND id<>?").get(current.olt_id, Number(b.slot), id)) {
+          return send(req, res, 409, { error: `Slot ${b.slot} sudah dipakai pada OLT ini` });
+        }
+        const maxPort = db.prepare("SELECT MAX(port) AS n FROM olt_ports WHERE card_id=?").get(id)?.n;
+        if (maxPort != null && maxPort > Number(b.port_count)) {
+          return send(req, res, 400, { error: `Hapus atau pindahkan port ${maxPort} sebelum mengurangi jumlah port card` });
+        }
         db.prepare("UPDATE olt_cards SET slot=?, card_type=?, label=?, port_count=?, notes=?, updated_at=? WHERE id=?")
-          .run(b.slot, b.card_type, b.label || null, b.port_count || 8, b.notes || null, now(), id);
+          .run(Number(b.slot), b.card_type.trim(), b.label || null, Number(b.port_count), b.notes || null, now(), id);
         return send(req, res, 200, db.prepare("SELECT * FROM olt_cards WHERE id=?").get(id));
       }
       if (method === "DELETE") {
-        db.prepare("DELETE FROM olt_cards WHERE id=?").run(id);
+        const result = db.prepare("DELETE FROM olt_cards WHERE id=?").run(id);
+        if (!result.changes) return send(req, res, 404, { error: "Card tidak ditemukan" });
         return send(req, res, 200, { ok: true });
       }
     }
@@ -679,22 +824,50 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === "/api/ports" && method === "POST") {
       const b = await readBody(req);
-      if (!b.card_id || !b.port) return send(req, res, 400, { error: "card_id dan nomor port wajib diisi" });
-      const r = db.prepare("INSERT INTO olt_ports (card_id, port, sfp, serial, status, tx_power, rx_power, notes) VALUES (?,?,?,?,?,?,?,?)")
-        .run(b.card_id, b.port, b.sfp || null, b.serial || null, b.status || "inactive", b.tx_power || null, b.rx_power || null, b.notes || null);
+      if (!validPositiveInt(b.card_id)) return send(req, res, 400, { error: "Card tidak valid" });
+      const card = db.prepare("SELECT port_count FROM olt_cards WHERE id=?").get(Number(b.card_id));
+      if (!card) return send(req, res, 400, { error: "Card tidak ditemukan" });
+      if (!validIntRange(b.port, 1, Number(card.port_count))) {
+        return send(req, res, 400, { error: `Nomor port harus antara 1 dan ${card.port_count}` });
+      }
+      const status = b.status ?? "inactive";
+      if (!PORT_STATUSES.has(status)) return send(req, res, 400, { error: "Status port tidak valid" });
+      if ([b.sfp, b.serial, b.notes].some((v) => !isOptionalText(v))) {
+        return send(req, res, 400, { error: "SFP, serial, dan catatan harus berupa teks" });
+      }
+      if (db.prepare("SELECT id FROM olt_ports WHERE card_id=? AND port=?").get(Number(b.card_id), Number(b.port))) {
+        return send(req, res, 409, { error: `Port ${b.port} sudah tercatat pada card ini` });
+      }
+      const r = db.prepare("INSERT INTO olt_ports (card_id, port, sfp, serial, status, notes) VALUES (?,?,?,?,?,?)")
+        .run(Number(b.card_id), Number(b.port), b.sfp || null, b.serial || null, status, b.notes || null);
       return send(req, res, 201, db.prepare("SELECT * FROM olt_ports WHERE id=?").get(r.lastInsertRowid));
     }
     m = p.match(/^\/api\/ports\/(\d+)$/);
     if (m) {
       const id = Number(m[1]);
       if (method === "PATCH") {
-        const b = await readBody(req);
-        db.prepare("UPDATE olt_ports SET port=?, sfp=?, serial=?, status=?, tx_power=?, rx_power=?, notes=?, updated_at=? WHERE id=?")
-          .run(b.port, b.sfp || null, b.serial || null, b.status || "inactive", b.tx_power || null, b.rx_power || null, b.notes || null, now(), id);
+        const body = await readBody(req);
+        const current = db.prepare("SELECT * FROM olt_ports WHERE id=?").get(id);
+        if (!current) return send(req, res, 404, { error: "Port tidak ditemukan" });
+        const b = { ...current, ...body };
+        const card = db.prepare("SELECT port_count FROM olt_cards WHERE id=?").get(current.card_id);
+        if (!card || !validIntRange(b.port, 1, Number(card.port_count))) {
+          return send(req, res, 400, { error: `Nomor port harus antara 1 dan ${card?.port_count ?? 0}` });
+        }
+        if (!PORT_STATUSES.has(b.status)) return send(req, res, 400, { error: "Status port tidak valid" });
+        if ([b.sfp, b.serial, b.notes].some((v) => !isOptionalText(v))) {
+          return send(req, res, 400, { error: "SFP, serial, dan catatan harus berupa teks" });
+        }
+        if (db.prepare("SELECT id FROM olt_ports WHERE card_id=? AND port=? AND id<>?").get(current.card_id, Number(b.port), id)) {
+          return send(req, res, 409, { error: `Port ${b.port} sudah tercatat pada card ini` });
+        }
+        db.prepare("UPDATE olt_ports SET port=?, sfp=?, serial=?, status=?, notes=?, updated_at=? WHERE id=?")
+          .run(Number(b.port), b.sfp || null, b.serial || null, b.status, b.notes || null, now(), id);
         return send(req, res, 200, db.prepare("SELECT * FROM olt_ports WHERE id=?").get(id));
       }
       if (method === "DELETE") {
-        db.prepare("DELETE FROM olt_ports WHERE id=?").run(id);
+        const result = db.prepare("DELETE FROM olt_ports WHERE id=?").run(id);
+        if (!result.changes) return send(req, res, 404, { error: "Port tidak ditemukan" });
         return send(req, res, 200, { ok: true });
       }
     }
@@ -711,30 +884,55 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === "/api/odcs" && method === "POST") {
       const b = await readBody(req);
-      if (!b.name?.trim() || !b.olt_id || !b.cable_type) return send(req, res, 400, { error: "Nama, OLT, dan tipe kabel wajib diisi" });
-      const badFeeder = checkFeederPorts(b.olt_id, b.feeder_port_ids);
+      if (!isText(b.name) || !validPositiveInt(b.olt_id) || !cableInfo(b.cable_type)) {
+        return send(req, res, 400, { error: "Nama, OLT, dan tipe kabel yang valid wajib diisi" });
+      }
+      if (!isOptionalText(b.location) || !isOptionalText(b.notes)) {
+        return send(req, res, 400, { error: "Lokasi dan catatan harus berupa teks" });
+      }
+      const feederIds = b.feeder_port_ids ?? [];
+      const badFeeder = checkFeederPorts(b.olt_id, feederIds);
       if (badFeeder) return send(req, res, 400, { error: badFeeder });
-      const r = db.prepare("INSERT INTO odcs (olt_id, name, location, cable_type, feeder_loss_db, notes) VALUES (?,?,?,?,?,?)")
-        .run(b.olt_id, b.name.trim(), b.location || null, b.cable_type, b.feeder_loss_db ?? null, b.notes || null);
-      syncFeederPorts(r.lastInsertRowid, b.feeder_port_ids);
+      const r = db.prepare("INSERT INTO odcs (olt_id, name, location, cable_type, notes) VALUES (?,?,?,?,?)")
+        .run(Number(b.olt_id), b.name.trim(), b.location || null, b.cable_type, b.notes || null);
+      syncFeederPorts(r.lastInsertRowid, feederIds);
       return send(req, res, 201, db.prepare("SELECT * FROM odcs WHERE id=?").get(r.lastInsertRowid));
     }
     m = p.match(/^\/api\/odcs\/(\d+)$/);
     if (m) {
       const id = Number(m[1]);
       if (method === "PATCH") {
-        const b = await readBody(req);
-        const cur = db.prepare("SELECT olt_id FROM odcs WHERE id=?").get(id);
-        const oltId = b.olt_id ?? cur?.olt_id;
-        const badFeeder = checkFeederPorts(oltId, b.feeder_port_ids);
+        const body = await readBody(req);
+        const current = db.prepare("SELECT * FROM odcs WHERE id=?").get(id);
+        if (!current) return send(req, res, 404, { error: "ODC tidak ditemukan" });
+        const b = { ...current, ...body };
+        if (!isText(b.name) || !validPositiveInt(b.olt_id) || !cableInfo(b.cable_type)) {
+          return send(req, res, 400, { error: "Nama, OLT, dan tipe kabel yang valid wajib diisi" });
+        }
+        if (!isOptionalText(b.location) || !isOptionalText(b.notes)) {
+          return send(req, res, 400, { error: "Lokasi dan catatan harus berupa teks" });
+        }
+        const feederIds = hasOwn(body, "feeder_port_ids")
+          ? body.feeder_port_ids
+          : db.prepare("SELECT port_id FROM odc_feeder_ports WHERE odc_id=? ORDER BY id").all(id).map((row) => row.port_id);
+        const badFeeder = checkFeederPorts(b.olt_id, feederIds);
         if (badFeeder) return send(req, res, 400, { error: badFeeder });
-        db.prepare("UPDATE odcs SET olt_id=?, name=?, location=?, cable_type=?, feeder_loss_db=?, notes=?, updated_at=? WHERE id=?")
-          .run(oltId, b.name, b.location || null, b.cable_type, b.feeder_loss_db ?? null, b.notes || null, now(), id);
-        if (b.feeder_port_ids !== undefined) syncFeederPorts(id, b.feeder_port_ids);
+        const capacity = cableInfo(b.cable_type).cores;
+        const hasOutOfRangeCore =
+          db.prepare("SELECT id FROM core_assignments WHERE source='olt_to_odc' AND odc_id=? AND core>? LIMIT 1").get(id, capacity) ||
+          db.prepare("SELECT id FROM core_links WHERE odc_id=? AND odc_core>? LIMIT 1").get(id, capacity) ||
+          db.prepare("SELECT id FROM splitters WHERE odc_id=? AND input_core>? LIMIT 1").get(id, capacity);
+        if (hasOutOfRangeCore) {
+          return send(req, res, 400, { error: `Tipe kabel baru memiliki ${capacity} core; hapus atau sesuaikan assignment, mapping, dan input splitter di atasnya lebih dahulu` });
+        }
+        db.prepare("UPDATE odcs SET olt_id=?, name=?, location=?, cable_type=?, notes=?, updated_at=? WHERE id=?")
+          .run(Number(b.olt_id), b.name.trim(), b.location || null, b.cable_type, b.notes || null, now(), id);
+        if (hasOwn(body, "feeder_port_ids") || Number(b.olt_id) !== current.olt_id) syncFeederPorts(id, feederIds);
         return send(req, res, 200, db.prepare("SELECT * FROM odcs WHERE id=?").get(id));
       }
       if (method === "DELETE") {
-        db.prepare("DELETE FROM odcs WHERE id=?").run(id);
+        const result = db.prepare("DELETE FROM odcs WHERE id=?").run(id);
+        if (!result.changes) return send(req, res, 404, { error: "ODC tidak ditemukan" });
         return send(req, res, 200, { ok: true });
       }
     }
@@ -749,22 +947,54 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === "/api/odps" && method === "POST") {
       const b = await readBody(req);
-      if (!b.name?.trim() || !b.odc_id || !b.cable_type) return send(req, res, 400, { error: "Nama, ODC, dan tipe kabel wajib diisi" });
+      if (!isText(b.name) || !validPositiveInt(b.odc_id) || !cableInfo(b.cable_type)) {
+        return send(req, res, 400, { error: "Nama, ODC, dan tipe kabel yang valid wajib diisi" });
+      }
+      if (!isOptionalText(b.location) || !isOptionalText(b.notes)) {
+        return send(req, res, 400, { error: "Lokasi dan catatan harus berupa teks" });
+      }
+      if (!db.prepare("SELECT id FROM odcs WHERE id=?").get(Number(b.odc_id))) {
+        return send(req, res, 400, { error: "ODC tidak ditemukan" });
+      }
       const r = db.prepare("INSERT INTO odps (odc_id, name, location, cable_type, notes) VALUES (?,?,?,?,?)")
-        .run(b.odc_id, b.name.trim(), b.location || null, b.cable_type, b.notes || null);
+        .run(Number(b.odc_id), b.name.trim(), b.location || null, b.cable_type, b.notes || null);
       return send(req, res, 201, db.prepare("SELECT * FROM odps WHERE id=?").get(r.lastInsertRowid));
     }
     m = p.match(/^\/api\/odps\/(\d+)$/);
     if (m) {
       const id = Number(m[1]);
       if (method === "PATCH") {
-        const b = await readBody(req);
+        const body = await readBody(req);
+        const current = db.prepare("SELECT * FROM odps WHERE id=?").get(id);
+        if (!current) return send(req, res, 404, { error: "ODP tidak ditemukan" });
+        const b = { ...current, ...body };
+        if (!isText(b.name) || !validPositiveInt(b.odc_id) || !cableInfo(b.cable_type)) {
+          return send(req, res, 400, { error: "Nama, ODC, dan tipe kabel yang valid wajib diisi" });
+        }
+        if (!isOptionalText(b.location) || !isOptionalText(b.notes)) {
+          return send(req, res, 400, { error: "Lokasi dan catatan harus berupa teks" });
+        }
+        if (!db.prepare("SELECT id FROM odcs WHERE id=?").get(Number(b.odc_id))) {
+          return send(req, res, 400, { error: "ODC tidak ditemukan" });
+        }
+        if (Number(b.odc_id) !== current.odc_id && db.prepare("SELECT id FROM core_links WHERE odp_id=? LIMIT 1").get(id)) {
+          return send(req, res, 400, { error: "Hapus atau buat ulang mapping core sebelum memindahkan ODP ke ODC lain" });
+        }
+        const capacity = cableInfo(b.cable_type).cores;
+        const hasOutOfRangeCore =
+          db.prepare("SELECT id FROM core_assignments WHERE source='odc_to_odp' AND odp_id=? AND core>? LIMIT 1").get(id, capacity) ||
+          db.prepare("SELECT id FROM core_links WHERE odp_id=? AND odp_core>? LIMIT 1").get(id, capacity) ||
+          db.prepare("SELECT id FROM splitters WHERE odp_id=? AND input_core>? LIMIT 1").get(id, capacity);
+        if (hasOutOfRangeCore) {
+          return send(req, res, 400, { error: `Tipe kabel baru memiliki ${capacity} core; hapus atau sesuaikan assignment, mapping, dan input splitter di atasnya lebih dahulu` });
+        }
         db.prepare("UPDATE odps SET odc_id=?, name=?, location=?, cable_type=?, notes=?, updated_at=? WHERE id=?")
-          .run(b.odc_id, b.name, b.location || null, b.cable_type, b.notes || null, now(), id);
+          .run(Number(b.odc_id), b.name.trim(), b.location || null, b.cable_type, b.notes || null, now(), id);
         return send(req, res, 200, db.prepare("SELECT * FROM odps WHERE id=?").get(id));
       }
       if (method === "DELETE") {
-        db.prepare("DELETE FROM odps WHERE id=?").run(id);
+        const result = db.prepare("DELETE FROM odps WHERE id=?").run(id);
+        if (!result.changes) return send(req, res, 404, { error: "ODP tidak ditemukan" });
         return send(req, res, 200, { ok: true });
       }
     }
@@ -790,22 +1020,68 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === "/api/cores" && method === "POST") {
       const b = await readBody(req);
-      if (!b.source || !b.core) return send(req, res, 400, { error: "source dan nomor core wajib diisi" });
-      const r = db.prepare("INSERT INTO core_assignments (source, odc_id, odp_id, core, status, destination, power_dbm, notes) VALUES (?,?,?,?,?,?,?,?)")
-        .run(b.source, b.odc_id || null, b.odp_id || null, b.core, b.status || "idle", b.destination || null, b.power_dbm || null, b.notes || null);
+      if (!validPositiveInt(b.core) || !CORE_STATUSES.has(b.status ?? "idle")) {
+        return send(req, res, 400, { error: "Nomor core atau status tidak valid" });
+      }
+      if (!isOptionalText(b.destination) || !isOptionalText(b.notes)) {
+        return send(req, res, 400, { error: "Tujuan dan catatan harus berupa teks" });
+      }
+      let source;
+      let parentId;
+      let capacity;
+      if (b.source === "olt_to_odc") {
+        if (!validPositiveInt(b.odc_id) || (b.odp_id != null && b.odp_id !== "")) {
+          return send(req, res, 400, { error: "Core feeder harus terhubung ke satu ODC saja" });
+        }
+        source = "olt_to_odc";
+        parentId = Number(b.odc_id);
+        const parent = db.prepare("SELECT cable_type FROM odcs WHERE id=?").get(parentId);
+        if (!parent) return send(req, res, 400, { error: "ODC tidak ditemukan" });
+        capacity = cableInfo(parent.cable_type)?.cores;
+      } else if (b.source === "odc_to_odp") {
+        if (!validPositiveInt(b.odp_id) || (b.odc_id != null && b.odc_id !== "")) {
+          return send(req, res, 400, { error: "Core ODP harus terhubung ke satu ODP saja" });
+        }
+        source = "odc_to_odp";
+        parentId = Number(b.odp_id);
+        const parent = db.prepare("SELECT cable_type FROM odps WHERE id=?").get(parentId);
+        if (!parent) return send(req, res, 400, { error: "ODP tidak ditemukan" });
+        capacity = cableInfo(parent.cable_type)?.cores;
+      } else {
+        return send(req, res, 400, { error: "Sumber core tidak valid" });
+      }
+      if (!capacity || Number(b.core) > capacity) {
+        return send(req, res, 400, { error: `Nomor core melebihi kapasitas kabel (${capacity ?? 0} core)` });
+      }
+      const duplicate = source === "olt_to_odc"
+        ? db.prepare("SELECT id FROM core_assignments WHERE source=? AND odc_id=? AND core=?").get(source, parentId, Number(b.core))
+        : db.prepare("SELECT id FROM core_assignments WHERE source=? AND odp_id=? AND core=?").get(source, parentId, Number(b.core));
+      if (duplicate) return send(req, res, 409, { error: `Core ${b.core} sudah memiliki assignment` });
+      const r = db.prepare("INSERT INTO core_assignments (source, odc_id, odp_id, core, status, destination, notes) VALUES (?,?,?,?,?,?,?)")
+        .run(source, source === "olt_to_odc" ? parentId : null, source === "odc_to_odp" ? parentId : null, Number(b.core), b.status ?? "idle", b.destination || null, b.notes || null);
       return send(req, res, 201, db.prepare("SELECT * FROM core_assignments WHERE id=?").get(r.lastInsertRowid));
     }
     m = p.match(/^\/api\/cores\/(\d+)$/);
     if (m) {
       const id = Number(m[1]);
       if (method === "PATCH") {
-        const b = await readBody(req);
-        db.prepare("UPDATE core_assignments SET status=?, destination=?, power_dbm=?, notes=?, updated_at=? WHERE id=?")
-          .run(b.status || "idle", b.destination || null, b.power_dbm || null, b.notes || null, now(), id);
+        const body = await readBody(req);
+        const current = db.prepare("SELECT * FROM core_assignments WHERE id=?").get(id);
+        if (!current) return send(req, res, 404, { error: "Assignment core tidak ditemukan" });
+        const status = hasOwn(body, "status") ? body.status : current.status;
+        const destination = hasOwn(body, "destination") ? body.destination : current.destination;
+        const notes = hasOwn(body, "notes") ? body.notes : current.notes;
+        if (!CORE_STATUSES.has(status)) return send(req, res, 400, { error: "Status core tidak valid" });
+        if (!isOptionalText(destination) || !isOptionalText(notes)) {
+          return send(req, res, 400, { error: "Tujuan dan catatan harus berupa teks" });
+        }
+        db.prepare("UPDATE core_assignments SET status=?, destination=?, notes=?, updated_at=? WHERE id=?")
+          .run(status, destination || null, notes || null, now(), id);
         return send(req, res, 200, db.prepare("SELECT * FROM core_assignments WHERE id=?").get(id));
       }
       if (method === "DELETE") {
-        db.prepare("DELETE FROM core_assignments WHERE id=?").run(id);
+        const result = db.prepare("DELETE FROM core_assignments WHERE id=?").run(id);
+        if (!result.changes) return send(req, res, 404, { error: "Assignment core tidak ditemukan" });
         return send(req, res, 200, { ok: true });
       }
     }
@@ -817,7 +1093,7 @@ const server = http.createServer(async (req, res) => {
         SELECT fp.id, fp.odc_id, fp.port_id,
           o.id AS olt_id, o.name AS olt_name,
           c.slot, c.label AS card_label,
-          pt.port, pt.sfp, pt.tx_power, pt.rx_power
+          pt.port, pt.sfp
         FROM odc_feeder_ports fp
         JOIN olt_ports pt ON pt.id = fp.port_id
         JOIN olt_cards c ON c.id = pt.card_id
@@ -844,30 +1120,48 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === "/api/links" && method === "POST") {
       const b = await readBody(req);
-      if (!b.odc_id || !b.odc_core || !b.odp_id || !b.odp_core) {
-        return send(req, res, 400, { error: "odc_id, odc_core, odp_id, dan odp_core wajib diisi" });
+      if (!validPositiveInt(b.odc_id) || !validPositiveInt(b.odp_id) || !validPositiveInt(b.odc_core) || !validPositiveInt(b.odp_core)) {
+        return send(req, res, 400, { error: "ODC, ODP, dan nomor core yang valid wajib diisi" });
       }
-      if (db.prepare("SELECT id FROM core_links WHERE odc_id=? AND odc_core=?").get(b.odc_id, b.odc_core)) {
+      if (!isOptionalText(b.notes)) return send(req, res, 400, { error: "Catatan harus berupa teks" });
+      const odc = db.prepare("SELECT cable_type FROM odcs WHERE id=?").get(Number(b.odc_id));
+      const odp = db.prepare("SELECT odc_id, cable_type FROM odps WHERE id=?").get(Number(b.odp_id));
+      if (!odc) return send(req, res, 400, { error: "ODC tidak ditemukan" });
+      if (!odp) return send(req, res, 400, { error: "ODP tidak ditemukan" });
+      if (Number(odp.odc_id) !== Number(b.odc_id)) {
+        return send(req, res, 400, { error: "ODP tujuan harus berada di bawah ODC yang dipilih" });
+      }
+      const odcCapacity = cableInfo(odc.cable_type)?.cores ?? 0;
+      const odpCapacity = cableInfo(odp.cable_type)?.cores ?? 0;
+      if (Number(b.odc_core) > odcCapacity || Number(b.odp_core) > odpCapacity) {
+        return send(req, res, 400, { error: `Nomor core melebihi kapasitas kabel (ODC ${odcCapacity}, ODP ${odpCapacity})` });
+      }
+      if (db.prepare("SELECT id FROM core_links WHERE odc_id=? AND odc_core=?").get(Number(b.odc_id), Number(b.odc_core))) {
         return send(req, res, 409, { error: `Core ${b.odc_core} di ODC ini sudah tersambung ke ODP lain` });
       }
-      if (db.prepare("SELECT id FROM core_links WHERE odp_id=? AND odp_core=?").get(b.odp_id, b.odp_core)) {
+      if (db.prepare("SELECT id FROM core_links WHERE odp_id=? AND odp_core=?").get(Number(b.odp_id), Number(b.odp_core))) {
         return send(req, res, 409, { error: `Core ${b.odp_core} di ODP tersebut sudah terpakai sambungan lain` });
       }
-      const r = db.prepare("INSERT INTO core_links (odc_id, odc_core, odp_id, odp_core, loss_db, notes) VALUES (?,?,?,?,?,?)")
-        .run(b.odc_id, b.odc_core, b.odp_id, b.odp_core, b.loss_db ?? null, b.notes || null);
+      const r = db.prepare("INSERT INTO core_links (odc_id, odc_core, odp_id, odp_core, notes) VALUES (?,?,?,?,?)")
+        .run(Number(b.odc_id), Number(b.odc_core), Number(b.odp_id), Number(b.odp_core), b.notes || null);
       return send(req, res, 201, db.prepare("SELECT * FROM core_links WHERE id=?").get(r.lastInsertRowid));
     }
     m = p.match(/^\/api\/links\/(\d+)$/);
     if (m) {
       const id = Number(m[1]);
       if (method === "PATCH") {
-        const b = await readBody(req);
-        db.prepare("UPDATE core_links SET loss_db=?, notes=?, updated_at=? WHERE id=?")
-          .run(b.loss_db ?? null, b.notes || null, now(), id);
+        const body = await readBody(req);
+        const current = db.prepare("SELECT * FROM core_links WHERE id=?").get(id);
+        if (!current) return send(req, res, 404, { error: "Sambungan core tidak ditemukan" });
+        const notes = hasOwn(body, "notes") ? body.notes : current.notes;
+        if (!isOptionalText(notes)) return send(req, res, 400, { error: "Catatan harus berupa teks" });
+        db.prepare("UPDATE core_links SET notes=?, updated_at=? WHERE id=?")
+          .run(notes || null, now(), id);
         return send(req, res, 200, db.prepare("SELECT * FROM core_links WHERE id=?").get(id));
       }
       if (method === "DELETE") {
-        db.prepare("DELETE FROM core_links WHERE id=?").run(id);
+        const result = db.prepare("DELETE FROM core_links WHERE id=?").run(id);
+        if (!result.changes) return send(req, res, 404, { error: "Sambungan core tidak ditemukan" });
         return send(req, res, 200, { ok: true });
       }
     }
@@ -884,11 +1178,36 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === "/api/splitters" && method === "POST") {
       const b = await readBody(req);
-      if (!b.name?.trim() || !b.ratio) return send(req, res, 400, { error: "Nama dan rasio splitter wajib diisi" });
-      if (!b.odc_id && !b.odp_id) return send(req, res, 400, { error: "Splitter harus ditempatkan di ODC atau ODP" });
-      if (!splitterPorts(b.ratio)) return send(req, res, 400, { error: `Rasio splitter tidak valid — pilih: ${SPLITTER_RATIOS.join(", ")}` });
+      if (!isText(b.name) || !ratioSah(b.ratio)) {
+        return send(req, res, 400, { error: `Nama dan rasio splitter valid wajib diisi — pilih: ${SPLITTER_RATIOS.join(", ")}` });
+      }
+      const hasOdc = b.odc_id != null && b.odc_id !== "";
+      const hasOdp = b.odp_id != null && b.odp_id !== "";
+      if (hasOdc === hasOdp) return send(req, res, 400, { error: "Splitter harus ditempatkan di tepat satu ODC atau ODP" });
+      let parentId;
+      let parentType;
+      let capacity;
+      if (hasOdc) {
+        if (!validPositiveInt(b.odc_id)) return send(req, res, 400, { error: "ODC tidak valid" });
+        parentId = Number(b.odc_id);
+        parentType = "odc";
+        capacity = cableInfo(db.prepare("SELECT cable_type FROM odcs WHERE id=?").get(parentId)?.cable_type)?.cores;
+      } else {
+        if (!validPositiveInt(b.odp_id)) return send(req, res, 400, { error: "ODP tidak valid" });
+        parentId = Number(b.odp_id);
+        parentType = "odp";
+        capacity = cableInfo(db.prepare("SELECT cable_type FROM odps WHERE id=?").get(parentId)?.cable_type)?.cores;
+      }
+      if (!capacity) return send(req, res, 400, { error: `${parentType.toUpperCase()} tidak ditemukan atau tipe kabelnya tidak valid` });
+      const inputCore = b.input_core == null || b.input_core === "" ? null : b.input_core;
+      if (inputCore != null && !validIntRange(inputCore, 1, capacity)) {
+        return send(req, res, 400, { error: `Input core harus antara 1 dan ${capacity}` });
+      }
+      if (!isOptionalText(b.input_note) || !isOptionalText(b.notes)) {
+        return send(req, res, 400, { error: "Keterangan input dan catatan harus berupa teks" });
+      }
       const r = db.prepare("INSERT INTO splitters (odc_id, odp_id, name, ratio, input_core, input_note, notes) VALUES (?,?,?,?,?,?,?)")
-        .run(b.odc_id || null, b.odp_id || null, b.name.trim(), b.ratio, b.input_core || null, b.input_note || null, b.notes || null);
+        .run(parentType === "odc" ? parentId : null, parentType === "odp" ? parentId : null, b.name.trim(), b.ratio, inputCore == null ? null : Number(inputCore), b.input_note || null, b.notes || null);
       syncSplitterPorts(r.lastInsertRowid, b.ratio);
       return send(req, res, 201, getSplitter(r.lastInsertRowid));
     }
@@ -896,14 +1215,33 @@ const server = http.createServer(async (req, res) => {
     if (m) {
       const id = Number(m[1]);
       if (method === "PATCH") {
-        const b = await readBody(req);
-        if (!splitterPorts(b.ratio)) return send(req, res, 400, { error: `Rasio splitter tidak valid — pilih: ${SPLITTER_RATIOS.join(", ")}` });
+        const body = await readBody(req);
+        const current = db.prepare("SELECT * FROM splitters WHERE id=?").get(id);
+        if (!current) return send(req, res, 404, { error: "Splitter tidak ditemukan" });
+        const b = { ...current, ...body };
+        if (!isText(b.name) || !ratioSah(b.ratio)) {
+          return send(req, res, 400, { error: `Nama dan rasio splitter valid wajib diisi — pilih: ${SPLITTER_RATIOS.join(", ")}` });
+        }
+        const inputCore = b.input_core == null || b.input_core === "" ? null : b.input_core;
+        const parentCable = b.odc_id != null
+          ? db.prepare("SELECT cable_type FROM odcs WHERE id=?").get(b.odc_id)?.cable_type
+          : db.prepare("SELECT cable_type FROM odps WHERE id=?").get(b.odp_id)?.cable_type;
+        const capacity = cableInfo(parentCable)?.cores;
+        if (!capacity) return send(req, res, 400, { error: "Tipe kabel induk splitter tidak valid" });
+        if (inputCore != null && !validIntRange(inputCore, 1, capacity)) {
+          return send(req, res, 400, { error: `Input core harus antara 1 dan ${capacity}` });
+        }
+        if (!isOptionalText(b.input_note) || !isOptionalText(b.notes)) {
+          return send(req, res, 400, { error: "Keterangan input dan catatan harus berupa teks" });
+        }
         db.prepare("UPDATE splitters SET name=?, ratio=?, input_core=?, input_note=?, notes=?, updated_at=? WHERE id=?")
-          .run(b.name, b.ratio, b.input_core || null, b.input_note || null, b.notes || null, now(), id);
+          .run(b.name.trim(), b.ratio, inputCore == null ? null : Number(inputCore), b.input_note || null, b.notes || null, now(), id);
         syncSplitterPorts(id, b.ratio);
         return send(req, res, 200, getSplitter(id));
       }
       if (method === "DELETE") {
+        const found = db.prepare("SELECT id FROM splitters WHERE id=?").get(id);
+        if (!found) return send(req, res, 404, { error: "Splitter tidak ditemukan" });
         db.prepare("UPDATE splitter_outputs SET target_type=NULL, target_splitter_id=NULL WHERE target_splitter_id=?").run(id);
         db.prepare("UPDATE splitter_outputs SET target_type=NULL, target_odc_id=NULL WHERE target_odc_id=?").run(id);
         db.prepare("DELETE FROM splitters WHERE id=?").run(id);
@@ -916,37 +1254,60 @@ const server = http.createServer(async (req, res) => {
       const out = db.prepare("SELECT * FROM splitter_outputs WHERE id=?").get(id);
       if (!out) return send(req, res, 404, { error: "Output splitter tidak ditemukan" });
       const b = await readBody(req);
+      const notes = hasOwn(b, "notes") ? b.notes : out.notes;
+      if (!isOptionalText(notes)) return send(req, res, 400, { error: "Catatan harus berupa teks" });
       let odpId = null;
       let splId = null;
       let odcId = null;
-      if (b.target_type === "odc") {
-        odcId = Number(b.target_id);
-        if (!db.prepare("SELECT id FROM odcs WHERE id=?").get(odcId)) {
-          return send(req, res, 400, { error: "ODC tujuan tidak ditemukan" });
+      let targetType = out.target_odp_id ? "odp" : out.target_odc_id ? "odc" : out.target_splitter_id ? "splitter" : null;
+      if (hasOwn(b, "target_type")) {
+        targetType = b.target_type;
+        if (targetType === "odc") {
+          if (!validPositiveInt(b.target_id)) return send(req, res, 400, { error: "ODC tujuan tidak valid" });
+          odcId = Number(b.target_id);
+          if (!db.prepare("SELECT id FROM odcs WHERE id=?").get(odcId)) {
+            return send(req, res, 400, { error: "ODC tujuan tidak ditemukan" });
+          }
+          if (db.prepare("SELECT id FROM splitter_outputs WHERE target_odc_id=? AND id<>? LIMIT 1").get(odcId, id)) {
+            return send(req, res, 409, { error: "ODC anak sudah memiliki koneksi dari output splitter lain" });
+          }
+          const owner = db.prepare("SELECT odc_id FROM splitters WHERE id=?").get(out.splitter_id)?.odc_id;
+          if (!owner) {
+            return send(req, res, 400, { error: "Hanya splitter di dalam ODC yang bisa diarahkan ke ODC anak" });
+          }
+          if (odcIsAncestor(odcId, owner)) {
+            return send(req, res, 400, { error: "Akan membentuk lingkaran ODC induk/anak" });
+          }
+        } else if (targetType === "odp") {
+          if (!validPositiveInt(b.target_id)) return send(req, res, 400, { error: "ODP tujuan tidak valid" });
+          odpId = Number(b.target_id);
+          if (!db.prepare("SELECT id FROM odps WHERE id=?").get(odpId)) {
+            return send(req, res, 400, { error: "ODP tujuan tidak ditemukan" });
+          }
+        } else if (targetType === "splitter") {
+          if (!validPositiveInt(b.target_id)) return send(req, res, 400, { error: "Splitter tujuan tidak valid" });
+          splId = Number(b.target_id);
+          if (!db.prepare("SELECT id FROM splitters WHERE id=?").get(splId)) {
+            return send(req, res, 400, { error: "Splitter tujuan tidak ditemukan" });
+          }
+          if (splId === out.splitter_id) {
+            return send(req, res, 400, { error: "Splitter tidak bisa di-cascade ke dirinya sendiri" });
+          }
+          if (splitterReaches(splId, out.splitter_id)) {
+            return send(req, res, 400, { error: "Cascade akan membentuk lingkaran antar-splitter" });
+          }
+        } else if (targetType == null || targetType === "") {
+          targetType = null;
+        } else {
+          return send(req, res, 400, { error: "Tipe tujuan output tidak valid" });
         }
-        const owner = db.prepare("SELECT odc_id FROM splitters WHERE id=?").get(out.splitter_id)?.odc_id;
-        if (!owner) {
-          return send(req, res, 400, { error: "Hanya splitter di dalam ODC yang bisa diarahkan ke ODC anak" });
-        }
-        if (odcIsAncestor(odcId, owner)) {
-          return send(req, res, 400, { error: "Akan membentuk lingkaran ODC induk/anak" });
-        }
-      } else if (b.target_type === "odp") {
-        if (!db.prepare("SELECT id FROM odps WHERE id=?").get(Number(b.target_id))) {
-          return send(req, res, 400, { error: "ODP tujuan tidak ditemukan" });
-        }
-        odpId = Number(b.target_id);
-      } else if (b.target_type === "splitter") {
-        splId = Number(b.target_id);
-        if (!db.prepare("SELECT id FROM splitters WHERE id=?").get(splId)) {
-          return send(req, res, 400, { error: "Splitter tujuan tidak ditemukan" });
-        }
-        if (splId === out.splitter_id) {
-          return send(req, res, 400, { error: "Splitter tidak bisa di-cascade ke dirinya sendiri" });
-        }
+      } else {
+        odpId = out.target_odp_id;
+        splId = out.target_splitter_id;
+        odcId = out.target_odc_id;
       }
       db.prepare("UPDATE splitter_outputs SET target_type=?, target_odp_id=?, target_splitter_id=?, target_odc_id=?, notes=? WHERE id=?")
-        .run(odcId ? "odc" : odpId ? "odp" : splId ? "splitter" : null, odpId, splId, odcId, b.notes || null, id);
+        .run(targetType, odpId, splId, odcId, notes || null, id);
       return send(req, res, 200, db.prepare(
         `SELECT o.*,
            CASE WHEN o.target_odp_id IS NOT NULL THEN 'odp'
@@ -985,31 +1346,42 @@ const server = http.createServer(async (req, res) => {
       }
       if (p === "/api/users" && method === "POST") {
         const b = await readBody(req);
-        if (!b.email?.includes("@")) return send(req, res, 400, { error: "Email tidak valid" });
-        if (!b.full_name?.trim()) return send(req, res, 400, { error: "Nama wajib diisi" });
-        if (String(b.password || "").length < 8) return send(req, res, 400, { error: "Password minimal 8 karakter" });
-        if (!["admin", "operator", "user"].includes(b.role)) return send(req, res, 400, { error: "Peran tidak valid" });
-        if (db.prepare("SELECT id FROM users WHERE email=?").get(b.email.toLowerCase().trim())) {
+        if (typeof b.email !== "string" || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(b.email.trim())) {
+          return send(req, res, 400, { error: "Email tidak valid" });
+        }
+        if (!isText(b.full_name)) return send(req, res, 400, { error: "Nama wajib diisi" });
+        if (typeof b.password !== "string" || b.password.length < 8) {
+          return send(req, res, 400, { error: "Password minimal 8 karakter" });
+        }
+        if (!USER_ROLES.has(b.role)) return send(req, res, 400, { error: "Peran tidak valid" });
+        const email = b.email.toLowerCase().trim();
+        if (db.prepare("SELECT id FROM users WHERE email=?").get(email)) {
           return send(req, res, 409, { error: "Email sudah terdaftar" });
         }
         const r = db.prepare("INSERT INTO users (email, password_hash, full_name, role) VALUES (?,?,?,?)")
-          .run(b.email.toLowerCase().trim(), hash(b.password), b.full_name.trim(), b.role);
+          .run(email, hashPassword(b.password), b.full_name.trim(), b.role);
         return send(req, res, 201, db.prepare("SELECT id, email, full_name, role, created_at FROM users WHERE id=?").get(r.lastInsertRowid));
       }
       m = p.match(/^\/api\/users\/(\d+)$/);
       if (m) {
         const id = Number(m[1]);
         if (method === "PATCH") {
-          const b = await readBody(req);
-          if (id === user.id && b.role && b.role !== "admin") {
+          const body = await readBody(req);
+          const current = db.prepare("SELECT id, full_name, role FROM users WHERE id=?").get(id);
+          if (!current) return send(req, res, 404, { error: "User tidak ditemukan" });
+          const b = { ...current, ...body };
+          if (!isText(b.full_name)) return send(req, res, 400, { error: "Nama wajib diisi" });
+          if (!USER_ROLES.has(b.role)) return send(req, res, 400, { error: "Peran tidak valid" });
+          if (id === user.id && b.role !== "admin") {
             return send(req, res, 400, { error: "Admin tidak dapat menurunkan peran akunnya sendiri" });
           }
-          db.prepare("UPDATE users SET full_name=?, role=? WHERE id=?").run(b.full_name, b.role, id);
+          db.prepare("UPDATE users SET full_name=?, role=? WHERE id=?").run(b.full_name.trim(), b.role, id);
           return send(req, res, 200, db.prepare("SELECT id, email, full_name, role, created_at FROM users WHERE id=?").get(id));
         }
         if (method === "DELETE") {
           if (id === user.id) return send(req, res, 400, { error: "Tidak bisa menghapus akun sendiri" });
-          db.prepare("DELETE FROM users WHERE id=?").run(id);
+          const result = db.prepare("DELETE FROM users WHERE id=?").run(id);
+          if (!result.changes) return send(req, res, 404, { error: "User tidak ditemukan" });
           return send(req, res, 200, { ok: true });
         }
       }
@@ -1018,7 +1390,7 @@ const server = http.createServer(async (req, res) => {
     return send(req, res, 404, { error: `Endpoint tidak ditemukan: ${method} ${p}` });
   } catch (e) {
     console.error("[arena-api] error:", e);
-    return send(req, res, 500, { error: e.message });
+    return send(req, res, e.status ?? 500, { error: e.message });
   }
 });
 

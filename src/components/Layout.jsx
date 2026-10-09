@@ -2,9 +2,9 @@ import { useEffect, useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import {
   Boxes,
-  Cable,
   FileText,
   LayoutDashboard,
+  Link2,
   LogOut,
   Menu,
   Network,
@@ -21,12 +21,13 @@ import { getStoredUser } from "../lib/api.js";
 import ThemeMenu from "./ThemeMenu.jsx";
 
 const NAV = [
-  { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
+  { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { to: "/olt", label: "OLT", icon: Server },
   { to: "/odc", label: "ODC", icon: Boxes },
   { to: "/odp", label: "ODP", icon: Network },
-  { to: "/mapping", label: "Mapping Core", icon: Workflow },
-  { to: "/topologi", label: "Topologi", icon: Cable },
+  { to: "/mapping", label: "Mapping Core", icon: Link2 },
+  // Alur Core diletakkan tepat setelah Mapping Core sebagai alur visualnya.
+  { to: "/", label: "Alur Core", icon: Workflow, end: true },
   { to: "/laporan", label: "Laporan", icon: FileText },
 ];
 

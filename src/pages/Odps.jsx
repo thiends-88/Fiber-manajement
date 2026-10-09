@@ -124,7 +124,7 @@ export default function Odps() {
             ))}
             {odps.length === 0 && (
               <tr>
-                <td className="td py-8 text-center text-mut" colSpan={6}>Belum ada ODP.</td>
+                <td className="td py-8 text-center text-mut" colSpan={canWrite ? 6 : 5}>Belum ada ODP.</td>
               </tr>
             )}
           </tbody>
@@ -137,7 +137,7 @@ export default function Odps() {
             source="odc_to_odp"
             parentId={selected.id}
             cableType={selected.cable_type}
-            title={`Core ODC → ${selected.name}`}
+            title={`Core Power ${selected.name}`}
           />
         </Card>
       )}
@@ -164,8 +164,13 @@ export default function Odps() {
               {CABLE_TYPES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
             </select>
           </Field>
-          <Field label="Lokasi">
-            <input className="input" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} />
+          <Field label="Lokasi / Koordinat">
+            <input
+              className="input"
+              value={form.location}
+              onChange={(e) => setForm({ ...form, location: e.target.value })}
+              placeholder="mis. Tiang depan pasar atau -0.7912, 100.6488"
+            />
           </Field>
           <Field label="Catatan">
             <textarea className="input" rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />

@@ -77,6 +77,10 @@ server.stdout.on("data", (d) => {
           });
           console.log(r2.status === 200 ? "  OK    login demo berhasil di layout runtime" : `  GAGAL login → ${r2.status}`);
           if (r2.status !== 200) gagal++;
+          const r3 = await fetch(BASE, { method: "HEAD" });
+          const headBody = await r3.text();
+          console.log(r3.status === 200 && headBody.length === 0 ? "  OK    permintaan HEAD mengembalikan header tanpa body" : `  GAGAL respons HEAD → ${r3.status}, body ${headBody.length} byte`);
+          if (r3.status !== 200 || headBody.length !== 0) gagal++;
         } else {
           console.error("  GAGAL /healthz tidak OK");
           gagal++;

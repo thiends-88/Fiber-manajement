@@ -7,7 +7,7 @@ import { CARD_TYPES, OLT_TYPES, PORT_STATUS } from "../lib/fiber.js";
 
 const emptyOlt = { name: "", olt_type: OLT_TYPES[0], location: "", ip: "", notes: "" };
 const emptyCard = { slot: "", card_type: "GTGO", label: "", port_count: 8, notes: "" };
-const emptyPort = { port: "", sfp: "", serial: "", status: "inactive", tx_power: "", rx_power: "", notes: "" };
+const emptyPort = { port: "", sfp: "", serial: "", status: "inactive", notes: "" };
 
 export default function Olts() {
   const { user } = useAuth();
@@ -136,6 +136,8 @@ export default function Olts() {
   }
 
   const selectedOlt = olts.find((o) => o.id === selectedId);
+  const portCardId = portModal?.mode === "add" ? portModal.cardId : portModal?.port?.card_id;
+  const portLimit = cards.find((c) => c.id === portCardId)?.port_count ?? 32;
 
   return (
     <div>
@@ -206,7 +208,7 @@ export default function Olts() {
             ))}
             {olts.length === 0 && (
               <tr>
-                <td className="td py-8 text-center text-mut" colSpan={7}>Belum ada OLT.</td>
+                <td className="td py-8 text-center text-mut" colSpan={canWrite ? 7 : 6}>Belum ada OLT.</td>
               </tr>
             )}
           </tbody>
@@ -271,7 +273,7 @@ export default function Olts() {
                           title={pr ? `Port ${n}: ${st.label}${pr.sfp ? ` · ${pr.sfp}` : ""}` : `Port ${n}: belum tercatat`}
                           onClick={() => {
                             if (pr) {
-                              setPortForm({ port: pr.port, sfp: pr.sfp || "", serial: pr.serial || "", status: pr.status, tx_power: pr.tx_power || "", rx_power: pr.rx_power || "", notes: pr.notes || "" });
+                              setPortForm({ port: pr.port, sfp: pr.sfp || "", serial: pr.serial || "", status: pr.status, notes: pr.notes || "" });
                               setPortModal({ mode: "edit", port: pr });
                             } else {
                               setPortForm({ ...emptyPort, port: n });
@@ -302,7 +304,6 @@ export default function Olts() {
                           <th className="th">Port</th>
                           <th className="th">SFP</th>
                           <th className="th">Serial</th>
-                          <th className="th">Daya TX/RX</th>
                           <th className="th">Status</th>
                           {canWrite && <th className="th" />}
                         </tr>
@@ -313,7 +314,6 @@ export default function Olts() {
                             <td className="td font-semibold">{pr.port}</td>
                             <td className="td text-mut">{pr.sfp || "-"}</td>
                             <td className="td text-mut">{pr.serial || "-"}</td>
-                            <td className="td text-mut">{pr.tx_power || pr.rx_power ? `${pr.tx_power || "-"} / ${pr.rx_power || "-"} dBm` : "-"}</td>
                             <td className="td">
                               <Badge cls={PORT_STATUS[pr.status].cls}>{PORT_STATUS[pr.status].label}</Badge>
                             </td>
@@ -392,7 +392,7 @@ export default function Olts() {
         <form onSubmit={savePort} className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <Field label="Nomor Port">
-              <input className="input" type="number" min={1} value={portForm.port} onChange={(e) => setPortForm({ ...portForm, port: e.target.value })} required />
+              <input className="input" type="number" min={1} max={portLimit} value={portForm.port} onChange={(e) => setPortForm({ ...portForm, port: e.target.value })} required />
             </Field>
             <Field label="Status">
               <select className="input" value={portForm.status} onChange={(e) => setPortForm({ ...portForm, status: e.target.value })}>
@@ -406,18 +406,6 @@ export default function Olts() {
           <Field label="Serial SFP">
             <input className="input" value={portForm.serial} onChange={(e) => setPortForm({ ...portForm, serial: e.target.value })} />
           </Field>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Daya TX (dBm)">
-              <input className="input" type="number" step="0.1" value={portForm.tx_power} onChange={(e) => setPortForm({ ...portForm, tx_power: e.target.value })} placeholder="mis. 2.5" />
-            </Field>
-            <Field label="Daya RX (dBm)">
-              <input className="input" type="number" step="0.1" value={portForm.rx_power} onChange={(e) => setPortForm({ ...portForm, rx_power: e.target.value })} placeholder="mis. -18.4" />
-            </Field>
-          </div>
-          <p className="text-[11px] text-mut">
-            TX tipikal SFP GPON: +1,5…+5 dBm (kelas B+), sampai +7 dBm (kelas C+). Nilai TX ini dipakai untuk
-            menghitung anggaran daya jalur di menu Mapping Core &amp; Topologi.
-          </p>
           <Field label="Catatan">
             <textarea className="input" rows={2} value={portForm.notes} onChange={(e) => setPortForm({ ...portForm, notes: e.target.value })} />
           </Field>

@@ -58,6 +58,14 @@ export function buildCoreRoutes({
       name: odp?.name ?? o.target_odp_name ?? "ODP ?",
       location: odp?.location ?? null,
       cableType: odp?.cable_type ?? null,
+      // Core milik kabel ODP sendiri yang dipakai sebagai POWER (output) ODP
+      // itu — diambil dari grid core di form ODP (source "odc_to_odp").
+      // Satu kabel bisa berlanjut OLT → ODC → ODP dengan core yang berbeda,
+      // jadi warna core di ODP belum tentu sama dengan warna core dari ODC.
+      powerCores: cores
+        .filter((c) => c.source === "odc_to_odp" && Number(c.odp_id) === id)
+        .map((c) => ({ core: Number(c.core), status: c.status ?? "idle" }))
+        .sort((a, b) => a.core - b.core),
       insideSplitters: splitters
         .filter((s) => Number(s.odp_id) === id)
         .map((s) => ({ id: s.id, name: s.name, ratio: s.ratio })),
@@ -148,7 +156,6 @@ export function buildCoreRoutes({
         odpId: l.odp_id,
         odpName: namaOdp,
         odpCore: l.odp_core,
-        lossDb: l.loss_db ?? null,
         notes: l.notes || null,
         label: `Core ${l.odc_core} → ${namaOdp} core ${l.odp_core} (kabel langsung)`,
       };
