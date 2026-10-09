@@ -42,9 +42,9 @@ lapangan.
 6. **Splitter bertingkat** — pilih rasio **1:2 / 1:4 / 1:8 / 1:16 / 1:32**,
    ditempatkan **di dalam ODC maupun di dalam ODP**. Setiap output splitter bisa
    diarahkan **ke ODP**, **di-cascade ke splitter lain**, atau **ke ODC anak**.
-   Topologi bertingkat seperti **4:8:8** (OLT → SPL 1:4 → SPL 1:8 di dalam ODC →
+   Topologi splitter bertingkat (mis. OLT → SPL 1:4 → SPL 1:8 di dalam ODC →
    ODP dengan SPL 1:8) bisa dimodelkan penuh, dan aplikasi otomatis membaca
-   rantainya sebagai "Topologi 4:8:8".
+   rantainya sesuai rasio splitter yang terpasang.
    Data demo memakai persis alur ini: **OLT → ODC-001 [SPL-1 1:4 → SPL-2 1:8] →
    ODP-001/ODP-003 [SPL 1:8]**, plus satu cabang **ODC anak**.
 7. **ODC induk / ODC anak** — sebuah output splitter yang berada **di dalam ODC**

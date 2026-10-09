@@ -18,11 +18,14 @@ const RATIO_CLS = {
 /**
  * Manajemen splitter untuk satu ODC atau ODP.
  * Output splitter bisa diarahkan ke ODP lain ATAU ke splitter lain (cascade),
- * contoh topologi bertingkat 4:8:8.
+ * untuk topologi splitter bertingkat.
  */
 export default function SplitterManager({ parentType, parentId, title }) {
   const { user } = useAuth();
   const canWrite = user.role === "admin" || user.role === "operator";
+  // ODP selalu memakai splitter 1:8 bawaan (dibuat otomatis & permanen) —
+  // jadi tidak ada tombol tambah/hapus dan rasio terkunci di 1:8.
+  const isOdp = parentType === "odp";
 
   const [splitters, setSplitters] = useState([]);
   const [odps, setOdps] = useState([]);
@@ -138,10 +141,12 @@ export default function SplitterManager({ parentType, parentId, title }) {
           <GitBranch size={16} className="text-violet-400" />
           {title || `Splitter di ${parentType === "odc" ? "ODC" : "ODP"} ini`}
           <span className="text-xs font-normal text-mut">
-            — output bisa ke ODP, di-cascade ke splitter lain (bertingkat di ODC yang sama), atau ke ODC anak
+            {isOdp
+              ? "— splitter 1:8 bawaan ODP (otomatis & permanen)"
+              : "— output bisa ke ODP, di-cascade ke splitter lain (bertingkat di ODC yang sama), atau ke ODC anak"}
           </span>
         </h2>
-        {canWrite && (
+        {canWrite && !isOdp && (
           <button className="btn btn-primary" onClick={openAdd}>
             <Plus size={14} /> Tambah Splitter
           </button>
@@ -149,7 +154,13 @@ export default function SplitterManager({ parentType, parentId, title }) {
       </div>
 
       {splitters.length === 0 && (
-        <Empty text="Belum ada splitter. Contoh topologi 4:8:8 → SPL-1 (1:4) → SPL-2 (1:8) → ODP (SPL 1:8)." />
+        <Empty
+          text={
+            isOdp
+              ? "Splitter 1:8 bawaan ODP sedang disiapkan — muat ulang halaman bila belum tampil."
+              : "Belum ada splitter. Tambahkan splitter lalu arahkan output-nya ke ODP, di-cascade ke splitter lain, atau ke ODC anak."
+          }
+        />
       )}
 
       <div className="space-y-3">
@@ -183,9 +194,11 @@ export default function SplitterManager({ parentType, parentId, title }) {
                     >
                       <Pencil size={13} />
                     </button>
-                    <button className="btn px-2 py-1 text-red-400" title="Hapus splitter" onClick={() => remove(sp)}>
-                      <Trash2 size={13} />
-                    </button>
+                    {!isOdp && (
+                      <button className="btn px-2 py-1 text-red-400" title="Hapus splitter" onClick={() => remove(sp)}>
+                        <Trash2 size={13} />
+                      </button>
+                    )}
                   </span>
                 )}
               </div>
@@ -229,9 +242,13 @@ export default function SplitterManager({ parentType, parentId, title }) {
           </Field>
           <div className="grid grid-cols-2 gap-3">
             <Field label="Rasio Splitter">
-              <select className="input" value={form.ratio} onChange={(e) => setForm({ ...form, ratio: e.target.value })}>
-                {SPLITTER_RATIOS.map((r) => <option key={r} value={r}>{r}</option>)}
-              </select>
+              {isOdp ? (
+                <input className="input" value="1:8 (standar ODP)" disabled readOnly />
+              ) : (
+                <select className="input" value={form.ratio} onChange={(e) => setForm({ ...form, ratio: e.target.value })}>
+                  {SPLITTER_RATIOS.map((r) => <option key={r} value={r}>{r}</option>)}
+                </select>
+              )}
             </Field>
             <Field label="Input dari Core (opsional)">
               <input
@@ -308,8 +325,8 @@ export default function SplitterManager({ parentType, parentId, title }) {
                 <p className="rounded-lg border border-line-soft bg-panel2 px-3 py-2 text-[11px] leading-relaxed text-mut">
                   <span className="font-medium text-ink">Cascade</span> = output splitter ini disambung ke{" "}
                   <span className="font-medium text-ink">masukan splitter berikutnya</span> (splitter bertingkat),
-                  bukan langsung ke ODP. Contoh topologi <span className="font-medium text-ink">4:8:8</span>:
-                  1:4 → 1:8 → 1:8 — urutannya ikut terlihat di halaman Alur Core.
+                  bukan langsung ke ODP. Contoh: output splitter 1:4 disambung ke splitter 1:8 —
+                  urutannya ikut terlihat di halaman Alur Core.
                 </p>
                 <Field label="Pilih splitter lanjutan">
                   <select

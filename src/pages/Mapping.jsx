@@ -4,7 +4,7 @@ import { api } from "../lib/api.js";
 import { useAuth } from "../lib/auth.jsx";
 import { Badge, Card, Empty, Field, Modal, PageHeader, Toast, useToast } from "../components/ui.jsx";
 import { STATUS, getCableInfo } from "../lib/fiber.js";
-import { buildCoreRoutes } from "../lib/jalur-core.js";
+import { buildCoreRoutes, daftarRuteOdp } from "../lib/jalur-core.js";
 import { Arrow, CoreChip, PohonJalur } from "../components/JalurCore.jsx";
 
 const emptyLink = { odc_id: "", odc_core: "", odp_id: "", odp_core: "", notes: "" };
@@ -92,6 +92,24 @@ export default function Mapping() {
       }),
     [odcs, odps, splitters, links, allCores, odcId],
   );
+
+  // Rute via splitter (hasil meratakan pohon) → untuk deteksi core terpakai
+  // otomatis dan keterangan "Core terpakai dari ODC" per ODP.
+  const ruteOdp = useMemo(() => daftarRuteOdp(peta.trees), [peta]);
+  const treeByCore = useMemo(() => new Map(peta.trees.map((t) => [t.core, t])), [peta]);
+
+  // Semua core yang NYATANYA terpakai: masuk splitter ATAU kabel langsung.
+  // Digabung dengan assignment manual supaya core yang belum dicatat tetap muncul.
+  const feederRows = useMemo(() => {
+    const rows = new Map(feederCores.map((c) => [c.core, { core: c.core, assign: c }]));
+    for (const t of peta.trees) {
+      if (!rows.has(t.core)) rows.set(t.core, { core: t.core, assign: null });
+    }
+    for (const l of links) {
+      if (!rows.has(l.odc_core)) rows.set(l.odc_core, { core: l.odc_core, assign: null });
+    }
+    return [...rows.values()].sort((a, b) => a.core - b.core);
+  }, [feederCores, peta, links]);
 
   function openAdd() {
     setForm({ ...emptyLink, odc_id: odcId || odcs[0]?.id || "" });
@@ -302,7 +320,7 @@ export default function Mapping() {
             <div className="mb-3 flex items-center gap-2">
               <GitBranch size={16} className="text-violet-400" />
               <h2 className="font-semibold">Jalur Splitter (Topologi)</h2>
-              <span className="text-xs text-mut">— contoh pembacaan bertingkat: 1:4 → 1:8 → 1:8 (4:8:8)</span>
+              <span className="text-xs text-mut">— dibaca bertingkat mengikuti rantai splitter yang terpasang</span>
             </div>
 
             {(() => {
@@ -417,25 +435,50 @@ export default function Mapping() {
                     </tr>
                   </thead>
                   <tbody>
-                    {feederCores.map((c) => {
-                      const st = STATUS[c.status];
+                    {feederRows.map(({ core, assign }) => {
+                      const st = assign ? STATUS[assign.status] : null;
+                      const tree = treeByCore.get(core);
+                      const viaSplitter = ruteOdp.filter((r) => r.core === core);
+                      const terdeteksi = !!tree || linkedOdcCores.has(core);
                       return (
-                        <tr key={c.id} className="border-b border-line-soft last:border-0">
-                          <td className="td"><CoreChip core={c.core} cableType={cable} small /></td>
-                          <td className="td"><Badge cls={st.cls}>{st.label}</Badge></td>
-                          <td className="td text-mut">{c.destination || "-"}</td>
+                        <tr key={core} className="border-b border-line-soft last:border-0">
+                          <td className="td"><CoreChip core={core} cableType={cable} small /></td>
+                          <td className="td">
+                            <div className="flex flex-wrap items-center gap-1">
+                              {st
+                                ? <Badge cls={st.cls}>{st.label}</Badge>
+                                : <Badge cls="bg-slate-500/15 text-slate-300">Belum dicatat</Badge>}
+                              {terdeteksi && assign?.status !== "used" && (
+                                <Badge cls="bg-emerald-500/15 text-emerald-400">Terpakai · terdeteksi</Badge>
+                              )}
+                            </div>
+                          </td>
+                          <td className="td text-mut">{assign?.destination || "-"}</td>
                           <td className="td text-mut">
-                            {linkedOdcCores.has(c.core)
-                              ? (() => {
-                                  const l = links.find((x) => x.odc_core === c.core);
-                                  return `→ ${l.odp_name} core ${l.odp_core}`;
-                                })()
-                              : "belum tersambung"}
+                            {linkedOdcCores.has(core) && (() => {
+                              const l = links.find((x) => x.odc_core === core);
+                              return <div>→ {l.odp_name} core {l.odp_core} (kabel langsung)</div>;
+                            })()}
+                            {tree && (
+                              <div>
+                                via {tree.root.name} ({tree.root.ratio})
+                                {(() => {
+                                  const tujuan = [
+                                    ...viaSplitter.filter((r) => r.odpName).map((r) => r.odpName),
+                                    ...viaSplitter.filter((r) => r.odcAnakName).map((r) => `⇉ ${r.odcAnakName}`),
+                                  ];
+                                  return tujuan.length > 0
+                                    ? ` → ${tujuan.join(", ")}`
+                                    : " — output belum diarahkan";
+                                })()}
+                              </div>
+                            )}
+                            {!tree && !linkedOdcCores.has(core) && "belum tersambung"}
                           </td>
                         </tr>
                       );
                     })}
-                    {feederCores.length === 0 && (
+                    {feederRows.length === 0 && (
                       <tr><td className="td py-6 text-center text-mut" colSpan={4}>Belum ada core OLT → ODC terdata.</td></tr>
                     )}
                   </tbody>
@@ -461,7 +504,9 @@ export default function Mapping() {
                       </div>
                       <div className="mt-2 flex flex-wrap items-center gap-2">
                         <span className="text-mut">Core terpakai dari ODC:</span>
-                        {myLinks.length === 0 && <span className="text-mut">belum ada</span>}
+                        {myLinks.length === 0 && ruteOdp.filter((r) => r.odpId === p.id).length === 0 && (
+                          <span className="text-mut">belum ada</span>
+                        )}
                         {myLinks.map((l) => (
                           <span key={l.id} className="flex items-center gap-1">
                             <CoreChip core={l.odc_core} cableType={cable} small />
@@ -470,6 +515,14 @@ export default function Mapping() {
                           </span>
                         ))}
                       </div>
+                      {ruteOdp.filter((r) => r.odpId === p.id).map((r, i) => (
+                        <div key={`via-${i}`} className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                          <CoreChip core={r.core} cableType={cable} small />
+                          <span className="rounded-md border border-violet-500/40 bg-violet-500/10 px-1.5 py-0.5 text-[10px] text-violet-300">
+                            via {r.via.join(" → ")}
+                          </span>
+                        </div>
+                      ))}
                       {cores.length > 0 && (
                         <div className="mt-2 text-mut">
                           Assignment core ODP: {cores.map((c) => `${c.core} (${STATUS[c.status].label})`).join(", ")}

@@ -16,7 +16,10 @@
     "test": "npm run test:logic && npm run test:api && npm run test:layout"
   },
   "dependencies": {
+    "jspdf": "^4.2.1",
+    "jspdf-autotable": "^5.0.8",
     "lucide-react": "^0.575.0",
+    "pdfjs-dist": "^6.4.299",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-router-dom": "^7.13.0"
@@ -24,8 +27,8 @@
   "devDependencies": {
     "@tailwindcss/vite": "^4.2.1",
     "@vitejs/plugin-react": "^5.2.0",
+    "jsdom": "^27.0.0",
     "tailwindcss": "^4.2.1",
-    "vite": "^8.0.16",
-    "jsdom": "^27.0.0"
+    "vite": "^8.0.16"
   }
 }

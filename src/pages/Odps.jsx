@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Network, Pencil, Plus, Trash2 } from "lucide-react";
 import { api } from "../lib/api.js";
 import { useAuth } from "../lib/auth.jsx";
-import { Card, Field, Modal, PageHeader, Toast, useToast } from "../components/ui.jsx";
+import { Card, Field, Modal, PageHeader, SearchBox, Toast, matchesQuery, useToast } from "../components/ui.jsx";
 import CoreManager from "../components/CoreManager.jsx";
 import SplitterManager from "../components/SplitterManager.jsx";
 import { CABLE_TYPES, getCableInfo } from "../lib/fiber.js";
@@ -14,6 +14,7 @@ export default function Odps() {
   const canWrite = user.role === "admin" || user.role === "operator";
 
   const [odps, setOdps] = useState([]);
+  const [query, setQuery] = useState("");
   const [odcs, setOdcs] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [modal, setModal] = useState(null);
@@ -58,6 +59,9 @@ export default function Odps() {
   }
 
   const selected = odps.find((d) => d.id === selectedId);
+  const shownOdps = odps.filter((d) =>
+    matchesQuery(query, d.name, d.odc_name, d.location, getCableInfo(d.cable_type)?.label ?? d.cable_type),
+  );
 
   return (
     <div>
@@ -75,6 +79,18 @@ export default function Odps() {
         )}
       </PageHeader>
 
+      <div className="mb-3 flex flex-wrap items-center gap-3">
+        <SearchBox
+          value={query}
+          onChange={setQuery}
+          placeholder="Cari ODP (nama, ODC, lokasi, kabel)…"
+          className="w-full sm:max-w-xs"
+        />
+        {query && (
+          <span className="text-xs text-mut">{shownOdps.length} dari {odps.length} ODP</span>
+        )}
+      </div>
+
       <Card className="overflow-x-auto p-0">
         <table className="w-full">
           <thead className="border-b border-line">
@@ -88,7 +104,7 @@ export default function Odps() {
             </tr>
           </thead>
           <tbody>
-            {odps.map((d) => (
+            {shownOdps.map((d) => (
               <tr
                 key={d.id}
                 className={`cursor-pointer border-b border-line-soft last:border-0 hover:bg-panel2 ${d.id === selectedId ? "bg-panel2" : ""}`}
@@ -122,9 +138,11 @@ export default function Odps() {
                 )}
               </tr>
             ))}
-            {odps.length === 0 && (
+            {shownOdps.length === 0 && (
               <tr>
-                <td className="td py-8 text-center text-mut" colSpan={canWrite ? 6 : 5}>Belum ada ODP.</td>
+                <td className="td py-8 text-center text-mut" colSpan={canWrite ? 6 : 5}>
+                  {odps.length === 0 ? "Belum ada ODP." : `Tidak ada ODP yang cocok dengan "${query}".`}
+                </td>
               </tr>
             )}
           </tbody>

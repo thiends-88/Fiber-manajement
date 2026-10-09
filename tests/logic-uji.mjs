@@ -2,7 +2,7 @@
 // kabel. Dijalankan dengan: npm run test:logic
 import { getCableInfo, coresPerTube, colorForCoreInCable, SPLITTER_RATIOS, splitterPorts } from "../src/lib/fiber.js";
 import { buildTopologyGraph, buildUpstreamChains, EDGE_STYLE } from "../src/lib/topology.js";
-import { buildCoreRoutes } from "../src/lib/jalur-core.js";
+import { buildCoreRoutes, daftarRuteOdp } from "../src/lib/jalur-core.js";
 
 let lolos = 0;
 let gagal = 0;
@@ -322,6 +322,43 @@ cek(
   "tanpa data core → powerCores kosong (tidak error)",
   buildTopologyGraph({ olts, odcs, odps, splitters, links, feederPorts }).nodes.find((n) => n.id === "odp-1")?.powerCores?.length === 0,
 );
+
+// ---------------------------------------------------------------------------
+// daftarRuteOdp — rute pipih per tujuan (dipakai Laporan & deteksi core terpakai)
+// ---------------------------------------------------------------------------
+{
+  // Skenario lapangan: core 1 → SPL 1:4 → cascade SPL 1:4 → ODP (SPL 1:8)
+  const splBertingkat = [
+    { id: 1, odc_id: 10, odp_id: null, name: "SPL-A", ratio: "1:4", input_core: 1,
+      outputs: [{ port: 1, target_type: "splitter", target_splitter_id: 2 }] },
+    { id: 2, odc_id: 10, odp_id: null, name: "SPL-B", ratio: "1:4", input_core: null,
+      outputs: [{ port: 3, target_type: "odp", target_odp_id: 100 }] },
+    { id: 3, odc_id: null, odp_id: 100, name: "SPL ODP-X", ratio: "1:8", input_core: 1, outputs: [] },
+  ];
+  const odpX = [{ id: 100, odc_id: 10, name: "ODP-X", cable_type: "12_core_2_tube" }];
+  const petaX = buildCoreRoutes({ odcs: [{ id: 10 }], odps: odpX, splitters: splBertingkat, links: [], cores: [], odcId: 10 });
+  const ruteX = daftarRuteOdp(petaX.trees);
+  cek("daftarRuteOdp menemukan ODP di ujung cascade", ruteX.length === 1 && ruteX[0].odpId === 100, JSON.stringify(ruteX));
+  cek(
+    "jalur via berurutan lengkap dengan nomor output",
+    ruteX[0]?.via.join(" → ") === "SPL-A (1:4) out 1 → SPL-B (1:4) out 3",
+    ruteX[0]?.via.join(" → "),
+  );
+  cek("core sumber ikut terbawa di rute", ruteX[0]?.core === 1);
+
+  // Rute lewat ODC anak ikut terdata, dan pohon kosong tidak membuat rute palsu
+  const splKeAnak = [
+    { id: 1, odc_id: 10, odp_id: null, name: "SPL-A", ratio: "1:4", input_core: 2,
+      outputs: [{ port: 4, target_type: "odc", target_odc_id: 99 }] },
+  ];
+  const petaInduk = buildCoreRoutes({
+    odcs: [{ id: 10 }, { id: 99, name: "ODC-ANAK" }],
+    odps: [], splitters: splKeAnak, links: [], cores: [], odcId: 10,
+  });
+  const ruteInduk = daftarRuteOdp(petaInduk.trees);
+  cek("rute ke ODC anak tercatat dengan nama", ruteInduk.some((r) => r.odcAnakId === 99 && r.odcAnakName === "ODC-ANAK"), JSON.stringify(ruteInduk));
+  cek("daftarRuteOdp aman untuk masukan kosong", daftarRuteOdp([]).length === 0 && daftarRuteOdp().length === 0);
+}
 
 console.log(`\nLOGIKA: ${lolos} lolos, ${gagal} gagal`);
 if (gagal) process.exit(1);
