@@ -113,6 +113,7 @@ export default function Topologi() {
           splitters={data.splitters}
           links={data.links}
           feederPorts={data.feederPorts}
+          cores={data.cores}
         />
       ) : data.odcs.length === 0 ? (
         <Empty text="Belum ada ODC. Tambahkan OLT, ODC, dan ODP lebih dulu, lalu arahkan output splitter-nya." />
@@ -158,7 +159,10 @@ export default function Topologi() {
                     {peta.trees.map((t) => {
                       const status = t.feeder ? STATUS[t.feeder.status] : null;
                       return (
-                        <div key={`pohon-${t.core}`} className="rounded-xl border border-line bg-panel-soft p-3">
+                        <div
+                          key={`pohon-${t.root?.id ?? "?"}-${t.core}`}
+                          className="rounded-xl border border-line bg-panel-soft p-3"
+                        >
                           <div className="mb-2 flex flex-wrap items-center gap-2">
                             <CoreChip core={t.core} cableType={odc.cable_type} small />
                             {status && <Badge cls={status.cls}>{status.label}</Badge>}
@@ -188,7 +192,12 @@ export default function Topologi() {
                           <CoreChip core={l.odcCore} cableType={odc.cable_type} small />
                           <Arrow />
                           <span className="font-semibold text-emerald-300">{l.odpName}</span>
-                          <span className="text-mut">core {l.odpCore}</span>
+                          {/* core ODP ikut diberi warna dari kabel ODP itu sendiri */}
+                          <CoreChip
+                            core={l.odpCore}
+                            cableType={data.odps.find((p) => p.id === l.odpId)?.cable_type}
+                            small
+                          />
                           {l.notes && <span className="text-mut">· {l.notes}</span>}
                         </div>
                       ))}

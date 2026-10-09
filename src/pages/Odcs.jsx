@@ -240,8 +240,13 @@ export default function Odcs() {
               ))}
             </div>
           </Field>
-          <Field label="Lokasi">
-            <input className="input" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} />
+          <Field label="Lokasi / Koordinat">
+            <input
+              className="input"
+              value={form.location}
+              onChange={(e) => setForm({ ...form, location: e.target.value })}
+              placeholder="mis. Perempatan Kota atau -0.7893, 100.6512"
+            />
           </Field>
           <Field label="Catatan">
             <textarea className="input" rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />

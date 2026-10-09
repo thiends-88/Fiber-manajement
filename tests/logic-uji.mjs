@@ -251,5 +251,77 @@ cek("simpul sumber (OLT) → alur berisi dirinya sendiri", urutanJalur("olt-1")[
 cek("simpul tak dikenal → tanpa alur (tidak error)", buildUpstreamChains(graf, "odp-999").length === 0);
 cek("tanpa argumen → tanpa alur", buildUpstreamChains(graf, null).length === 0 && buildUpstreamChains(null, "odp-1").length === 0);
 
+// ---------------------------------------------------------------------------
+// Core "power" ODP: core milik kabel ODP sendiri yang jadi output ODP itu
+// ---------------------------------------------------------------------------
+console.log("\n=== UJI LOGIKA: core power ODP ===");
+
+// Fixture khusus: ODC dengan splitter ber-input core → dua ODP
+const odcPower = [{ id: 1, olt_id: 1, name: "ODC-001", cable_type: "24_core_4_tube" }];
+const odpPower = [
+  { id: 1, odc_id: 1, name: "ODP-001", cable_type: "8_core" },
+  { id: 2, odc_id: 1, name: "ODP-002", cable_type: "8_core" },
+];
+const splPower = [
+  {
+    id: 1, odc_id: 1, odp_id: null, name: "SPL-1", ratio: "1:4", input_core: 1,
+    outputs: [
+      { port: 1, target_type: "odp", target_odp_id: 1 },
+      { port: 2, target_type: "odp", target_odp_id: 2 },
+    ],
+  },
+];
+const coreOdp = [
+  { source: "odc_to_odp", odp_id: 1, core: 3, status: "used" },
+  { source: "odc_to_odp", odp_id: 1, core: 1, status: "idle" },
+  { source: "odc_to_odp", odp_id: 2, core: 2, status: "used" },
+  { source: "olt_to_odc", odc_id: 1, core: 1, status: "used" }, // bukan power ODP
+];
+const petaPower = buildCoreRoutes({ odcs: odcPower, odps: odpPower, splitters: splPower, links: [], cores: coreOdp, odcId: 1 });
+const cariOdp = (node, id) => {
+  if (!node) return null;
+  if (node.kind === "odp" && node.odpId === id) return node;
+  for (const c of node.children ?? []) {
+    const ketemu = cariOdp(c, id);
+    if (ketemu) return ketemu;
+  }
+  return null;
+};
+const odp1 = cariOdp(petaPower.trees[0]?.root, 1);
+
+cek("ODP di pohon jalur membawa core power-nya", Array.isArray(odp1?.powerCores) && odp1.powerCores.length === 2, JSON.stringify(odp1?.powerCores));
+cek("core power urut dari kecil", odp1?.powerCores?.map((c) => c.core).join(",") === "1,3", odp1?.powerCores?.map((c) => c.core).join(","));
+cek("status core power ikut terbawa", odp1?.powerCores?.[0]?.status === "idle" && odp1?.powerCores?.[1]?.status === "used");
+cek("core ODC (olt_to_odc) tidak dianggap power ODP", !odp1?.powerCores?.some((c) => c.core === 1 && c.status === "used"));
+cek("core power ODP lain tidak tertukar", cariOdp(petaPower.trees[0]?.root, 2)?.powerCores?.map((c) => c.core).join(",") === "2");
+
+// ODP yang belum punya core sama sekali
+const petaKosong = buildCoreRoutes({ odcs: odcPower, odps: odpPower, splitters: splPower, links: [], cores: [], odcId: 1 });
+cek("ODP tanpa core power → array kosong, bukan undefined", cariOdp(petaKosong.trees[0]?.root, 1)?.powerCores?.length === 0);
+
+// Beberapa splitter pada satu ODC boleh memakai input core yang sama
+// (kunci render harus menyertakan id splitter, bukan hanya nomor core)
+const splKembar = [
+  { id: 2, odc_id: 1, odp_id: null, name: "SPL-A", ratio: "1:4", input_core: 1, outputs: [{ port: 1, target_type: "odp", target_odp_id: 1 }] },
+  { id: 3, odc_id: 1, odp_id: null, name: "SPL-B", ratio: "1:8", input_core: 1, outputs: [{ port: 1, target_type: "odp", target_odp_id: 2 }] },
+  { id: 4, odc_id: 1, odp_id: null, name: "SPL-C", ratio: "1:8", input_core: 2, outputs: [] },
+];
+const petaKembar = buildCoreRoutes({ odcs: odcPower, odps: odpPower, splitters: splKembar, links: [], cores: coreOdp, odcId: 1 });
+cek("beberapa splitter ber-input core sama tetap jadi semua pohon", petaKembar.trees.length === 3, `dapat ${petaKembar.trees.length} pohon`);
+cek("nomor core boleh berulang antar pohon", petaKembar.trees.filter((t) => t.core === 1).length === 2);
+cek("kunci unik tiap pohon tersedia (id splitter + core)", new Set(petaKembar.trees.map((t) => `${t.root.id}-${t.core}`)).size === 3);
+
+const grafPower = buildTopologyGraph({ olts, odcs, odps, splitters, links, feederPorts, cores: coreOdp });
+const simpulOdp1 = grafPower.nodes.find((n) => n.id === "odp-1");
+cek(
+  "simpul ODP di diagram membawa warna core power",
+  simpulOdp1?.powerCores?.length === 2 && simpulOdp1.powerCores.every((c) => /^#[0-9a-f]{6}$/i.test(c.hex)) && simpulOdp1.powerCores.every((c) => typeof c.colorName === "string"),
+  JSON.stringify(simpulOdp1?.powerCores),
+);
+cek(
+  "tanpa data core → powerCores kosong (tidak error)",
+  buildTopologyGraph({ olts, odcs, odps, splitters, links, feederPorts }).nodes.find((n) => n.id === "odp-1")?.powerCores?.length === 0,
+);
+
 console.log(`\nLOGIKA: ${lolos} lolos, ${gagal} gagal`);
 if (gagal) process.exit(1);

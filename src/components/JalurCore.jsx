@@ -1,6 +1,6 @@
 import { ArrowRight } from "lucide-react";
 import { Badge } from "./ui.jsx";
-import { colorForCoreInCable, coresPerTube } from "../lib/fiber.js";
+import { STATUS, colorForCoreInCable, coresPerTube } from "../lib/fiber.js";
 
 /**
  * Komponen gambar "alur core" — dipakai bersama oleh halaman Alur Core
@@ -100,6 +100,33 @@ export function PohonJalur({ node, feed }) {
           <span className="text-mut">{node.location || "lokasi belum diisi"}</span>
           <FeedChip feed={feed} />
         </div>
+        {/* Core milik kabel ODP sendiri yang dipakai sebagai power/output.
+            Kabel bisa berlanjut OLT → ODC → ODP dengan core berbeda, jadi
+            warnanya dihitung dari tipe kabel ODP, bukan dari ODC asal. */}
+        {node.powerCores?.length > 0 && (
+          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+            <span className="text-[11px] text-mut">Core power ODP:</span>
+            {node.powerCores.map((pc) => {
+              const warna = colorForCoreInCable(pc.core, coresPerTube(node.cableType));
+              return (
+                <span
+                  key={pc.core}
+                  className="inline-flex items-center gap-1 rounded-md border border-line bg-panel2 px-1.5 py-0.5 text-[11px]"
+                >
+                  <span
+                    className="inline-block h-2 w-2 shrink-0 rounded-full border border-black/30"
+                    style={{ background: warna.hex }}
+                    title={warna.name}
+                  />
+                  <span className="font-medium">core {pc.core}</span>
+                  <span className="text-mut">
+                    · {warna.name} · {STATUS[pc.status]?.label ?? pc.status}
+                  </span>
+                </span>
+              );
+            })}
+          </div>
+        )}
         {node.insideSplitters.length > 0 && (
           <div className="mt-1 text-[11px] text-mut">
             Splitter di dalam ODP: {node.insideSplitters.map((s) => `${s.name} (${s.ratio})`).join(" · ")}

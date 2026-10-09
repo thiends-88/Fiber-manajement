@@ -38,6 +38,7 @@ export function buildTopologyGraph({
   splitters = [],
   links = [],
   feederPorts = [],
+  cores = [],
 } = {}) {
   const nodes = [];
   const edges = [];
@@ -75,6 +76,16 @@ export function buildTopologyGraph({
       kind: "odp",
       title: truncate(p.name, 20),
       sub: truncate(getCableInfo(p.cable_type)?.label ?? p.cable_type ?? "ODP", 24),
+      // Core kabel ODP sendiri yang dipakai sebagai power/output ODP itu.
+      powerCores: cores
+        .filter((c) => c.source === "odc_to_odp" && Number(c.odp_id) === Number(p.id))
+        .map((c) => ({
+          core: Number(c.core),
+          status: c.status ?? "idle",
+          hex: colorForCoreInCable(Number(c.core), coresPerTube(p.cable_type)).hex,
+          colorName: colorForCoreInCable(Number(c.core), coresPerTube(p.cable_type)).name,
+        }))
+        .sort((a, b) => a.core - b.core),
     }),
   );
   splitters.forEach((s) => {

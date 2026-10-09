@@ -2,18 +2,19 @@ import { useEffect, useMemo, useState } from "react";
 import { GitBranch, Maximize2, Minus, Plus, Tag, X } from "lucide-react";
 import { EDGE_STYLE, NODE_H, NODE_STYLE, NODE_W, buildTopologyGraph, buildUpstreamChains } from "../lib/topology.js";
 import { Badge, Card, Empty } from "./ui.jsx";
+import { STATUS } from "../lib/fiber.js";
 
 const ZOOMS = [0.6, 0.75, 0.9, 1, 1.15, 1.3, 1.5];
 
 /** Diagram alur jaringan: OLT → ODC → splitter → ODP (bisa bertingkat). */
-export default function TopologiDiagram({ olts, odcs, odps, splitters, links, feederPorts }) {
+export default function TopologiDiagram({ olts, odcs, odps, splitters, links, feederPorts, cores = [] }) {
   const [selected, setSelected] = useState(null);
   const [zoom, setZoom] = useState(1);
   const [labels, setLabels] = useState(true);
 
   const graph = useMemo(
-    () => buildTopologyGraph({ olts, odcs, odps, splitters, links, feederPorts }),
-    [olts, odcs, odps, splitters, links, feederPorts],
+    () => buildTopologyGraph({ olts, odcs, odps, splitters, links, feederPorts, cores }),
+    [olts, odcs, odps, splitters, links, feederPorts, cores],
   );
 
   // Alur core ke hulu dari simpul terpilih (OLT → … → simpul ini)
@@ -247,6 +248,27 @@ export default function TopologiDiagram({ olts, odcs, odps, splitters, links, fe
                     <span className="font-medium">Core {c.core}</span>
                     <span className="text-mut">
                       · {c.colorName} · {c.odcName} · {c.port != null ? `out ${c.port}` : "sambungan langsung"}
+                    </span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Core milik kabel ODP sendiri yang dipakai sebagai power/output ODP */}
+          {node.kind === "odp" && node.powerCores?.length > 0 && (
+            <div className="mt-3">
+              <div className="mb-1 text-xs font-semibold">Core power ODP (kabel ODP sendiri)</div>
+              <div className="flex flex-wrap gap-1.5">
+                {node.powerCores.map((c) => (
+                  <span
+                    key={c.core}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-line bg-panel2 px-2 py-0.5 text-[11px]"
+                  >
+                    <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-full border border-black/30" style={{ background: c.hex }} />
+                    <span className="font-medium">Core {c.core}</span>
+                    <span className="text-mut">
+                      · {c.colorName} · {STATUS[c.status]?.label ?? c.status}
                     </span>
                   </span>
                 ))}
