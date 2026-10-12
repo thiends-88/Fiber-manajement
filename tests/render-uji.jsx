@@ -13,7 +13,7 @@ const ROUTES = [
   ["/", ["Alur Core", "SPL-1"]], // halaman utama: pohon jalur core benar-benar tergambar
   ["/dashboard", "Core Terdaftar"],
   ["/olt", "OLT-PST-01"],
-  ["/odc", ["ODC-001", "ODC anak"]], // badge ODC anak harus tampil
+  ["/odc", ["ODC-001", "ODC anak", "Splitter di ODC-001", "Tahap 2", "SPL-2"]], // buka ODC dan cek cascade bertingkat
   ["/odp", "ODP-001"],
   ["/mapping", "Sambungan Kabel Langsung"],
   ["/laporan", "OLT-PST-01"],
@@ -54,6 +54,11 @@ export async function run(tunggu = 1200) {
         </MemoryRouter>,
       );
       await new Promise((r) => setTimeout(r, tunggu));
+      if (route === "/odc") {
+        const odcRow = [...div.querySelectorAll("tbody tr")].find((row) => row.textContent.includes("ODC-001"));
+        odcRow?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+        await new Promise((r) => setTimeout(r, 300));
+      }
     } catch (e) {
       thrown = e;
     }

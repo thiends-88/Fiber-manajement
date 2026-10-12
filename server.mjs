@@ -202,6 +202,17 @@ for (const stmt of MIGRATIONS) {
   try { db.exec(stmt); } catch { /* kolom/tabel sudah ada */ }
 }
 
+// Splitter yang sudah menjadi tujuan cascade bukan akar core langsung.
+// Rapikan data lama agar input-nya hanya mengikuti output splitter induk.
+db.exec(`
+  UPDATE splitters
+  SET input_core=NULL, input_note=NULL
+  WHERE id IN (
+    SELECT target_splitter_id FROM splitter_outputs
+    WHERE target_type='splitter' AND target_splitter_id IS NOT NULL
+  )
+`);
+
 // ---------------------------------------------------------------------------
 // Bersih-bersih: kolom hitungan redaman/daya sudah TIDAK dipakai lagi.
 // Aplikasi ini memetakan ALUR CORE saja (OLT → ODC → ODP), jadi kolom daya
@@ -1257,8 +1268,19 @@ const server = http.createServer(async (req, res) => {
         if (!isOptionalText(b.input_note) || !isOptionalText(b.notes)) {
           return send(req, res, 400, { error: "Keterangan input dan catatan harus berupa teks" });
         }
+        const cascadeParent = db.prepare(
+          "SELECT id FROM splitter_outputs WHERE target_type='splitter' AND target_splitter_id=? LIMIT 1",
+        ).get(id);
         db.prepare("UPDATE splitters SET name=?, ratio=?, input_core=?, input_note=?, notes=?, updated_at=? WHERE id=?")
-          .run(b.name.trim(), b.ratio, inputCore == null ? null : Number(inputCore), b.input_note || null, b.notes || null, now(), id);
+          .run(
+            b.name.trim(),
+            b.ratio,
+            cascadeParent || inputCore == null ? null : Number(inputCore),
+            cascadeParent ? null : b.input_note || null,
+            b.notes || null,
+            now(),
+            id,
+          );
         syncSplitterPorts(id, b.ratio);
         return send(req, res, 200, getSplitter(id));
       }
@@ -1313,11 +1335,21 @@ const server = http.createServer(async (req, res) => {
         } else if (targetType === "splitter") {
           if (!validPositiveInt(b.target_id)) return send(req, res, 400, { error: "Splitter tujuan tidak valid" });
           splId = Number(b.target_id);
-          if (!db.prepare("SELECT id FROM splitters WHERE id=?").get(splId)) {
-            return send(req, res, 400, { error: "Splitter tujuan tidak ditemukan" });
-          }
+          const source = db.prepare("SELECT id, odc_id, odp_id FROM splitters WHERE id=?").get(out.splitter_id);
+          const destination = db.prepare("SELECT id, odc_id, odp_id FROM splitters WHERE id=?").get(splId);
+          if (!destination) return send(req, res, 400, { error: "Splitter tujuan tidak ditemukan" });
           if (splId === out.splitter_id) {
             return send(req, res, 400, { error: "Splitter tidak bisa di-cascade ke dirinya sendiri" });
+          }
+          const sameOdc = source?.odc_id != null && destination.odc_id != null && Number(source.odc_id) === Number(destination.odc_id);
+          const sameOdp = source?.odp_id != null && destination.odp_id != null && Number(source.odp_id) === Number(destination.odp_id);
+          if (!sameOdc && !sameOdp) {
+            return send(req, res, 400, { error: "Cascade hanya boleh menghubungkan splitter dalam ODC/ODP yang sama; gunakan tujuan ODP atau ODC anak untuk keluar lokasi" });
+          }
+          if (db.prepare(
+            "SELECT id FROM splitter_outputs WHERE target_type='splitter' AND target_splitter_id=? AND id<>? LIMIT 1",
+          ).get(splId, id)) {
+            return send(req, res, 409, { error: "Splitter tujuan sudah menerima input dari output lain" });
           }
           if (splitterReaches(splId, out.splitter_id)) {
             return send(req, res, 400, { error: "Cascade akan membentuk lingkaran antar-splitter" });
@@ -1334,6 +1366,22 @@ const server = http.createServer(async (req, res) => {
       }
       db.prepare("UPDATE splitter_outputs SET target_type=?, target_odp_id=?, target_splitter_id=?, target_odc_id=?, notes=? WHERE id=?")
         .run(targetType, odpId, splId, odcId, notes || null, id);
+
+      // Input splitter lanjutan berasal dari output cascade, bukan dari core OLT.
+      if (targetType === "splitter" && splId != null) {
+        db.prepare("UPDATE splitters SET input_core=NULL, input_note=NULL, updated_at=? WHERE id=?")
+          .run(now(), splId);
+      }
+      // Jika cascade lama dilepas, splitter yang ditinggalkan tidak lagi punya input turunan.
+      if (out.target_splitter_id && (targetType !== "splitter" || Number(out.target_splitter_id) !== Number(splId))) {
+        const parentLain = db.prepare(
+          "SELECT id FROM splitter_outputs WHERE target_type='splitter' AND target_splitter_id=? AND id<>? LIMIT 1",
+        ).get(out.target_splitter_id, id);
+        if (!parentLain) {
+          db.prepare("UPDATE splitters SET input_core=NULL, input_note=NULL, updated_at=? WHERE id=?")
+            .run(now(), out.target_splitter_id);
+        }
+      }
       return send(req, res, 200, db.prepare(
         `SELECT o.*,
            CASE WHEN o.target_odp_id IS NOT NULL THEN 'odp'

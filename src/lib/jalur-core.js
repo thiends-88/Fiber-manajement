@@ -33,12 +33,25 @@ export function buildCoreRoutes({
 
   const splById = new Map(splitters.map((s) => [s.id, s]));
 
-  // Akar pohon = splitter di ODC ini yang diumpan core kabel (input_core
-  // terisi). Splitter tanpa input_core hanya bisa dicapai lewat cascade.
-  // (Bila sebuah splitter sekaligus menjadi tujuan cascade — data abnormal —
-  // pengaman `visitedSpl` di bawah mencegah loop tak hingga.)
-  const akar = splitters
-    .filter((s) => Number(s.odc_id) === target && s.input_core != null && s.input_core !== "")
+  // Akar pohon = splitter di ODC ini yang menerima core kabel langsung.
+  // Splitter yang sudah menjadi tujuan cascade selalu dianggap tahap lanjutan,
+  // meski data lama masih menyimpan input_core pada splitter itu.
+  const cascadeInputs = new Set();
+  for (const s of splitters) {
+    for (const o of s.outputs || []) {
+      if (o.target_type === "splitter" && o.target_splitter_id != null) {
+        cascadeInputs.add(Number(o.target_splitter_id));
+      }
+    }
+  }
+  const calonAkar = splitters.filter(
+    (s) => Number(s.odc_id) === target && s.input_core != null && s.input_core !== "",
+  );
+  // Bila data lama rusak membentuk siklus tanpa akar, mulai dari input_core
+  // yang tersedia agar jalur tetap tampil dan berhenti dengan penanda terputus.
+  const akar = (calonAkar.filter((s) => !cascadeInputs.has(Number(s.id))).length
+    ? calonAkar.filter((s) => !cascadeInputs.has(Number(s.id)))
+    : calonAkar)
     .sort((a, b) => Number(a.input_core) - Number(b.input_core) || a.id - b.id);
 
   // Data core feeder (status, daya) untuk ditempelkan ke pohon per core
@@ -125,7 +138,7 @@ export function buildCoreRoutes({
       viaPort: viaPort ?? null,
       name: s.name,
       ratio: s.ratio,
-      inputCore: s.input_core ?? null,
+      inputCore: viaPort == null ? s.input_core ?? null : null,
       odcId: s.odc_id ?? null,
       children,
       idlePorts,
