@@ -195,7 +195,7 @@ const warnaSpl = [
     ],
   },
   {
-    id: 2, odc_id: 1, odp_id: null, name: "SPL-B", ratio: "1:2", input_core: null,
+    id: 2, odc_id: 1, odp_id: null, name: "SPL-B", ratio: "1:2", input_core: 2, // data lama: cascade harus mengalahkan input core langsung
     outputs: [{ port: 1, target_type: "odp", target_odp_id: 2 }],
   },
   { id: 3, odc_id: 1, odp_id: null, name: "SPL-C", ratio: "1:2", input_core: null, outputs: [] },
@@ -331,13 +331,15 @@ cek(
   const splBertingkat = [
     { id: 1, odc_id: 10, odp_id: null, name: "SPL-A", ratio: "1:4", input_core: 1,
       outputs: [{ port: 1, target_type: "splitter", target_splitter_id: 2 }] },
-    { id: 2, odc_id: 10, odp_id: null, name: "SPL-B", ratio: "1:4", input_core: null,
+    { id: 2, odc_id: 10, odp_id: null, name: "SPL-B", ratio: "1:4", input_core: 1, // data lama; input cascade harus menang
       outputs: [{ port: 3, target_type: "odp", target_odp_id: 100 }] },
     { id: 3, odc_id: null, odp_id: 100, name: "SPL ODP-X", ratio: "1:8", input_core: 1, outputs: [] },
   ];
   const odpX = [{ id: 100, odc_id: 10, name: "ODP-X", cable_type: "12_core_2_tube" }];
   const petaX = buildCoreRoutes({ odcs: [{ id: 10 }], odps: odpX, splitters: splBertingkat, links: [], cores: [], odcId: 10 });
   const ruteX = daftarRuteOdp(petaX.trees);
+  cek("cascade 1:4 awal → 1:4 kedua tetap satu pohon bertingkat", petaX.trees.length === 1 && petaX.trees[0]?.root?.children[0]?.name === "SPL-B");
+  cek("input core lama pada splitter cascade tidak tampil sebagai input langsung", petaX.trees[0]?.root?.children[0]?.inputCore == null);
   cek("daftarRuteOdp menemukan ODP di ujung cascade", ruteX.length === 1 && ruteX[0].odpId === 100, JSON.stringify(ruteX));
   cek(
     "jalur via berurutan lengkap dengan nomor output",

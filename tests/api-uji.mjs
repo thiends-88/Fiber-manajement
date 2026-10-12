@@ -301,6 +301,13 @@ async function main() {
   const splDiOdpId = splDiOdp.data?.id;
   cek("splitter boleh juga di DALAM ODP → 201", splDiOdp.status === 201 && splDiOdp.data?.outputs?.length === 8);
 
+  const cascadeLintasLokasi = await PATCH(
+    `/api/splitter-outputs/${splInduk.data?.outputs?.[1].id}`,
+    { target_type: "splitter", target_id: splDiOdpId },
+    admin,
+  );
+  cek("cascade dari ODC ke splitter di ODP lain ditolak → 400", cascadeLintasLokasi.status === 400);
+
   // cascade: output SPL-UJI-1 #1 → SPL-UJI-2
   const outCascade = splInduk.data?.outputs?.[0];
   const cascade = await PATCH(
@@ -309,6 +316,11 @@ async function main() {
     admin,
   );
   cek("cascade splitter (1:4 → 1:8) → 200", cascade.status === 200 && cascade.data?.target_type === "splitter", `status ${cascade.status}`);
+  const setelahCascade = await GET(`/api/splitters?odc_id=${odcId}`, admin);
+  const anakCascade = setelahCascade.data?.find((s) => s.id === splAnakId);
+  cek("splitter tahap lanjutan otomatis tidak lagi mengaku input langsung dari core OLT", anakCascade?.input_core == null && anakCascade?.input_note == null);
+  const editInputCascade = await PATCH(`/api/splitters/${splAnakId}`, { name: "SPL-UJI-2", ratio: "1:8", input_core: 1, input_note: "Core langsung" }, admin);
+  cek("edit tahap cascade tetap mewarisi input induk (input_core tetap null)", editInputCascade.status === 200 && editInputCascade.data?.input_core == null);
 
   const cascadeSendiri = await PATCH(
     `/api/splitter-outputs/${outCascade.id}`,
@@ -324,6 +336,12 @@ async function main() {
     admin,
   );
   cek("cascade ke splitter lain → 200", cascadeKeSiklus.status === 200, `status ${cascadeKeSiklus.status}`);
+  const cascadeInputGanda = await PATCH(
+    `/api/splitter-outputs/${splAnak.data?.outputs?.[1].id}`,
+    { target_type: "splitter", target_id: splSiklus.data?.id },
+    admin,
+  );
+  cek("splitter lanjutan hanya boleh memiliki satu input cascade → 409", cascadeInputGanda.status === 409);
   const cascadeMelingkar = await PATCH(
     `/api/splitter-outputs/${splSiklus.data?.outputs?.[0].id}`,
     { target_type: "splitter", target_id: splIndukId },

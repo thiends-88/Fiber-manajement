@@ -41,7 +41,10 @@ lapangan.
    tanpa splitter) dipisahkan di bawah pohon supaya tidak tercampur.
 6. **Splitter bertingkat** — pilih rasio **1:2 / 1:4 / 1:8 / 1:16 / 1:32**,
    ditempatkan **di dalam ODC maupun di dalam ODP**. Setiap output splitter bisa
-   diarahkan **ke ODP**, **di-cascade ke splitter lain**, atau **ke ODC anak**.
+   diarahkan **ke ODP**, **di-cascade ke splitter berikutnya dalam ODC/ODP yang
+   sama**, atau **ke ODC anak**. Daftar splitter ditampilkan sebagai jenjang
+   bersarang (mis. **1:4 awal → output 1 → 1:4 kedua**); input core tahap lanjutan
+   mengikuti induknya otomatis sehingga tidak dihitung sebagai core feeder baru.
    Topologi splitter bertingkat (mis. OLT → SPL 1:4 → SPL 1:8 di dalam ODC →
    ODP dengan SPL 1:8) bisa dimodelkan penuh, dan aplikasi otomatis membaca
    rantainya sesuai rasio splitter yang terpasang.

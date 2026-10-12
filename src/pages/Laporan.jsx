@@ -54,7 +54,11 @@ function PratinjauPdf({ bytes }) {
         setErr("");
         const pdfjs = await import("pdfjs-dist");
         const worker = await import("pdfjs-dist/build/pdf.worker.min.mjs?url");
-        pdfjs.GlobalWorkerOptions.workerSrc = worker.default;
+        // Vite development can emit an absolute worker URL on the sandbox's
+        // private IP. Rebase only the path onto the browser-visible app origin
+        // so the preview iframe can fetch the module same-origin.
+        const workerAsset = new URL(worker.default, window.location.href);
+        pdfjs.GlobalWorkerOptions.workerSrc = `${window.location.origin}${workerAsset.pathname}${workerAsset.search}`;
         const pdf = await pdfjs.getDocument({ data: bytes.slice(0) }).promise;
         if (batal) return;
         const host = hostRef.current;

@@ -133,16 +133,17 @@ export function buildTopologyGraph({
     if (feedBusy.has(sid)) return null; // pengaman bila cascade membentuk lingkaran
     feedBusy.add(sid);
     let feed = null;
-    if (hasCore(s.input_core)) {
-      feed = { odcId: Number(s.odc_id), core: Number(s.input_core) };
-    } else {
-      for (const p of parentsOf.get(sid) ?? []) {
+    const cascadeParents = parentsOf.get(sid) ?? [];
+    if (cascadeParents.length > 0) {
+      for (const p of cascadeParents) {
         const f = feedOf(p);
         if (f && f.odcId === Number(s.odc_id)) {
           feed = f;
           break;
         }
       }
+    } else if (hasCore(s.input_core)) {
+      feed = { odcId: Number(s.odc_id), core: Number(s.input_core) };
     }
     feedBusy.delete(sid);
     feedCache.set(sid, feed);
@@ -187,13 +188,12 @@ export function buildTopologyGraph({
   // berwarna). Splitter tanpa induk tetap digambar ke ODC agar tidak mengambang.
   splitters.forEach((s) => {
     const f = feedOf(s);
-    const label = hasCore(s.input_core) ? `core ${s.input_core}` : f ? `core ${f.core}` : "core belum diisi";
     const punyaInduk = (parentsOf.get(Number(s.id)) ?? []).length > 0;
-    if (s.odc_id) {
-      if (hasCore(s.input_core) || !punyaInduk) {
-        addEdge(`odc-${s.odc_id}`, `spl-${s.id}`, "feed", label, colorOfFeed(f));
-      }
-    } else if (s.odp_id) {
+    const punyaInputCoreLangsung = !punyaInduk && hasCore(s.input_core);
+    const label = punyaInputCoreLangsung ? `core ${s.input_core}` : f ? `core ${f.core}` : "core belum diisi";
+    if (s.odc_id && !punyaInduk) {
+      addEdge(`odc-${s.odc_id}`, `spl-${s.id}`, "feed", label, colorOfFeed(f));
+    } else if (s.odp_id && !punyaInduk) {
       addEdge(`odp-${s.odp_id}`, `spl-${s.id}`, "feed", label);
     }
   });

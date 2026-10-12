@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { GitBranch, Pencil, Plus, Trash2 } from "lucide-react";
 import { api } from "../lib/api.js";
 import { useAuth } from "../lib/auth.jsx";
@@ -13,6 +13,12 @@ const RATIO_CLS = {
   "1:8": "bg-amber-500/15 text-amber-300",
   "1:16": "bg-fuchsia-500/15 text-fuchsia-300",
   "1:32": "bg-rose-500/15 text-rose-300",
+};
+
+const sameEnclosure = (a, b) => {
+  if (a?.odc_id != null) return b?.odc_id != null && Number(a.odc_id) === Number(b.odc_id);
+  if (a?.odp_id != null) return b?.odp_id != null && Number(a.odp_id) === Number(b.odp_id);
+  return false;
 };
 
 /**
@@ -43,6 +49,31 @@ export default function SplitterManager({ parentType, parentId, title }) {
     ? odcs.find((d) => d.id === Number(parentId))
     : odps.find((d) => d.id === Number(parentId));
   const inputCoreMax = getCableInfo(parent?.cable_type)?.cores;
+  const { childrenById, cascadeParentById, treeRoots } = useMemo(() => {
+    const byId = new Map(splitters.map((sp) => [Number(sp.id), sp]));
+    const children = new Map(splitters.map((sp) => [Number(sp.id), []]));
+    const parents = new Map();
+
+    for (const sp of splitters) {
+      for (const output of sp.outputs || []) {
+        if (output.target_type !== "splitter" || !output.target_splitter_id) continue;
+        const child = byId.get(Number(output.target_splitter_id));
+        if (!child) continue;
+        children.get(Number(sp.id))?.push({ splitter: child, port: output.port });
+        if (!parents.has(Number(child.id))) parents.set(Number(child.id), { splitter: sp, port: output.port });
+      }
+    }
+    for (const list of children.values()) list.sort((a, b) => Number(a.port) - Number(b.port));
+
+    const roots = splitters
+      .filter((sp) => !parents.has(Number(sp.id)))
+      .sort((a, b) => {
+        const coreA = a.input_core == null ? Number.POSITIVE_INFINITY : Number(a.input_core);
+        const coreB = b.input_core == null ? Number.POSITIVE_INFINITY : Number(b.input_core);
+        return coreA - coreB || String(a.name).localeCompare(String(b.name), "id");
+      });
+    return { childrenById: children, cascadeParentById: parents, treeRoots: roots };
+  }, [splitters]);
 
   const load = useCallback(async () => {
     const [mine, o, all, ds] = await Promise.all([
@@ -134,6 +165,113 @@ export default function SplitterManager({ parentType, parentId, title }) {
           ? `⇄ ${o.target_splitter_name}`
           : null;
 
+  const renderSplitterTree = (sp, level = 1, via = null, path = new Set()) => {
+    const id = Number(sp.id);
+    if (path.has(id)) {
+      return (
+        <div key={`cascade-loop-${id}`} className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-2 text-xs text-amber-300">
+          Rantai cascade berputar kembali ke {sp.name}; periksa sambungan output.
+        </div>
+      );
+    }
+    const nextPath = new Set(path);
+    nextPath.add(id);
+    const children = childrenById.get(id) || [];
+    const assigned = (sp.outputs || []).filter((o) => o.target_type).length;
+    const inputLabel = via
+      ? `Masuk dari ${via.parent.name} · out ${via.port}`
+      : sp.input_core
+        ? `Input core ${sp.input_core}${sp.input_note ? ` · ${sp.input_note}` : ""}`
+        : "Input belum diisi";
+
+    return (
+      <div key={`splitter-tree-${sp.id}`}>
+        <div className="rounded-xl border border-line bg-panel-soft p-3">
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <Badge cls="bg-violet-500/15 text-violet-300">Tahap {level}</Badge>
+            <span className="font-semibold">{sp.name}</span>
+            <Badge cls={RATIO_CLS[sp.ratio] || "bg-slate-500/15 text-slate-300"}>Splitter {sp.ratio}</Badge>
+            <Badge cls={via ? "bg-violet-500/15 text-violet-300" : "bg-slate-500/15 text-slate-300"}>{inputLabel}</Badge>
+            <span className="text-mut">{assigned}/{sp.outputs.length} output terarah</span>
+            {canWrite && (
+              <span className="ml-auto flex gap-1">
+                <button
+                  className="btn px-2 py-1"
+                  title="Edit splitter"
+                  onClick={() => {
+                    const cascadeParent = cascadeParentById.get(Number(sp.id));
+                    setForm({
+                      name: sp.name,
+                      ratio: sp.ratio,
+                      input_core: cascadeParent ? "" : sp.input_core ?? "",
+                      input_note: cascadeParent ? "" : sp.input_note || "",
+                      notes: sp.notes || "",
+                    });
+                    setModal({ mode: "edit", splitter: sp });
+                  }}
+                >
+                  <Pencil size={13} />
+                </button>
+                {!isOdp && (
+                  <button className="btn px-2 py-1 text-red-400" title="Hapus splitter" onClick={() => remove(sp)}>
+                    <Trash2 size={13} />
+                  </button>
+                )}
+              </span>
+            )}
+          </div>
+
+          {sp.notes && <div className="mt-1 text-[11px] text-mut">Catatan: {sp.notes}</div>}
+
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {(sp.outputs || []).map((o) => {
+              const label = targetLabel(o);
+              const cls = o.target_type === "odp"
+                ? "border-emerald-500/60 bg-emerald-500/10 text-emerald-300"
+                : o.target_type === "odc"
+                  ? "border-sky-500/60 bg-sky-500/10 text-sky-300"
+                  : o.target_type === "splitter"
+                    ? "border-violet-500/60 bg-violet-500/10 text-violet-300"
+                    : "border-dashed border-line text-mut";
+              return (
+                <button
+                  key={o.id}
+                  disabled={!canWrite}
+                  onClick={() => openOutput(sp, o)}
+                  title={`Output ${o.port}${label ? ` → ${label.replace("⇄ ", "")}` : " (belum diarahkan)"}${o.notes ? ` · ${o.notes}` : ""}`}
+                  className={`rounded-lg border px-2 py-1 text-[11px] transition hover:brightness-125 ${cls}`}
+                >
+                  <span className="font-semibold">out {o.port}</span>
+                  {label ? <span className="ml-1">{label}</span> : <span className="ml-1">kosong</span>}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {children.length > 0 && (
+          <div className="ml-4 mt-2 space-y-2 border-l-2 border-violet-500/40 pl-3">
+            {children.map(({ splitter: child, port }) =>
+              renderSplitterTree(child, level + 1, { parent: sp, port }, nextPath),
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+  const editingCascadeParent = modal?.mode === "edit"
+    ? cascadeParentById.get(Number(modal.splitter.id)) || null
+    : null;
+  const cascadeTargets = outModal
+    ? allSplitters.filter((sp) => Number(sp.id) !== Number(outModal.splitter.id) && sameEnclosure(outModal.splitter, sp))
+    : [];
+  const selectedCascadeTarget = outForm.target_type === "splitter"
+    ? allSplitters.find((sp) => Number(sp.id) === Number(outForm.target_id))
+    : null;
+  const legacyCascadeTarget = selectedCascadeTarget && !cascadeTargets.some((sp) => Number(sp.id) === Number(selectedCascadeTarget.id))
+    ? selectedCascadeTarget
+    : null;
+
   return (
     <div>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -143,7 +281,7 @@ export default function SplitterManager({ parentType, parentId, title }) {
           <span className="text-xs font-normal text-mut">
             {isOdp
               ? "— splitter 1:8 bawaan ODP (otomatis & permanen)"
-              : "— output bisa ke ODP, di-cascade ke splitter lain (bertingkat di ODC yang sama), atau ke ODC anak"}
+              : "— susun tahap splitter lewat cascade dalam ODC yang sama, lalu arahkan ke ODP atau ODC anak"}
           </span>
         </h2>
         {canWrite && !isOdp && (
@@ -158,80 +296,20 @@ export default function SplitterManager({ parentType, parentId, title }) {
           text={
             isOdp
               ? "Splitter 1:8 bawaan ODP sedang disiapkan — muat ulang halaman bila belum tampil."
-              : "Belum ada splitter. Tambahkan splitter lalu arahkan output-nya ke ODP, di-cascade ke splitter lain, atau ke ODC anak."
+              : "Belum ada splitter. Tambahkan tahap awal, lalu arahkan salah satu output ke splitter lanjutan (mis. 1:4 → 1:4) atau ke ODP."
           }
         />
       )}
 
+      {splitters.length > 0 && !isOdp && (
+        <div className="mb-2 flex items-center gap-2 text-[11px] text-mut">
+          <GitBranch size={13} className="text-violet-400" />
+          Tahap lanjutan ditampilkan bertingkat di bawah splitter induk. Klik chip <span className="font-semibold text-violet-300">out N</span> untuk menyambungkan splitter berikutnya.
+        </div>
+      )}
+
       <div className="space-y-3">
-        {splitters.map((sp) => {
-          const assigned = sp.outputs.filter((o) => o.target_type).length;
-          return (
-            <div key={sp.id} className="rounded-xl border border-line bg-panel-soft p-3">
-              <div className="flex flex-wrap items-center gap-2 text-xs">
-                <span className="font-semibold">{sp.name}</span>
-                <Badge cls={RATIO_CLS[sp.ratio] || "bg-slate-500/15 text-slate-300"}>Splitter {sp.ratio}</Badge>
-                <Badge cls="bg-slate-500/15 text-slate-300">
-                  {sp.input_core ? `Input core ${sp.input_core}` : "Input belum diisi"}
-                  {sp.input_note ? ` · ${sp.input_note}` : ""}
-                </Badge>
-                <span className="text-mut">{assigned}/{sp.outputs.length} output terarah</span>
-                {canWrite && (
-                  <span className="ml-auto flex gap-1">
-                    <button
-                      className="btn px-2 py-1"
-                      title="Edit splitter"
-                      onClick={() => {
-                        setForm({
-                          name: sp.name,
-                          ratio: sp.ratio,
-                          input_core: sp.input_core ?? "",
-                          input_note: sp.input_note || "",
-                          notes: sp.notes || "",
-                        });
-                        setModal({ mode: "edit", splitter: sp });
-                      }}
-                    >
-                      <Pencil size={13} />
-                    </button>
-                    {!isOdp && (
-                      <button className="btn px-2 py-1 text-red-400" title="Hapus splitter" onClick={() => remove(sp)}>
-                        <Trash2 size={13} />
-                      </button>
-                    )}
-                  </span>
-                )}
-              </div>
-
-              {sp.notes && <div className="mt-1 text-[11px] text-mut">Catatan: {sp.notes}</div>}
-
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {sp.outputs.map((o) => {
-                  const label = targetLabel(o);
-                  const cls = o.target_type === "odp"
-                    ? "border-emerald-500/60 bg-emerald-500/10 text-emerald-300"
-                    : o.target_type === "odc"
-                      ? "border-sky-500/60 bg-sky-500/10 text-sky-300"
-                      : o.target_type === "splitter"
-                        ? "border-violet-500/60 bg-violet-500/10 text-violet-300"
-                        : "border-dashed border-line text-mut";
-                  return (
-                    <button
-                      key={o.id}
-                      disabled={!canWrite}
-                      onClick={() => openOutput(sp, o)}
-                      title={`Output ${o.port}${label ? ` → ${label.replace("⇄ ", "")}` : " (belum diarahkan)"}${o.notes ? ` · ${o.notes}` : ""}`}
-                      className={`rounded-lg border px-2 py-1 text-[11px] transition hover:brightness-125 ${cls}`}
-                    >
-                      <span className="font-semibold">out {o.port}</span>
-                      {label ? <span className="ml-1">{label}</span> : <span className="ml-1">kosong</span>}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          );
-        })}
+        {(treeRoots.length > 0 ? treeRoots : splitters).map((sp) => renderSplitterTree(sp))}
       </div>
 
       {/* Modal splitter */}
@@ -250,19 +328,34 @@ export default function SplitterManager({ parentType, parentId, title }) {
                 </select>
               )}
             </Field>
-            <Field label="Input dari Core (opsional)">
-              <input
-                className="input" type="number" min={1} max={inputCoreMax} placeholder="mis. 1"
-                value={form.input_core} onChange={(e) => setForm({ ...form, input_core: e.target.value })}
-              />
+            <Field label={editingCascadeParent ? "Input dari splitter induk" : "Input dari Core (opsional, tahap awal)"}>
+              {editingCascadeParent ? (
+                <input
+                  className="input"
+                  value={`${editingCascadeParent.splitter.name} · output ${editingCascadeParent.port}`}
+                  disabled
+                  readOnly
+                />
+              ) : (
+                <input
+                  className="input" type="number" min={1} max={inputCoreMax} placeholder="mis. 1"
+                  value={form.input_core} onChange={(e) => setForm({ ...form, input_core: e.target.value })}
+                />
+              )}
             </Field>
           </div>
-          <Field label="Keterangan Input (opsional)">
-            <input
-              className="input" placeholder="mis. Core 1 feeder dari OLT"
-              value={form.input_note} onChange={(e) => setForm({ ...form, input_note: e.target.value })}
-            />
-          </Field>
+          {editingCascadeParent ? (
+            <p className="rounded-lg border border-violet-500/30 bg-violet-500/5 px-3 py-2 text-[11px] leading-relaxed text-mut">
+              Input tahap ini mengikuti sambungan cascade dari splitter induk; tidak perlu mengisi core OLT lagi.
+            </p>
+          ) : (
+            <Field label="Keterangan Input (opsional)">
+              <input
+                className="input" placeholder="mis. Core 1 feeder dari OLT"
+                value={form.input_note} onChange={(e) => setForm({ ...form, input_note: e.target.value })}
+              />
+            </Field>
+          )}
           <Field label="Catatan">
             <textarea className="input" rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
           </Field>
@@ -323,10 +416,8 @@ export default function SplitterManager({ parentType, parentId, title }) {
             {outForm.target_type === "splitter" && (
               <>
                 <p className="rounded-lg border border-line-soft bg-panel2 px-3 py-2 text-[11px] leading-relaxed text-mut">
-                  <span className="font-medium text-ink">Cascade</span> = output splitter ini disambung ke{" "}
-                  <span className="font-medium text-ink">masukan splitter berikutnya</span> (splitter bertingkat),
-                  bukan langsung ke ODP. Contoh: output splitter 1:4 disambung ke splitter 1:8 —
-                  urutannya ikut terlihat di halaman Alur Core.
+                  <span className="font-medium text-ink">Cascade</span> menyambungkan output ini ke input tahap berikutnya di {outModal.splitter.odc_id != null ? "ODC" : "ODP"} yang sama.
+                  Contoh: <span className="font-medium text-ink">1:4 awal · out 1 → 1:4 kedua</span>. Input core splitter lanjutan mengikuti sambungan ini secara otomatis.
                 </p>
                 <Field label="Pilih splitter lanjutan">
                   <select
@@ -334,14 +425,19 @@ export default function SplitterManager({ parentType, parentId, title }) {
                     value={outForm.target_id}
                     onChange={(e) => setOutForm({ ...outForm, target_id: e.target.value })}
                   >
-                    <option value="" disabled>Pilih splitter…</option>
-                    {allSplitters
-                      .filter((x) => x.id !== outModal.splitter.id)
-                      .map((x) => (
-                        <option key={x.id} value={x.id}>
-                          {x.name} ({x.ratio}) — {x.odc_name || x.odp_name || "-"}
-                        </option>
-                      ))}
+                    <option value="" disabled>
+                      {cascadeTargets.length ? "Pilih splitter…" : `Tidak ada splitter lain di ${outModal.splitter.odc_id != null ? "ODC" : "ODP"} ini`}
+                    </option>
+                    {legacyCascadeTarget && (
+                      <option value={legacyCascadeTarget.id} disabled>
+                        {legacyCascadeTarget.name} ({legacyCascadeTarget.ratio}) — cascade lintas lokasi, pilih target lain
+                      </option>
+                    )}
+                    {cascadeTargets.map((sp) => (
+                      <option key={sp.id} value={sp.id}>
+                        {sp.name} ({sp.ratio})
+                      </option>
+                    ))}
                   </select>
                 </Field>
               </>
