@@ -465,7 +465,7 @@ export default function Mapping() {
                                 {(() => {
                                   const tujuan = [
                                     ...viaSplitter.filter((r) => r.odpName).map((r) => r.odpName),
-                                    ...viaSplitter.filter((r) => r.odcAnakName).map((r) => `⇉ ${r.odcAnakName}`),
+                                    ...viaSplitter.filter((r) => r.odcAnakName).map((r) => `⇉ ${r.odcAnakName}${r.odcAnakCore != null ? ` core ${r.odcAnakCore}` : ""}`),
                                   ];
                                   return tujuan.length > 0
                                     ? ` → ${tujuan.join(", ")}`
@@ -499,6 +499,7 @@ export default function Mapping() {
                     <div key={p.id} className="rounded-lg border border-line bg-panel-soft p-3 text-xs">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="font-semibold">{p.name}</span>
+                        <Badge cls="bg-sky-500/15 text-sky-300">di {p.odc_name || odc.name}</Badge>
                         <span className="text-mut">{p.location || "-"}</span>
                         <Badge cls="bg-amber-500/15 text-amber-300">{getCableInfo(p.cable_type)?.label ?? p.cable_type}</Badge>
                       </div>

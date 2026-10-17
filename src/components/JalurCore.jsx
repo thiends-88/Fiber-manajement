@@ -97,6 +97,7 @@ export function PohonJalur({ node, feed }) {
         <div className="flex flex-wrap items-center gap-2">
           {node.port != null && <Badge cls="bg-violet-500/15 text-violet-300">out {node.port}</Badge>}
           <span className="font-semibold text-emerald-300">{node.name}</span>
+          {node.odcName && <Badge cls="bg-sky-500/15 text-sky-300">di {node.odcName}</Badge>}
           <span className="text-mut">{node.location || "lokasi belum diisi"}</span>
           <FeedChip feed={feed} />
         </div>
@@ -137,21 +138,27 @@ export function PohonJalur({ node, feed }) {
   }
 
   if (node.kind === "odc") {
+    const odcFeed = node.core == null ? feed : { core: node.core, cableType: node.cableType };
     return (
       <div className="rounded-lg border border-sky-500/40 bg-panel p-2.5 text-xs">
         <div className="flex flex-wrap items-center gap-2">
           {node.port != null && <Badge cls="bg-violet-500/15 text-violet-300">out {node.port}</Badge>}
           <span className="font-semibold text-sky-300">{node.name}</span>
-          <Badge cls="bg-sky-500/15 text-sky-300">ODC anak</Badge>
+          <Badge cls="bg-sky-500/15 text-sky-300">ODC tujuan</Badge>
+          {node.core != null && <CoreChip core={node.core} cableType={node.cableType} small />}
         </div>
         {node.children.length > 0 ? (
           <div className="ml-1.5 mt-2 space-y-2 border-l border-line pl-3">
             {node.children.map((c, i) => (
-              <PohonJalur key={`${node.odcId}-${i}`} node={c} feed={feed} />
+              <PohonJalur key={`${node.odcId}-${node.core ?? "legacy"}-${c.id ?? i}`} node={c} feed={odcFeed} />
             ))}
           </div>
         ) : (
-          <div className="mt-1 text-[11px] text-mut">belum ada splitter dengan input core di ODC ini</div>
+          <div className="mt-1 text-[11px] text-mut">
+            {node.core == null
+              ? "belum ada core masuk yang ditentukan"
+              : `belum ada splitter dengan input core ${node.core} di ODC ini`}
+          </div>
         )}
       </div>
     );

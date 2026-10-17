@@ -1,14 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { GitBranch, Maximize2, Minus, Plus, Tag, X } from "lucide-react";
 import { EDGE_STYLE, NODE_H, NODE_STYLE, NODE_W, buildTopologyGraph, buildUpstreamChains } from "../lib/topology.js";
-import { Badge, Card, Empty } from "./ui.jsx";
+import { Badge, Card, Empty, matchesQuery } from "./ui.jsx";
 import { STATUS } from "../lib/fiber.js";
 
 const ZOOMS = [0.6, 0.75, 0.9, 1, 1.15, 1.3, 1.5];
 
 /** Diagram alur jaringan: OLT → ODC → splitter → ODP (bisa bertingkat). */
-export default function TopologiDiagram({ olts, odcs, odps, splitters, links, feederPorts, cores = [] }) {
+export default function TopologiDiagram({ olts, odcs, odps, splitters, links, feederPorts, cores = [], query = "" }) {
   const [selected, setSelected] = useState(null);
+  const [searchTarget, setSearchTarget] = useState("");
   const [zoom, setZoom] = useState(1);
   const [labels, setLabels] = useState(true);
 
@@ -16,6 +17,29 @@ export default function TopologiDiagram({ olts, odcs, odps, splitters, links, fe
     () => buildTopologyGraph({ olts, odcs, odps, splitters, links, feederPorts, cores }),
     [olts, odcs, odps, splitters, links, feederPorts, cores],
   );
+  const cleanQuery = query.trim();
+  const searchMatches = useMemo(
+    () => cleanQuery
+      ? graph.nodes.filter((n) => matchesQuery(cleanQuery, n.title, n.sub, n.searchText, NODE_STYLE[n.kind]?.label))
+      : [],
+    [graph, cleanQuery],
+  );
+  const searchMatchIds = useMemo(() => new Set(searchMatches.map((n) => n.id)), [searchMatches]);
+
+  useEffect(() => {
+    if (!cleanQuery) {
+      setSearchTarget("");
+      setSelected(null);
+      return;
+    }
+    if (searchMatches.length === 1) {
+      setSearchTarget(searchMatches[0].id);
+      setSelected(searchMatches[0].id);
+    } else if (!searchMatches.some((n) => n.id === searchTarget)) {
+      setSearchTarget("");
+      setSelected(null);
+    }
+  }, [cleanQuery, searchMatches, searchTarget]);
 
   // Alur core ke hulu dari simpul terpilih (OLT → … → simpul ini)
   const chains = useMemo(() => (selected ? buildUpstreamChains(graph, selected) : []), [graph, selected]);
@@ -27,9 +51,15 @@ export default function TopologiDiagram({ olts, odcs, odps, splitters, links, fe
 
   // Sorot jalur (hulu + hilir) dari simpul yang dipilih
   const highlight = useMemo(() => {
-    if (!selected) return null;
-    const ns = new Set([selected]);
+    if (!selected && !cleanQuery) return null;
+    const ns = new Set(selected ? [selected] : searchMatchIds);
     const es = new Set();
+    if (!selected) {
+      graph.edges.forEach((e) => {
+        if (ns.has(e.from) || ns.has(e.to)) es.add(e.id);
+      });
+      return { ns, es };
+    }
     const walk = (start, dir) => {
       const queue = [start];
       while (queue.length) {
@@ -48,7 +78,7 @@ export default function TopologiDiagram({ olts, odcs, odps, splitters, links, fe
     walk(selected, "up");
     walk(selected, "down");
     return { ns, es };
-  }, [selected, graph]);
+  }, [selected, cleanQuery, searchMatchIds, graph]);
 
   if (!graph.nodes.length) {
     return <Empty text="Belum ada data jaringan untuk digambar. Tambahkan OLT, ODC, atau ODP terlebih dahulu." />;
@@ -61,6 +91,31 @@ export default function TopologiDiagram({ olts, odcs, odps, splitters, links, fe
 
   return (
     <div>
+      {cleanQuery && (
+        <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
+          <Badge cls={searchMatches.length ? "bg-cyan-500/15 text-cyan-300" : "bg-amber-500/15 text-amber-300"}>
+            {searchMatches.length} simpul cocok
+          </Badge>
+          {searchMatches.length > 1 && (
+            <select
+              className="input max-w-lg"
+              aria-label="Pilih simpul hasil pencarian untuk menyorot jalur"
+              value={searchTarget || selected || ""}
+              onChange={(e) => {
+                const id = e.target.value;
+                setSearchTarget(id);
+                setSelected(id || null);
+              }}
+            >
+              <option value="">Pilih perangkat untuk menyorot jalurnya…</option>
+              {searchMatches.map((n) => (
+                <option key={n.id} value={n.id}>{NODE_STYLE[n.kind]?.label}: {n.title} — {n.sub}</option>
+              ))}
+            </select>
+          )}
+          {searchMatches.length === 0 && <span className="text-mut">Coba nama perangkat, core, atau warna lain.</span>}
+        </div>
+      )}
       {/* alat bantu tampilan */}
       <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
         <span className="text-mut">Klik simpul untuk menyorot jalurnya.</span>

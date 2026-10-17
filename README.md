@@ -42,9 +42,13 @@ lapangan.
 6. **Splitter bertingkat** — pilih rasio **1:2 / 1:4 / 1:8 / 1:16 / 1:32**,
    ditempatkan **di dalam ODC maupun di dalam ODP**. Setiap output splitter bisa
    diarahkan **ke ODP**, **di-cascade ke splitter berikutnya dalam ODC/ODP yang
-   sama**, atau **ke ODC anak**. Daftar splitter ditampilkan sebagai jenjang
-   bersarang (mis. **1:4 awal → output 1 → 1:4 kedua**); input core tahap lanjutan
-   mengikuti induknya otomatis sehingga tidak dihitung sebagai core feeder baru.
+   sama**, atau **ke ODC lain**. Jika beberapa output splitter harus masuk ke kabinet
+   ODC yang sama, tiap output diarahkan ke **splitter penerima yang tepat** di ODC
+   tersebut. Jalur dibedakan berdasarkan splitter penerima; nomor core/warna boleh
+   berulang jika berasal dari kabel yang berbeda. Peta alur menampilkan tiap sumber,
+   output, ODC tujuan, splitter penerima, lalu ODP. Daftar splitter ditampilkan sebagai
+   jenjang bersarang (mis. **1:4 awal → output 1 → 1:4 kedua**); input core tahap
+   lanjutan mengikuti induknya otomatis sehingga tidak dihitung sebagai core feeder baru.
    Topologi splitter bertingkat (mis. OLT → SPL 1:4 → SPL 1:8 di dalam ODC →
    ODP dengan SPL 1:8) bisa dimodelkan penuh, dan aplikasi otomatis membaca
    rantainya sesuai rasio splitter yang terpasang.
@@ -52,9 +56,11 @@ lapangan.
    ODP-001/ODP-003 [SPL 1:8]**, plus satu cabang **ODC anak**.
 7. **ODC induk / ODC anak** — sebuah output splitter yang berada **di dalam ODC**
    bisa diarahkan ke **ODC lain**, sehingga ODC tujuan menjadi *ODC anak* dari
-   ODC sumber (*induks*). ODC anak ditandai badge **"ODC anak"** di halaman ODC
-   beserta asal suplainya (splitter & port). Diperbolehkan berlapis
-   (anak → cucu). Server menolak arah yang membentuk **lingkaran**
+   ODC sumber (*induks*). Setiap jalur masuk ditautkan ke **splitter penerima tertentu**
+   di ODC tujuan. Dengan demikian, nomor/warna core yang sama boleh tercatat pada
+   kabel berbeda tanpa menyatukan jalur. Halaman ODC menampilkan semua jalur masuk
+   (sumber, port, dan splitter penerima). Diperbolehkan
+   berlapis (anak → cucu). Server menolak arah yang membentuk **lingkaran**
    (mis. ODC anak diarahkan balik ke induknya) dengan pesan
    *"Akan membentuk lingkaran ODC induk/anak"*, dan hanya splitter di dalam ODC
    yang boleh menargetkan ODC. Halaman **Alur Core** menelusuri seluruh rantai

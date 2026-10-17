@@ -160,7 +160,9 @@ export default function Laporan() {
           hasil.push({
             key: `${d.id}-c${t.core}-${r.odpId ?? `odc${r.odcAnakId}`}-${r.via.join("|")}`,
             odc: d, sumber, core: t.core, jalur: r.via.join(" → "),
-            tujuan: r.odpName ?? `ODC anak: ${r.odcAnakName}`,
+            tujuan: r.odpName
+              ? `${r.odpName}${r.odcName ? ` · ${r.odcName}` : ""}`
+              : `ODC anak: ${r.odcAnakName}${r.odcAnakCore != null ? ` · core ${r.odcAnakCore}` : ""}`,
           });
         }
       }

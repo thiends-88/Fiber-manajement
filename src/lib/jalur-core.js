@@ -69,6 +69,7 @@ export function buildCoreRoutes({
       port: o.port,
       odpId: id,
       name: odp?.name ?? o.target_odp_name ?? "ODP ?",
+      odcName: odp?.odc_name ?? null,
       location: odp?.location ?? null,
       cableType: odp?.cable_type ?? null,
       // Core milik kabel ODP sendiri yang dipakai sebagai POWER (output) ODP
@@ -88,20 +89,33 @@ export function buildCoreRoutes({
   function nodeOdcAnak(o, depth, visitedOdc, visitedSpl) {
     const id = Number(o.target_odc_id);
     const d = odcs.find((x) => x.id === id);
+    const targetSplitter = o.target_odc_splitter_id != null
+      ? splById.get(Number(o.target_odc_splitter_id)) ?? null
+      : null;
+    const targetCoreValue = targetSplitter?.input_core ?? o.target_odc_core;
+    const targetCore = targetCoreValue == null || targetCoreValue === "" ? null : Number(targetCoreValue);
     const node = {
       kind: "odc",
       port: o.port,
       odcId: id,
       name: d?.name ?? o.target_odc_name ?? "ODC ?",
+      splitterName: targetSplitter?.name ?? o.target_odc_splitter_name ?? null,
+      core: targetCore,
+      cableType: d?.cable_type ?? null,
       children: [],
     };
     if (visitedOdc.has(id) || depth >= MAX_DEPTH) return node; // lingkaran → berhenti di sini
-    visitedOdc.add(id);
-    // Jalur berlanjut ke splitter di ODC anak yang diumpan core kabelnya
-    node.children = splitters
-      .filter((s) => Number(s.odc_id) === id && s.input_core != null && s.input_core !== "")
+    const nextVisitedOdc = new Set(visitedOdc);
+    nextVisitedOdc.add(id);
+    // Jika output ditautkan ke splitter tertentu, lanjutkan hanya ke splitter itu.
+    // Jalur lain boleh memakai nomor/warna core yang sama pada kabel berbeda.
+    const downstream = targetSplitter
+      ? [targetSplitter]
+      : splitters.filter((s) => Number(s.odc_id) === id && s.input_core != null && s.input_core !== "" &&
+          (targetCore == null || Number(s.input_core) === targetCore));
+    node.children = downstream
       .sort((a, b) => Number(a.input_core) - Number(b.input_core) || a.id - b.id)
-      .map((s) => nodeSplitter(s, null, depth + 1, visitedOdc, visitedSpl));
+      .map((s) => nodeSplitter(s, null, depth + 1, nextVisitedOdc, new Set(visitedSpl)));
     return node;
   }
 
@@ -126,7 +140,7 @@ export function buildCoreRoutes({
         children.push(nodeOdp(o));
       } else if (o.target_type === "odc" && o.target_odc_id) {
         terarah++;
-        children.push(nodeOdcAnak(o, depth, visitedOdc, visitedSpl));
+        children.push(nodeOdcAnak(o, depth, new Set(visitedOdc), new Set(visitedSpl)));
       }
       // output tanpa target → dihitung sebagai idle (diringkas di tampilan)
     }
@@ -193,13 +207,14 @@ export function daftarRuteOdp(trees = []) {
     const label = `${node.name} (${node.ratio})`;
     for (const ch of node.children || []) {
       if (ch.kind === "odp") {
-        hasil.push({ core, odpId: ch.odpId, odpName: ch.name, via: [...prefix, `${label} out ${ch.port}`] });
+        hasil.push({ core, odpId: ch.odpId, odpName: ch.name, odcName: ch.odcName, via: [...prefix, `${label} out ${ch.port}`] });
       } else if (ch.kind === "splitter") {
         walk(ch, core, [...prefix, `${label} out ${ch.viaPort ?? "?"}`]);
       } else if (ch.kind === "odc") {
         const jalur = [...prefix, `${label} out ${ch.port}`];
-        hasil.push({ core, odcAnakId: ch.odcId, odcAnakName: ch.name, via: jalur });
-        for (const sub of ch.children || []) walk(sub, core, [...jalur, `⇉ ${ch.name}`]);
+        hasil.push({ core, odcAnakId: ch.odcId, odcAnakName: ch.name, odcAnakCore: ch.core, via: jalur });
+        const odcHop = `⇉ ${ch.name}${ch.core != null ? ` core ${ch.core}` : ""}${ch.splitterName ? ` · ${ch.splitterName}` : ""}`;
+        for (const sub of ch.children || []) walk(sub, core, [...jalur, odcHop]);
       }
     }
   };

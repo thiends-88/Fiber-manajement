@@ -85,9 +85,13 @@ export default function Odcs() {
     if (!sp.odc_id) return;
     (sp.outputs ?? []).forEach((o) => {
       if (o.target_type === "odc" && o.target_odc_id) {
-        parentInfo.set(Number(o.target_odc_id), {
+        const routes = parentInfo.get(Number(o.target_odc_id)) ?? [];
+        routes.push({
           parentName: sp.odc_name, splitter: sp.name, ratio: sp.ratio, port: o.port,
+          targetSplitter: o.target_odc_splitter_name,
+          targetCore: o.target_odc_splitter_input_core ?? o.target_odc_core,
         });
+        parentInfo.set(Number(o.target_odc_id), routes);
       }
     });
   });
@@ -149,9 +153,17 @@ export default function Odcs() {
                   {d.olt_name}
                   {parentInfo.has(d.id) && (
                     <div className="mt-1">
-                      <Badge cls="bg-sky-500/15 text-sky-300">ODC anak</Badge>
-                      <div className="mt-1 text-[10px] text-mut-soft">
-                        dari {parentInfo.get(d.id).parentName} · {parentInfo.get(d.id).splitter} {parentInfo.get(d.id).ratio} out {parentInfo.get(d.id).port}
+                      <Badge cls="bg-sky-500/15 text-sky-300">
+                        ODC anak · {parentInfo.get(d.id).length} jalur masuk
+                      </Badge>
+                      <div className="mt-1 space-y-0.5 text-[10px] text-mut-soft">
+                        {parentInfo.get(d.id).map((route, i) => (
+                          <div key={`${route.splitter}-${route.port}-${i}`}>
+                            {route.parentName} · {route.splitter} {route.ratio} out {route.port}
+                            {route.targetSplitter ? ` → ${route.targetSplitter}` : route.targetCore != null ? ` → core ${route.targetCore}` : " → splitter belum dipilih"}
+                            {route.targetCore != null ? ` (input core ${route.targetCore})` : ""}
+                          </div>
+                        ))}
                       </div>
                     </div>
                   )}

@@ -182,6 +182,8 @@ const MIGRATIONS = [
     target_odp_id INTEGER REFERENCES odps(id) ON DELETE SET NULL,
     target_splitter_id INTEGER REFERENCES splitters(id) ON DELETE SET NULL,
     target_odc_id INTEGER REFERENCES odcs(id) ON DELETE SET NULL,
+    target_odc_core INTEGER,
+    target_odc_splitter_id INTEGER REFERENCES splitters(id) ON DELETE SET NULL,
     notes TEXT,
     UNIQUE(splitter_id, port)
   )`,
@@ -268,6 +270,31 @@ if (outTableSql && !outTableSql.includes("target_odc_id")) {
     db.exec("PRAGMA foreign_keys = ON");
   }
 }
+const hasTargetOdcCore = db.prepare("SELECT 1 FROM pragma_table_info('splitter_outputs') WHERE name='target_odc_core'").get();
+if (!hasTargetOdcCore) db.exec("ALTER TABLE splitter_outputs ADD COLUMN target_odc_core INTEGER");
+const hasTargetOdcSplitter = db.prepare("SELECT 1 FROM pragma_table_info('splitter_outputs') WHERE name='target_odc_splitter_id'").get();
+if (!hasTargetOdcSplitter) db.exec("ALTER TABLE splitter_outputs ADD COLUMN target_odc_splitter_id INTEGER REFERENCES splitters(id) ON DELETE SET NULL");
+// Migrasi jalur lama hanya bila input splitter tujuan dapat dipastikan unik.
+db.exec(`
+  UPDATE splitter_outputs
+  SET target_odc_splitter_id = (
+    SELECT MIN(dest.id) FROM splitters dest
+    WHERE dest.odc_id=splitter_outputs.target_odc_id
+      AND (splitter_outputs.target_odc_core IS NULL OR dest.input_core=splitter_outputs.target_odc_core)
+      AND NOT EXISTS (
+        SELECT 1 FROM splitter_outputs parent
+        WHERE parent.target_type='splitter' AND parent.target_splitter_id=dest.id
+      )
+  )
+  WHERE target_type='odc' AND target_odc_splitter_id IS NULL
+    AND (SELECT COUNT(*) FROM splitters dest
+         WHERE dest.odc_id=splitter_outputs.target_odc_id
+           AND (splitter_outputs.target_odc_core IS NULL OR dest.input_core=splitter_outputs.target_odc_core)
+           AND NOT EXISTS (
+             SELECT 1 FROM splitter_outputs parent
+             WHERE parent.target_type='splitter' AND parent.target_splitter_id=dest.id
+           ))=1
+`);
 
 // Port feeder ODC: satu ODC boleh punya BEBERAPA port feeder dari OLT induknya
 const feederTableExisted = !!db
@@ -378,11 +405,13 @@ const SPLITTER_OUT_SQL = `SELECT o.*,
     CASE WHEN o.target_odp_id IS NOT NULL THEN 'odp'
          WHEN o.target_odc_id IS NOT NULL THEN 'odc'
          WHEN o.target_splitter_id IS NOT NULL THEN 'splitter' ELSE NULL END AS target_type,
-    od.name AS target_odp_name, ts.name AS target_splitter_name, tod.name AS target_odc_name
+    od.name AS target_odp_name, ts.name AS target_splitter_name, tod.name AS target_odc_name,
+    tods.name AS target_odc_splitter_name, tods.input_core AS target_odc_splitter_input_core
   FROM splitter_outputs o
   LEFT JOIN odps od ON od.id = o.target_odp_id
   LEFT JOIN splitters ts ON ts.id = o.target_splitter_id
   LEFT JOIN odcs tod ON tod.id = o.target_odc_id
+  LEFT JOIN splitters tods ON tods.id = o.target_odc_splitter_id
   WHERE o.splitter_id = ? ORDER BY o.port`;
 function getSplitter(id) {
   const row = db.prepare(SPLITTER_SQL + " WHERE s.id=?").get(id);
@@ -408,21 +437,23 @@ function ensureOdpSplitter(odpId, odpName) {
   syncSplitterPorts(r.lastInsertRowid, ODP_SPLITTER_RATIO);
 }
 
-// Induk ODC (bila ODC ini diumpan dari output splitter ODC lain)
-const odcParentId = (childId) =>
-  db.prepare(`
-    SELECT s.odc_id AS parent FROM splitter_outputs o
-    JOIN splitters s ON s.id = o.splitter_id
-    WHERE o.target_odc_id = ? LIMIT 1`).get(Number(childId))?.parent ?? null;
-
-// Apakah `ancestorId` ada di rantai atas dari `nodeId` (dipakai cegah lingkaran)
-function odcIsAncestor(ancestorId, nodeId) {
-  let cur = Number(nodeId);
+// Apakah ada jalur dari satu ODC ke ODC lain melalui output splitter?
+// Gunakan graf penuh karena satu kabinet dapat menerima beberapa core/jalur masuk.
+function odcReaches(startId, targetId) {
+  const target = Number(targetId);
+  const stack = [Number(startId)];
   const visited = new Set();
-  while (cur && !visited.has(cur)) {
-    if (cur === Number(ancestorId)) return true;
-    visited.add(cur);
-    cur = odcParentId(cur);
+  while (stack.length) {
+    const current = stack.pop();
+    if (current === target) return true;
+    if (visited.has(current)) continue;
+    visited.add(current);
+    const children = db.prepare(`
+      SELECT o.target_odc_id AS id FROM splitter_outputs o
+      JOIN splitters s ON s.id=o.splitter_id
+      WHERE s.odc_id=? AND o.target_type='odc' AND o.target_odc_id IS NOT NULL
+    `).all(current);
+    children.forEach((row) => stack.push(Number(row.id)));
   }
   return false;
 }
@@ -638,9 +669,9 @@ function seedIfEmpty() {
   );
   const insOut = db.prepare("INSERT INTO splitter_outputs (splitter_id, port) VALUES (?,?)");
   const addPorts = (id, n) => { for (let i = 1; i <= n; i++) insOut.run(id, i); };
-  const setOut = (splitterId, port, odp = null, spl = null, odc = null) =>
-    db.prepare("UPDATE splitter_outputs SET target_type=?, target_odp_id=?, target_splitter_id=?, target_odc_id=? WHERE splitter_id=? AND port=?")
-      .run(odc ? "odc" : odp ? "odp" : spl ? "splitter" : null, odp, spl, odc, splitterId, port);
+  const setOut = (splitterId, port, odp = null, spl = null, odc = null, odcCore = null, odcSplitter = null) =>
+    db.prepare("UPDATE splitter_outputs SET target_type=?, target_odp_id=?, target_splitter_id=?, target_odc_id=?, target_odc_core=?, target_odc_splitter_id=? WHERE splitter_id=? AND port=?")
+      .run(odc ? "odc" : odp ? "odp" : spl ? "splitter" : null, odp, spl, odc, odcCore, odcSplitter, splitterId, port);
 
   const spl1 = insSplitter.run(odc1, null, "SPL-1", "1:4", 1, "Core 1 dari OLT", "Splitter utama ODC", ts, ts).lastInsertRowid;
   const spl2 = insSplitter.run(odc1, null, "SPL-2", "1:8", null, "Cascade dari SPL-1 output 1", "Splitter tahap 2", ts, ts).lastInsertRowid;
@@ -652,7 +683,7 @@ function seedIfEmpty() {
   setOut(spl1, 1, null, spl2);    // cascade 1:4 → 1:8 (dua tingkat di dalam ODC)
   setOut(spl2, 1, odp1);          // 1:8 → ODP-001 (di dalamnya SPL 1:8)
   setOut(spl2, 2, odp3);          // 1:8 → ODP-003 (di dalamnya SPL 1:8)
-  setOut(spl2, 3, null, null, odc3); // 1:8 → ODC-003 (ODC anak)
+  setOut(spl2, 3, null, null, odc3, 1, spl3); // 1:8 → splitter SPL-3 di ODC-003
   setOut(spl3, 1, odp4);          // di ODC anak: 1:8 → ODP-004 (tanpa splitter tambahan)
 
   console.log("[arena-api] Database di-seed dengan data demo. Login: admin@arena.test / Arena123!");
@@ -1291,7 +1322,8 @@ const server = http.createServer(async (req, res) => {
           return send(req, res, 400, { error: "Splitter bawaan ODP bersifat permanen dan tidak bisa dihapus (ikut terhapus bila ODP-nya dihapus)" });
         }
         db.prepare("UPDATE splitter_outputs SET target_type=NULL, target_splitter_id=NULL WHERE target_splitter_id=?").run(id);
-        db.prepare("UPDATE splitter_outputs SET target_type=NULL, target_odc_id=NULL WHERE target_odc_id=?").run(id);
+        db.prepare("UPDATE splitter_outputs SET target_type=NULL, target_odc_id=NULL, target_odc_core=NULL, target_odc_splitter_id=NULL WHERE target_odc_id=?").run(id);
+        db.prepare("UPDATE splitter_outputs SET target_type=NULL, target_odc_core=NULL, target_odc_splitter_id=NULL WHERE target_odc_splitter_id=?").run(id);
         db.prepare("DELETE FROM splitters WHERE id=?").run(id);
         return send(req, res, 200, { ok: true });
       }
@@ -1307,6 +1339,8 @@ const server = http.createServer(async (req, res) => {
       let odpId = null;
       let splId = null;
       let odcId = null;
+      let odcCore = null;
+      let odcSplitterId = null;
       let targetType = out.target_odp_id ? "odp" : out.target_odc_id ? "odc" : out.target_splitter_id ? "splitter" : null;
       if (hasOwn(b, "target_type")) {
         targetType = b.target_type;
@@ -1316,16 +1350,46 @@ const server = http.createServer(async (req, res) => {
           if (!db.prepare("SELECT id FROM odcs WHERE id=?").get(odcId)) {
             return send(req, res, 400, { error: "ODC tujuan tidak ditemukan" });
           }
-          if (db.prepare("SELECT id FROM splitter_outputs WHERE target_odc_id=? AND id<>? LIMIT 1").get(odcId, id)) {
-            return send(req, res, 409, { error: "ODC anak sudah memiliki koneksi dari output splitter lain" });
-          }
           const owner = db.prepare("SELECT odc_id FROM splitters WHERE id=?").get(out.splitter_id)?.odc_id;
           if (!owner) {
-            return send(req, res, 400, { error: "Hanya splitter di dalam ODC yang bisa diarahkan ke ODC anak" });
+            return send(req, res, 400, { error: "Hanya splitter di dalam ODC yang bisa diarahkan ke ODC lain" });
           }
-          if (odcIsAncestor(odcId, owner)) {
+          const destination = db.prepare("SELECT cable_type FROM odcs WHERE id=?").get(odcId);
+          const targetCore = b.target_core;
+          const targetCoreCapacity = cableInfo(destination?.cable_type)?.cores ?? 0;
+          if (targetCore != null && targetCore !== "" && !validIntRange(targetCore, 1, targetCoreCapacity)) {
+            return send(req, res, 400, { error: `Core masuk ODC tujuan harus antara 1 dan ${targetCoreCapacity}` });
+          }
+          const rootTargets = db.prepare(`
+            SELECT d.id, d.input_core FROM splitters d
+            WHERE d.odc_id=?
+              AND NOT EXISTS (
+                SELECT 1 FROM splitter_outputs cascade
+                WHERE cascade.target_type='splitter' AND cascade.target_splitter_id=d.id
+              )
+          `).all(odcId);
+          if (validPositiveInt(b.target_odc_splitter_id)) {
+            odcSplitterId = Number(b.target_odc_splitter_id);
+          } else {
+            const candidates = targetCore != null && targetCore !== ""
+              ? rootTargets.filter((candidate) => Number(candidate.input_core) === Number(targetCore))
+              : rootTargets;
+            if (candidates.length !== 1) {
+              return send(req, res, 400, { error: "Pilih splitter tujuan di ODC agar setiap jalur masuk tercatat terpisah" });
+            }
+            odcSplitterId = Number(candidates[0].id);
+          }
+          const targetSplitter = rootTargets.find((candidate) => Number(candidate.id) === odcSplitterId);
+          if (!targetSplitter) {
+            return send(req, res, 400, { error: "Splitter tujuan harus menjadi splitter input langsung di ODC yang dipilih" });
+          }
+          if (db.prepare("SELECT id FROM splitter_outputs WHERE target_type='odc' AND target_odc_splitter_id=? AND id<>? LIMIT 1").get(odcSplitterId, id)) {
+            return send(req, res, 409, { error: "Splitter tujuan sudah menerima jalur masuk. Pilih splitter lain di ODC yang sama." });
+          }
+          if (odcReaches(odcId, owner)) {
             return send(req, res, 400, { error: "Akan membentuk lingkaran ODC induk/anak" });
           }
+          odcCore = targetSplitter.input_core == null ? null : Number(targetSplitter.input_core);
         } else if (targetType === "odp") {
           if (!validPositiveInt(b.target_id)) return send(req, res, 400, { error: "ODP tujuan tidak valid" });
           odpId = Number(b.target_id);
@@ -1363,9 +1427,11 @@ const server = http.createServer(async (req, res) => {
         odpId = out.target_odp_id;
         splId = out.target_splitter_id;
         odcId = out.target_odc_id;
+        odcCore = out.target_odc_core;
+        odcSplitterId = out.target_odc_splitter_id;
       }
-      db.prepare("UPDATE splitter_outputs SET target_type=?, target_odp_id=?, target_splitter_id=?, target_odc_id=?, notes=? WHERE id=?")
-        .run(targetType, odpId, splId, odcId, notes || null, id);
+      db.prepare("UPDATE splitter_outputs SET target_type=?, target_odp_id=?, target_splitter_id=?, target_odc_id=?, target_odc_core=?, target_odc_splitter_id=?, notes=? WHERE id=?")
+        .run(targetType, odpId, splId, odcId, odcCore, odcSplitterId, notes || null, id);
 
       // Input splitter lanjutan berasal dari output cascade, bukan dari core OLT.
       if (targetType === "splitter" && splId != null) {
@@ -1387,11 +1453,13 @@ const server = http.createServer(async (req, res) => {
            CASE WHEN o.target_odp_id IS NOT NULL THEN 'odp'
                 WHEN o.target_odc_id IS NOT NULL THEN 'odc'
                 WHEN o.target_splitter_id IS NOT NULL THEN 'splitter' ELSE NULL END AS target_type,
-           od.name AS target_odp_name, ts.name AS target_splitter_name, tod.name AS target_odc_name
+           od.name AS target_odp_name, ts.name AS target_splitter_name, tod.name AS target_odc_name,
+           tods.name AS target_odc_splitter_name, tods.input_core AS target_odc_splitter_input_core
          FROM splitter_outputs o
          LEFT JOIN odps od ON od.id = o.target_odp_id
          LEFT JOIN splitters ts ON ts.id = o.target_splitter_id
          LEFT JOIN odcs tod ON tod.id = o.target_odc_id
+         LEFT JOIN splitters tods ON tods.id = o.target_odc_splitter_id
          WHERE o.id=?`).get(id));
     }
 

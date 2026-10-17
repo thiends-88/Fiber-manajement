@@ -61,13 +61,14 @@ export function buildTopologyGraph({
   };
 
   // --- simpul ---
-  olts.forEach((o) => addNode({ id: `olt-${o.id}`, kind: "olt", title: truncate(o.name, 20), sub: truncate(o.olt_type || "OLT", 24) }));
+  olts.forEach((o) => addNode({ id: `olt-${o.id}`, kind: "olt", title: truncate(o.name, 20), sub: truncate(o.olt_type || "OLT", 24), searchText: `${o.name} ${o.olt_type || ""} ${o.location || ""}` }));
   odcs.forEach((d) =>
     addNode({
       id: `odc-${d.id}`,
       kind: "odc",
       title: truncate(d.name, 20),
       sub: truncate(getCableInfo(d.cable_type)?.label ?? d.cable_type ?? "ODC", 24),
+      searchText: `${d.name} ${d.location || ""} ${getCableInfo(d.cable_type)?.label ?? d.cable_type ?? ""}`,
     }),
   );
   odps.forEach((p) =>
@@ -75,8 +76,9 @@ export function buildTopologyGraph({
       id: `odp-${p.id}`,
       kind: "odp",
       title: truncate(p.name, 20),
-      sub: truncate(getCableInfo(p.cable_type)?.label ?? p.cable_type ?? "ODP", 24),
+      sub: truncate(`${p.odc_name ? `${p.odc_name} · ` : ""}${getCableInfo(p.cable_type)?.label ?? p.cable_type ?? "ODP"}`, 24),
       // Core kabel ODP sendiri yang dipakai sebagai power/output ODP itu.
+      searchText: `${p.name} ${p.odc_name || ""} ${p.location || ""} ${getCableInfo(p.cable_type)?.label ?? p.cable_type ?? ""}`,
       powerCores: cores
         .filter((c) => c.source === "odc_to_odp" && Number(c.odp_id) === Number(p.id))
         .map((c) => ({
@@ -96,6 +98,7 @@ export function buildTopologyGraph({
       kind: "spl",
       title: truncate(s.name, 20),
       sub: `${s.ratio} · ${used}/${outputs.length} output`,
+      searchText: [s.name, s.ratio, s.odc_name, s.odp_name, s.input_core, s.input_note, ...(outputs || []).flatMap((o) => [o.port, o.target_odp_name, o.target_odc_name, o.target_odc_splitter_name, o.target_splitter_name])].filter(Boolean).join(" "),
     });
   });
 
@@ -208,7 +211,10 @@ export function buildTopologyGraph({
         addEdge(`spl-${s.id}`, `odp-${o.target_odp_id}`, "out", `out ${o.port}`, color);
         if (f) pushCoreIn(Number(o.target_odp_id), f, o.port);
       } else if (o.target_type === "odc" && o.target_odc_id) {
-        addEdge(`spl-${s.id}`, `odc-${o.target_odc_id}`, "splitter-odc", `out ${o.port}`, color);
+        const receiver = o.target_odc_splitter_name ? ` → ${o.target_odc_splitter_name}` : "";
+        const core = o.target_odc_splitter_input_core ?? o.target_odc_core;
+        const coreLabel = core != null ? ` (core ${core})` : "";
+        addEdge(`spl-${s.id}`, `odc-${o.target_odc_id}`, "splitter-odc", `out ${o.port}${receiver}${coreLabel}`, color);
       }
     });
   });
@@ -226,6 +232,16 @@ export function buildTopologyGraph({
     n.coreIn = [...m.values()].sort(
       (a, b) => a.odcId - b.odcId || a.core - b.core || (a.port ?? 0) - (b.port ?? 0),
     );
+    n.searchText = [n.searchText, ...n.coreIn.flatMap((c) => [`core ${c.core}`, c.colorName, c.odcName, `out ${c.port ?? ""}`]), ...(n.powerCores ?? []).flatMap((c) => [`core ${c.core}`, c.colorName, c.status])].filter(Boolean).join(" ");
+  });
+  // Tambahkan core input dan warna asal pada node splitter agar bisa dicari.
+  splitters.forEach((s) => {
+    const n = index.has(`spl-${s.id}`) ? nodes[index.get(`spl-${s.id}`)] : null;
+    const feed = feedOf(s);
+    if (!n || !feed) return;
+    const sourceOdc = odcById.get(feed.odcId);
+    const colorName = sourceOdc ? colorForCoreInCable(feed.core, coresPerTube(sourceOdc.cable_type)).name : "";
+    n.searchText = [n.searchText, `core ${feed.core}`, colorName].filter(Boolean).join(" ");
   });
 
   // ODP yang belum punya sambungan core tetap ditautkan ke ODC induknya

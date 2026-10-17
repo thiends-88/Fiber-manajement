@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Boxes, Cable, GitBranch, Link2, Network, Server, Share2, Workflow } from "lucide-react";
 import { api } from "../lib/api.js";
-import { Badge, Card, Empty, PageHeader } from "../components/ui.jsx";
+import { Badge, Card, Empty, PageHeader, SearchBox, matchesQuery } from "../components/ui.jsx";
 import TopologiDiagram from "../components/TopologiDiagram.jsx";
 import { Arrow, CoreChip, PohonJalur } from "../components/JalurCore.jsx";
-import { STATUS, getCableInfo } from "../lib/fiber.js";
+import { STATUS, colorForCoreInCable, coresPerTube, getCableInfo } from "../lib/fiber.js";
 import { buildCoreRoutes } from "../lib/jalur-core.js";
 
 /**
@@ -19,10 +19,36 @@ import { buildCoreRoutes } from "../lib/jalur-core.js";
  * Tidak ada hitung-hitungan redaman/daya di sini: hanya alur dan nama perangkat.
  */
 
+function filterPohon(node, query) {
+  if (!node) return null;
+  const core = node.core ?? node.inputCore;
+  const colorName = core != null && node.cableType
+    ? colorForCoreInCable(Number(core), coresPerTube(node.cableType)).name
+    : "";
+  const selfMatch = matchesQuery(
+    query,
+    node.name, node.ratio, node.location, node.odcName, node.splitterName,
+    `core ${node.inputCore ?? ""}`, `core ${node.core ?? ""}`,
+    `out ${node.port ?? node.viaPort ?? ""}`, colorName,
+    ...(node.powerCores || []).flatMap((c) => [`core ${c.core}`, colorForCoreInCable(c.core, coresPerTube(node.cableType)).name]),
+  );
+  if (selfMatch) return node;
+  const children = (node.children || []).map((child) => filterPohon(child, query)).filter(Boolean);
+  return children.length ? { ...node, children, idlePorts: 0 } : null;
+}
+
+function treeMatchesCore(tree, odc, query) {
+  const color = colorForCoreInCable(Number(tree.core), coresPerTube(odc.cable_type)).name;
+  if (matchesQuery(query, `core ${tree.core}`, tree.core, color, tree.root?.name)) return tree;
+  const root = filterPohon(tree.root, query);
+  return root ? { ...tree, root } : null;
+}
+
 export default function Topologi() {
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
   const [view, setView] = useState("alur");
+  const [query, setQuery] = useState("");
 
   const load = useCallback(async () => {
     setError("");
@@ -76,6 +102,26 @@ export default function Topologi() {
   if (!data) return <div className="text-sm text-mut">Memuat…</div>;
 
   const coreTerpetakan = data.links.length + data.splitters.filter((s) => s.input_core != null && s.input_core !== "").length;
+  const rows = data.odcs.map((odc) => {
+    const olt = data.olts.find((o) => o.id === odc.olt_id);
+    const peta = petaPerOdc.get(odc.id) ?? { trees: [], directLinks: [] };
+    const feeder = data.feederPorts.filter((f) => f.odc_id === odc.id);
+    const odcMatch = matchesQuery(query, odc.name, olt?.name, odc.location, getCableInfo(odc.cable_type)?.label, ...feeder.map((f) => `${f.card_label || `Card ${f.slot}`} p${f.port}`));
+    const trees = query.trim() && !odcMatch
+      ? peta.trees.map((tree) => treeMatchesCore(tree, odc, query)).filter(Boolean)
+      : peta.trees;
+    const directLinks = query.trim() && !odcMatch
+      ? peta.directLinks.filter((link) => {
+          const odp = data.odps.find((p) => p.id === link.odpId);
+          const sourceColor = colorForCoreInCable(Number(link.odcCore), coresPerTube(odc.cable_type)).name;
+          const destinationColor = colorForCoreInCable(Number(link.odpCore), coresPerTube(odp?.cable_type)).name;
+          return matchesQuery(query, link.label, link.odpName, link.notes, `core ${link.odcCore}`, `core ${link.odpCore}`, sourceColor, destinationColor);
+        })
+      : peta.directLinks;
+    return { odc, olt, peta, feeder, trees, directLinks, odcMatch };
+  });
+  const visibleRows = rows.filter((row) => !query.trim() || row.odcMatch || row.trees.length > 0 || row.directLinks.length > 0);
+  const matchingAlurCount = visibleRows.reduce((sum, row) => sum + row.trees.length + row.directLinks.length, 0);
 
   return (
     <div>
@@ -116,6 +162,18 @@ export default function Topologi() {
         <Badge cls="bg-slate-500/15 text-slate-300">{coreTerpetakan} core terpetakan</Badge>
       </div>
 
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <SearchBox
+          value={query}
+          onChange={setQuery}
+          className="w-full sm:max-w-md"
+          placeholder="Cari ODC, ODP, splitter, core, atau warna…"
+        />
+        {query.trim() && view === "alur" && (
+          <span className="text-xs text-mut">{matchingAlurCount} jalur cocok</span>
+        )}
+      </div>
+
       {view === "diagram" ? (
         <TopologiDiagram
           olts={data.olts}
@@ -125,16 +183,16 @@ export default function Topologi() {
           links={data.links}
           feederPorts={data.feederPorts}
           cores={data.cores}
+          query={query}
         />
       ) : data.odcs.length === 0 ? (
         <Empty text="Belum ada ODC. Tambahkan OLT, ODC, dan ODP lebih dulu, lalu arahkan output splitter-nya." />
+      ) : visibleRows.length === 0 ? (
+        <Empty text={`Tidak ada alur yang cocok dengan “${query}”. Coba nama ODC/ODP, splitter, nomor core, atau warna.`} />
       ) : (
         <div className="space-y-5">
-          {data.odcs.map((odc) => {
-            const olt = data.olts.find((o) => o.id === odc.olt_id);
-            const peta = petaPerOdc.get(odc.id) ?? { trees: [], directLinks: [] };
-            const feeder = data.feederPorts.filter((f) => f.odc_id === odc.id);
-            const adaJalur = peta.trees.length > 0 || peta.directLinks.length > 0;
+          {visibleRows.map(({ odc, olt, feeder, trees, directLinks }) => {
+            const adaJalur = trees.length > 0 || directLinks.length > 0;
             return (
               <Card key={odc.id}>
                 {/* kepala: dari OLT mana core ini datang */}
@@ -165,9 +223,9 @@ export default function Topologi() {
                 )}
 
                 {/* satu kotak per core yang masuk ke splitter */}
-                {peta.trees.length > 0 && (
+                {trees.length > 0 && (
                   <div className="space-y-3">
-                    {peta.trees.map((t) => {
+                    {trees.map((t) => {
                       const status = t.feeder ? STATUS[t.feeder.status] : null;
                       return (
                         <div
@@ -187,15 +245,15 @@ export default function Topologi() {
                 )}
 
                 {/* core yang disambung langsung ke ODP tanpa splitter */}
-                {peta.directLinks.length > 0 && (
-                  <div className={peta.trees.length > 0 ? "mt-4" : ""}>
+                {directLinks.length > 0 && (
+                  <div className={trees.length > 0 ? "mt-4" : ""}>
                     <div className="mb-2 flex flex-wrap items-center gap-2">
                       <Link2 size={14} className="text-emerald-400" />
                       <h3 className="text-sm font-semibold">Sambungan Kabel Langsung</h3>
                       <span className="text-xs text-mut">— 1 core ODC → 1 ODP, tanpa lewat splitter</span>
                     </div>
                     <div className="space-y-1.5">
-                      {peta.directLinks.map((l) => (
+                      {directLinks.map((l) => (
                         <div
                           key={l.linkId}
                           className="flex flex-wrap items-center gap-2 rounded-lg border border-line bg-panel px-2.5 py-1.5 text-xs"
