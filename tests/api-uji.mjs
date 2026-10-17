@@ -365,7 +365,7 @@ async function main() {
 
   // splitter di ODP tidak boleh mengarah ke ODC lain
   const outOdp = splDiOdp.data?.outputs?.[0];
-  const odpKeOdc = await PATCH(`/api/splitter-outputs/${outOdp.id}`, { target_type: "odc", target_id: odcId }, admin);
+  const odpKeOdc = await PATCH(`/api/splitter-outputs/${outOdp.id}`, { target_type: "odc", target_id: odcId, target_core: 1 }, admin);
   cek(
     "splitter di dalam ODP TIDAK boleh ke ODC lain → 400",
     odpKeOdc.status === 400 && /Hanya splitter di dalam ODC/.test(odpKeOdc.data?.error || ""),
@@ -381,27 +381,51 @@ async function main() {
   const odcAnakId = odcAnak.data?.id;
   cek("tambah ODC anak → 201", odcAnak.status === 201, `status ${odcAnak.status}`);
 
+  const splitterTerimaBiru = await POST("/api/splitters", { name: "SPL-UJI-TERIMA-BIRU", ratio: "1:8", odc_id: odcAnakId, input_core: 1 }, admin);
+  const splitterTerimaJingga = await POST("/api/splitters", { name: "SPL-UJI-TERIMA-JINGGA", ratio: "1:8", odc_id: odcAnakId, input_core: 1 }, admin);
+  cek("dua splitter penerima berbeda boleh memakai nomor core sama pada jalur/kabel berbeda", splitterTerimaBiru.status === 201 && splitterTerimaJingga.status === 201);
   const outKeOdcAnak = splInduk.data?.outputs?.[1];
-  const keOdcAnak = await PATCH(`/api/splitter-outputs/${outKeOdcAnak.id}`, { target_type: "odc", target_id: odcAnakId }, admin);
-  cek("output splitter ODC → ODC anak → 200", keOdcAnak.status === 200 && keOdcAnak.data?.target_type === "odc", `status ${keOdcAnak.status}`);
-  const outputGandaOdcAnak = await PATCH(
+  const keOdcAnak = await PATCH(`/api/splitter-outputs/${outKeOdcAnak.id}`, {
+    target_type: "odc", target_id: odcAnakId, target_odc_splitter_id: splitterTerimaBiru.data?.id,
+  }, admin);
+  cek("output splitter ODC → ODC anak → splitter penerima biru → 200", keOdcAnak.status === 200 && keOdcAnak.data?.target_type === "odc" && keOdcAnak.data?.target_odc_splitter_id === splitterTerimaBiru.data?.id, `status ${keOdcAnak.status}`);
+  const outputSplitterSama = await PATCH(
     `/api/splitter-outputs/${splSiklus.data?.outputs?.[2].id}`,
-    { target_type: "odc", target_id: odcAnakId },
+    { target_type: "odc", target_id: odcAnakId, target_odc_splitter_id: splitterTerimaBiru.data?.id },
     admin,
   );
-  cek("ODC anak hanya boleh punya satu koneksi output splitter → 409", outputGandaOdcAnak.status === 409, `status ${outputGandaOdcAnak.status}`);
+  cek("splitter penerima yang sama tidak menerima dua jalur → 409", outputSplitterSama.status === 409, `status ${outputSplitterSama.status}`);
+  const outputSplitterBerbeda = await PATCH(
+    `/api/splitter-outputs/${splSiklus.data?.outputs?.[2].id}`,
+    { target_type: "odc", target_id: odcAnakId, target_odc_splitter_id: splitterTerimaJingga.data?.id },
+    admin,
+  );
+  cek("ODC sama dapat menerima jalur ke splitter berbeda meski core label berulang → 200", outputSplitterBerbeda.status === 200 && outputSplitterBerbeda.data?.target_odc_splitter_id === splitterTerimaJingga.data?.id, `status ${outputSplitterBerbeda.status}`);
 
   // lingkaran: coba jadikan ODC induk sebagai anak dari ODC anak-nya
   const splDiAnak = await POST("/api/splitters", { name: "SPL-UJI-ANAK1", ratio: "1:8", odc_id: odcAnakId }, admin);
   const lingkaran = await PATCH(
     `/api/splitter-outputs/${splDiAnak.data?.outputs?.[0].id}`,
-    { target_type: "odc", target_id: odcId },
+    { target_type: "odc", target_id: odcId, target_odc_splitter_id: splIndukId },
     admin,
   );
   cek(
     "lingkaran ODC induk/anak dicegah → 400",
     lingkaran.status === 400 && /lingkaran/.test(lingkaran.data?.error || ""),
     lingkaran.data?.error,
+  );
+  const hapusReceiverBiru = await DEL(`/api/splitters/${splitterTerimaBiru.data?.id}`, admin);
+  const hapusReceiverJingga = await DEL(`/api/splitters/${splitterTerimaJingga.data?.id}`, admin);
+  cek("hapus splitter receiver tidak menghapus relasi output ke ODC", hapusReceiverBiru.status === 200 && hapusReceiverJingga.status === 200);
+  const lingkaranTanpaReceiver = await PATCH(
+    `/api/splitter-outputs/${splDiAnak.data?.outputs?.[0].id}`,
+    { target_type: "odc", target_id: odcId, target_odc_splitter_id: splIndukId },
+    admin,
+  );
+  cek(
+    "relasi ODC tanpa receiver tetap mencegah lingkaran setelah receiver dihapus → 400",
+    lingkaranTanpaReceiver.status === 400 && /lingkaran/.test(lingkaranTanpaReceiver.data?.error || ""),
+    lingkaranTanpaReceiver.data?.error,
   );
 
   // ---------------------------------------------------- 7. Core & mapping

@@ -14,9 +14,7 @@ aplikasi bisa dibuka dari browser. Aplikasi ini sengaja dibuat sangat ringan:
 > harus dipasang dari NodeSource (Langkah 3). Jangan pakai `apt install nodejs` saja.
 
 **Repo kode:** `https://github.com/thiends-88/Fiber-manajement.git`
-**Cabang yang dipakai:** `arena/34102c90-fiber-manajement`
-(versi Arena ada di cabang ini; setelah PR ke `main` selesai di-merge, clone boleh
-memakai cabang `main`.)
+**Cabang deployment:** `main` (gunakan setelah pull request perubahan disetujui dan di-merge).
 
 ---
 
@@ -160,7 +158,7 @@ membuka database.
 ## Langkah 4 — Ambil kode & build
 
 ```bash
-git clone --depth 1 --branch arena/34102c90-fiber-manajement \
+git clone --depth 1 --branch main \
   https://github.com/thiends-88/Fiber-manajement.git /opt/fiberops
 
 cd /opt/fiberops
@@ -291,7 +289,7 @@ Kalau mau memakai Docker (bukan Node langsung):
 apt install -y docker.io
 systemctl enable --now docker
 
-git clone --depth 1 --branch arena/34102c90-fiber-manajement \
+git clone --depth 1 --branch main \
   https://github.com/thiends-88/Fiber-manajement.git /opt/fiberops
 cd /opt/fiberops
 
@@ -306,17 +304,43 @@ docker run -d \
 
 ---
 
-## Update versi nanti
+## Update versi setelah perubahan di-merge ke `main`
+
+Jalankan di dalam LXC. Data database berada di `data/` (diabaikan Git), jadi
+perintah Git tidak mengganti file database. Sebelum update penting, buat snapshot
+container dari Proxmox atau backup database terlebih dahulu.
 
 ```bash
 cd /opt/fiberops
-git pull
-npm install
+git fetch origin main
+if git show-ref --verify --quiet refs/heads/main; then
+  git switch main
+else
+  git switch --track origin/main
+fi
+git pull --ff-only origin main
+npm ci
 npm run build
 systemctl restart fiberops
+systemctl status fiberops --no-pager
 ```
 
-Cek hasilnya: `systemctl status fiberops`, lalu hard-refresh browser (`Ctrl+Shift+R`).
+Bila container memakai mode Docker, build ulang image lalu ganti container aplikasi
+sambil mempertahankan volume `fiber-core-data`:
+
+```bash
+cd /opt/fiberops
+git fetch origin main
+git switch main 2>/dev/null || git switch --track origin/main
+git pull --ff-only origin main
+docker build -t fiber-core .
+docker stop fiber-core && docker rm fiber-core
+docker run -d --name fiber-core --restart unless-stopped -p 8080:8080 \
+  -v fiber-core-data:/app/data fiber-core
+```
+
+Cek hasilnya: `systemctl status fiberops` (mode LXC) atau `docker ps` (mode Docker),
+lalu hard-refresh browser (`Ctrl+Shift+R`).
 
 ---
 
@@ -441,7 +465,7 @@ echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.co
 apt update && apt install -y nodejs && node -v
 
 # 3) Kode + build
-git clone --depth 1 --branch arena/34102c90-fiber-manajement https://github.com/thiends-88/Fiber-manajement.git /opt/fiberops
+git clone --depth 1 --branch main https://github.com/thiends-88/Fiber-manajement.git /opt/fiberops
 cd /opt/fiberops && npm install && npm run build && rm -rf node_modules
 
 # 4) Service

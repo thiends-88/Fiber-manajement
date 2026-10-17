@@ -40,7 +40,7 @@ export default function SplitterManager({ parentType, parentId, title }) {
   const [modal, setModal] = useState(null);
   const [form, setForm] = useState(emptySplitter);
   const [outModal, setOutModal] = useState(null);
-  const [outForm, setOutForm] = useState({ target_type: "", target_id: "", notes: "" });
+  const [outForm, setOutForm] = useState({ target_type: "", target_id: "", target_splitter_id: "", notes: "" });
   const [toastState, setToastState] = useState(null);
   const toast = useToast(setToastState);
 
@@ -49,6 +49,20 @@ export default function SplitterManager({ parentType, parentId, title }) {
     ? odcs.find((d) => d.id === Number(parentId))
     : odps.find((d) => d.id === Number(parentId));
   const inputCoreMax = getCableInfo(parent?.cable_type)?.cores;
+  const selectedTargetOdc = odcs.find((d) => Number(d.id) === Number(outForm.target_id));
+  const odcCascadeInputs = new Set(allSplitters.flatMap((sp) =>
+    (sp.outputs || []).filter((o) => o.target_type === "splitter" && o.target_splitter_id).map((o) => Number(o.target_splitter_id)),
+  ));
+  const linkedOdcInputs = new Set(allSplitters.flatMap((sp) =>
+    (sp.outputs || [])
+      .filter((o) => o.target_type === "odc" && o.target_odc_splitter_id && Number(o.id) !== Number(outModal?.out?.id))
+      .map((o) => Number(o.target_odc_splitter_id)),
+  ));
+  const targetOdcSplitters = allSplitters.filter((sp) =>
+    Number(sp.odc_id) === Number(selectedTargetOdc?.id) &&
+    !odcCascadeInputs.has(Number(sp.id)) &&
+    !linkedOdcInputs.has(Number(sp.id)),
+  );
   const { childrenById, cascadeParentById, treeRoots } = useMemo(() => {
     const byId = new Map(splitters.map((sp) => [Number(sp.id), sp]));
     const children = new Map(splitters.map((sp) => [Number(sp.id), []]));
@@ -131,7 +145,14 @@ export default function SplitterManager({ parentType, parentId, title }) {
     setOutForm({
       target_type: out.target_type || "",
       target_id:
-        out.target_type === "odp" ? out.target_odp_id : out.target_type === "splitter" ? out.target_splitter_id : "",
+        out.target_type === "odp"
+          ? out.target_odp_id
+          : out.target_type === "odc"
+            ? out.target_odc_id
+            : out.target_type === "splitter"
+              ? out.target_splitter_id
+              : "",
+      target_splitter_id: out.target_odc_splitter_id ?? "",
       notes: out.notes || "",
     });
     setOutModal({ splitter: sp, out });
@@ -145,6 +166,7 @@ export default function SplitterManager({ parentType, parentId, title }) {
         body: {
           target_type: outForm.target_type || null,
           target_id: outForm.target_id === "" ? null : Number(outForm.target_id),
+          target_odc_splitter_id: outForm.target_type === "odc" && outForm.target_splitter_id !== "" ? Number(outForm.target_splitter_id) : null,
           notes: outForm.notes,
         },
       });
@@ -160,7 +182,7 @@ export default function SplitterManager({ parentType, parentId, title }) {
     o.target_type === "odp"
       ? o.target_odp_name
       : o.target_type === "odc"
-        ? `⇉ ${o.target_odc_name}`
+        ? `⇉ ${o.target_odc_name} · ${o.target_odc_splitter_name ?? "splitter belum dipilih"}${o.target_odc_splitter_input_core != null ? ` · core ${o.target_odc_splitter_input_core}` : ""}`
         : o.target_type === "splitter"
           ? `⇄ ${o.target_splitter_name}`
           : null;
@@ -375,43 +397,69 @@ export default function SplitterManager({ parentType, parentId, title }) {
               <select
                 className="input"
                 value={outForm.target_type}
-                onChange={(e) => setOutForm({ ...outForm, target_type: e.target.value, target_id: "" })}
+                onChange={(e) => setOutForm({ ...outForm, target_type: e.target.value, target_id: "", target_splitter_id: "" })}
               >
                 <option value="">Kosong (belum dipakai)</option>
-                <option value="odp">ODP</option>
+                <option value="odp">ODP (tujuan output)</option>
                 <option value="splitter">Splitter lain (cascade)</option>
-                <option value="odc">ODC anak (ODC lain)</option>
+                <option value="odc">ODC lain (ke splitter penerima)</option>
               </select>
             </Field>
             {outForm.target_type === "odp" && (
-              <Field label="Pilih ODP">
-                <select
-                  className="input" required
-                  value={outForm.target_id}
-                  onChange={(e) => setOutForm({ ...outForm, target_id: e.target.value })}
-                >
-                  <option value="" disabled>Pilih ODP…</option>
-                  {odps.map((p) => (
-                    <option key={p.id} value={p.id}>{p.name} — {p.odc_name}</option>
-                  ))}
-                </select>
-              </Field>
+              <>
+                <Field label="Pilih ODP tujuan">
+                  <select
+                    className="input" required
+                    value={outForm.target_id}
+                    onChange={(e) => setOutForm({ ...outForm, target_id: e.target.value })}
+                  >
+                    <option value="" disabled>Pilih ODP…</option>
+                    {odps.map((p) => (
+                      <option key={p.id} value={p.id}>{p.name} — berada di {p.odc_name}</option>
+                    ))}
+                  </select>
+                </Field>
+                <p className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-[11px] leading-relaxed text-mut">
+                  Pilih ini jika output splitter langsung menuju ODP. Jika output harus masuk ke kabinet ODC dulu, pilih “ODC lain” lalu tautkan ke splitter penerima yang tepat.
+                </p>
+              </>
             )}
             {outForm.target_type === "odc" && (
-              <Field label="Pilih ODC anak">
-                <select
-                  className="input" required
-                  value={outForm.target_id}
-                  onChange={(e) => setOutForm({ ...outForm, target_id: e.target.value })}
-                >
-                  <option value="" disabled>Pilih ODC…</option>
-                  {odcs
-                    .filter((d) => !outModal.splitter.odc_id || d.id !== outModal.splitter.odc_id)
-                    .map((d) => (
-                      <option key={d.id} value={d.id}>{d.name} — {d.olt_name}</option>
-                    ))}
-                </select>
-              </Field>
+              <>
+                <Field label="Pilih ODC tujuan">
+                  <select
+                    className="input" required
+                    value={outForm.target_id}
+                    onChange={(e) => setOutForm({ ...outForm, target_id: e.target.value, target_splitter_id: "" })}
+                  >
+                    <option value="" disabled>Pilih ODC…</option>
+                    {odcs
+                      .filter((d) => !outModal.splitter.odc_id || d.id !== outModal.splitter.odc_id)
+                      .map((d) => (
+                        <option key={d.id} value={d.id}>{d.name} — {d.olt_name}</option>
+                      ))}
+                  </select>
+                </Field>
+                {selectedTargetOdc && (
+                  <Field label="Pilih splitter penerima di ODC tujuan">
+                    <select
+                      className="input" required
+                      value={outForm.target_splitter_id}
+                      onChange={(e) => setOutForm({ ...outForm, target_splitter_id: e.target.value })}
+                    >
+                      <option value="" disabled>Pilih splitter 1:8 tujuan…</option>
+                      {targetOdcSplitters.map((sp) => (
+                        <option key={sp.id} value={sp.id}>
+                          {sp.name} ({sp.ratio}){sp.input_core != null ? ` · input core ${sp.input_core}` : " · input belum diisi"}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                )}
+                <p className="rounded-lg border border-sky-500/20 bg-sky-500/5 px-3 py-2 text-[11px] leading-relaxed text-mut">
+                  Sambungkan output ini ke splitter penerima yang tepat. Beberapa jalur boleh masuk ke ODC yang sama; nomor/warna core dapat berulang pada kabel berbeda. Pilih splitter penerima untuk membedakan jalurnya—tidak perlu mengganti core menjadi warna lain.
+                </p>
+              </>
             )}
             {outForm.target_type === "splitter" && (
               <>
