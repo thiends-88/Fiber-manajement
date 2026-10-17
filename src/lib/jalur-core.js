@@ -107,12 +107,11 @@ export function buildCoreRoutes({
     if (visitedOdc.has(id) || depth >= MAX_DEPTH) return node; // lingkaran → berhenti di sini
     const nextVisitedOdc = new Set(visitedOdc);
     nextVisitedOdc.add(id);
-    // Jika output ditautkan ke splitter tertentu, lanjutkan hanya ke splitter itu.
-    // Jalur lain boleh memakai nomor/warna core yang sama pada kabel berbeda.
-    const downstream = targetSplitter
-      ? [targetSplitter]
-      : splitters.filter((s) => Number(s.odc_id) === id && s.input_core != null && s.input_core !== "" &&
-          (targetCore == null || Number(s.input_core) === targetCore));
+    // Hanya lanjut bila splitter penerima dipilih secara eksplisit.
+    // Nomor core tidak cukup untuk menyimpulkan identitas jalur: beberapa kabel
+    // di ODC yang sama dapat memakai nomor/warna core yang sama. Data lama yang
+    // belum punya receiver tetap ditampilkan sebagai ODC tanpa mengarang cabang.
+    const downstream = targetSplitter ? [targetSplitter] : [];
     node.children = downstream
       .sort((a, b) => Number(a.input_core) - Number(b.input_core) || a.id - b.id)
       .map((s) => nodeSplitter(s, null, depth + 1, nextVisitedOdc, new Set(visitedSpl)));

@@ -155,9 +155,11 @@ export function PohonJalur({ node, feed }) {
           </div>
         ) : (
           <div className="mt-1 text-[11px] text-mut">
-            {node.core == null
-              ? "belum ada core masuk yang ditentukan"
-              : `belum ada splitter dengan input core ${node.core} di ODC ini`}
+            {node.splitterName == null
+              ? "splitter penerima belum dipilih untuk jalur ini"
+              : node.core == null
+                ? "belum ada core masuk yang ditentukan"
+                : `belum ada splitter dengan input core ${node.core} di ODC ini`}
           </div>
         )}
       </div>

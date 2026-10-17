@@ -117,7 +117,7 @@ const splJalur = [
     outputs: [
       { port: 1, target_type: "splitter", target_splitter_id: 22 }, // cascade di ODC yang sama
       { port: 2, target_type: "odp", target_odp_id: 1 }, // output → ODP
-      { port: 3, target_type: "odc", target_odc_id: 3 }, // output → ODC anak
+      { port: 3, target_type: "odc", target_odc_id: 3, target_odc_splitter_id: 23 }, // output → splitter tertentu di ODC anak
       // port 4 sengaja tidak diarahkan → harus diringkas sebagai idle
     ],
   },
@@ -213,6 +213,26 @@ cek(
   ruteODPAnak.length === 2 &&
     ruteODPAnak.some((r) => r.odpName === "ODP-CORE-2" && r.via.some((v) => v.includes("SPL-CORE-2"))) &&
     ruteODPAnak.some((r) => r.odpName === "ODP-CORE-5" && r.via.some((v) => v.includes("SPL-CORE-5"))),
+);
+const petaReceiverAmbigu = buildCoreRoutes({
+  odcs: [
+    { id: 28, name: "ODC-SUMBER" },
+    { id: 29, name: "ODC-TUJUAN" },
+  ],
+  splitters: [
+    { id: 280, odc_id: 28, name: "SPL-SUMBER", ratio: "1:4", input_core: 2, outputs: [
+      { port: 1, target_type: "odc", target_odc_id: 29, target_odc_core: 1 },
+    ] },
+    { id: 290, odc_id: 29, name: "SPL-TERIMA-A", ratio: "1:4", input_core: 1, outputs: [] },
+    { id: 291, odc_id: 29, name: "SPL-TERIMA-B", ratio: "1:4", input_core: 1, outputs: [] },
+  ],
+  odcId: 28,
+});
+const odcAmbigu = petaReceiverAmbigu.trees[0]?.root.children.find((c) => c.kind === "odc");
+cek(
+  "receiver yang tidak tercatat tidak ditebak dari core yang berulang",
+  odcAmbigu?.children.length === 0 && odcAmbigu?.splitterName == null,
+  `children=${odcAmbigu?.children.length}, receiver=${odcAmbigu?.splitterName}`,
 );
 const petaAnak = buildCoreRoutes({
   odcs: odcsJalur, odps: odpsJalur, splitters: splJalur,

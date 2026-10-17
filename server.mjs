@@ -1323,7 +1323,9 @@ const server = http.createServer(async (req, res) => {
         }
         db.prepare("UPDATE splitter_outputs SET target_type=NULL, target_splitter_id=NULL WHERE target_splitter_id=?").run(id);
         db.prepare("UPDATE splitter_outputs SET target_type=NULL, target_odc_id=NULL, target_odc_core=NULL, target_odc_splitter_id=NULL WHERE target_odc_id=?").run(id);
-        db.prepare("UPDATE splitter_outputs SET target_type=NULL, target_odc_core=NULL, target_odc_splitter_id=NULL WHERE target_odc_splitter_id=?").run(id);
+        // Pertahankan rute ke ODC, tetapi tandai receiver-nya belum dipilih.
+        // Ini menjaga graf dan validasi anti-loop tetap melihat koneksi ODC tersebut.
+        db.prepare("UPDATE splitter_outputs SET target_odc_core=NULL, target_odc_splitter_id=NULL WHERE target_odc_splitter_id=?").run(id);
         db.prepare("DELETE FROM splitters WHERE id=?").run(id);
         return send(req, res, 200, { ok: true });
       }

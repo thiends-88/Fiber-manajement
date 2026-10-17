@@ -414,6 +414,19 @@ async function main() {
     lingkaran.status === 400 && /lingkaran/.test(lingkaran.data?.error || ""),
     lingkaran.data?.error,
   );
+  const hapusReceiverBiru = await DEL(`/api/splitters/${splitterTerimaBiru.data?.id}`, admin);
+  const hapusReceiverJingga = await DEL(`/api/splitters/${splitterTerimaJingga.data?.id}`, admin);
+  cek("hapus splitter receiver tidak menghapus relasi output ke ODC", hapusReceiverBiru.status === 200 && hapusReceiverJingga.status === 200);
+  const lingkaranTanpaReceiver = await PATCH(
+    `/api/splitter-outputs/${splDiAnak.data?.outputs?.[0].id}`,
+    { target_type: "odc", target_id: odcId, target_odc_splitter_id: splIndukId },
+    admin,
+  );
+  cek(
+    "relasi ODC tanpa receiver tetap mencegah lingkaran setelah receiver dihapus → 400",
+    lingkaranTanpaReceiver.status === 400 && /lingkaran/.test(lingkaranTanpaReceiver.data?.error || ""),
+    lingkaranTanpaReceiver.data?.error,
+  );
 
   // ---------------------------------------------------- 7. Core & mapping
   console.log("\n--- 7) Core dan mapping (sambungan ODC → ODP) ---");
