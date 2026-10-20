@@ -14,6 +14,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { CABLE_TYPES, SPLITTER_RATIOS } from "./src/lib/fiber.js";
+import { INTERFACE_MODES, defaultInterfaceMode, interfaceDetails } from "./src/lib/interfaces.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Lokasi database bisa diatur lewat ARENA_DB_PATH (berguna untuk uji coba / multi-instance)
@@ -209,7 +210,7 @@ for (const stmt of MIGRATIONS) {
 db.exec(`
   UPDATE splitters
   SET input_core=NULL, input_note=NULL
-  WHERE id IN (
+  WHERE input_core IS NOT NULL AND id IN (
     SELECT target_splitter_id FROM splitter_outputs
     WHERE target_type='splitter' AND target_splitter_id IS NOT NULL
   )
@@ -316,18 +317,35 @@ if (!feederTableExisted) {
   } catch { /* kolom feeder_port_id tidak ada (database baru) */ }
 }
 
-// Lengkapi database demo lama dengan info feeder/power/sambungan (hanya baris demo)
-(function backfillDemoExtras() {
-  const odc1 = db.prepare("SELECT id FROM odcs WHERE name='ODC-001'").get();
-  const odc2 = db.prepare("SELECT id FROM odcs WHERE name='ODC-002'").get();
-  const odp1 = db.prepare("SELECT id FROM odps WHERE name='ODP-001'").get();
-  if (!odc1 || !odc2 || !odp1) return;
-  if (db.prepare("SELECT COUNT(*) n FROM core_links").get().n === 0) {
-    const ins = db.prepare("INSERT INTO core_links (odc_id, odc_core, odp_id, odp_core, notes) VALUES (?,?,?,?,?)");
-    ins.run(odc1.id, 1, odp1.id, 1, "Closure Perempatan");
-    ins.run(odc1.id, 2, odp1.id, 2, null);
+// Migrasi interface: tidak menyimpulkan port sumber dari daftar feeder ODC.
+// Shelf 1 adalah nilai awal penamaan card lama; teknisi dapat mengoreksinya.
+for (const [table, column, definition] of [
+  ["olts", "interface_mode", "TEXT NOT NULL DEFAULT 'shelf_slot_port'"],
+  ["olt_cards", "shelf", "INTEGER NOT NULL DEFAULT 1"],
+  ["olt_cards", "is_builtin", "INTEGER NOT NULL DEFAULT 0"],
+  ["olt_ports", "interface_name", "TEXT"],
+]) {
+  if (!db.prepare("SELECT 1 FROM pragma_table_info(?) WHERE name=?").get(table, column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
   }
-})();
+}
+db.exec(`
+  CREATE UNIQUE INDEX IF NOT EXISTS uq_card_position ON olt_cards(olt_id, shelf, slot);
+  CREATE TABLE IF NOT EXISTS interface_mappings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    odc_id INTEGER NOT NULL REFERENCES odcs(id) ON DELETE CASCADE,
+    core INTEGER NOT NULL CHECK(core BETWEEN 1 AND 96),
+    port_id INTEGER REFERENCES olt_ports(id) ON DELETE SET NULL,
+    notes TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(odc_id, core),
+    UNIQUE(port_id)
+  );
+`);
+
+// Sambungan baru hanya dibuat dari input eksplisit atau fixture database baru.
+// Jangan membuat sambungan berdasarkan kemiripan nama ODC/ODP pada database lama.
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -376,12 +394,42 @@ const sortByNameNatural = (rows) =>
   rows.sort((a, b) => naturalCollator.compare(String(a.name ?? ""), String(b.name ?? "")));
 const httpError = (status, message) => Object.assign(new Error(message), { status });
 
+// Satu sumber penamaan untuk API, pemilih feeder, dan tampilan lapangan.
+const PORT_SQL = `SELECT p.*, c.shelf, c.slot, c.is_builtin, c.label AS card_label,
+  c.olt_id, o.name AS olt_name, o.olt_type, o.interface_mode
+  FROM olt_ports p JOIN olt_cards c ON c.id=p.card_id JOIN olts o ON o.id=c.olt_id`;
+const withInterface = (row) => row ? { ...row, ...interfaceDetails(row) } : null;
+const getPort = (id) => withInterface(db.prepare(PORT_SQL + " WHERE p.id=?").get(Number(id)));
+const MAPPING_SQL = `SELECT m.*, d.name AS odc_name, d.olt_id AS parent_olt_id,
+  c.olt_id, o.name AS olt_name, o.olt_type, o.interface_mode,
+  c.shelf, c.slot, p.port, p.interface_name, p.status
+  FROM interface_mappings m JOIN odcs d ON d.id=m.odc_id
+  LEFT JOIN olt_ports p ON p.id=m.port_id LEFT JOIN olt_cards c ON c.id=p.card_id
+  LEFT JOIN olts o ON o.id=c.olt_id`;
+const withMappingInterface = (row) => row.port_id ? withInterface(row) : { ...row, interface_label: null, interface_cli: null };
+function ensureBuiltinCard(oltId, count = 8) {
+  const card = db.prepare("SELECT * FROM olt_cards WHERE olt_id=? AND is_builtin=1").get(Number(oltId));
+  if (card) return card;
+  const r = db.prepare("INSERT INTO olt_cards (olt_id, shelf, slot, card_type, label, port_count, is_builtin) VALUES (?,1,1,'BUILTIN','Port bawaan',?,1)")
+    .run(Number(oltId), Number(count));
+  return db.prepare("SELECT * FROM olt_cards WHERE id=?").get(r.lastInsertRowid);
+}
+function checkInterfaceName(oltId, name, excludeId = 0) {
+  if (typeof name !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9_./: -]{0,63}$/.test(name.trim())) {
+    return "Nama interface wajib diisi (maksimal 64 karakter: huruf, angka, spasi, /, _, ., :, atau -)";
+  }
+  if (db.prepare(`SELECT p.id FROM olt_ports p JOIN olt_cards c ON c.id=p.card_id
+      WHERE c.olt_id=? AND lower(trim(p.interface_name))=lower(?) AND p.id<>?`).get(Number(oltId), name.trim(), excludeId)) {
+    return "Nama interface tersebut sudah dipakai pada OLT ini";
+  }
+  return null;
+}
+
 // Validasi daftar port feeder ODC: boleh banyak, tetapi harus milik OLT induk ODC
 function checkFeederPorts(oltId, ids) {
   if (!validPositiveInt(oltId)) return "OLT tidak valid";
   const olt = db.prepare("SELECT name FROM olts WHERE id=?").get(Number(oltId));
   if (!olt) return `OLT #${oltId} tidak ditemukan`;
-  if (ids == null) return null;
   if (!Array.isArray(ids)) return "Daftar port feeder harus berupa array";
   if (!ids.every(validPositiveInt)) return "Setiap port feeder harus memiliki ID bilangan bulat positif";
   for (const raw of ids) {
@@ -397,7 +445,7 @@ function checkFeederPorts(oltId, ids) {
 }
 // Rasio splitter yang sah = rasio yang ditawarkan aplikasi (satu sumber kebenaran),
 // supaya tidak ada splitter yang redamannya tidak bisa dihitung anggaran dayanya.
-const ratioSah = (ratio) => SPLITTER_RATIOS.includes(String(ratio ?? "").trim());
+const ratioSah = (ratio) => typeof ratio === "string" && SPLITTER_RATIOS.includes(ratio.trim());
 const splitterPorts = (ratio) => (ratioSah(ratio) ? Number(String(ratio).split(":")[1]) : 0);
 const SPLITTER_SQL = `SELECT s.*, d.name AS odc_name, p.name AS odp_name
   FROM splitters s LEFT JOIN odcs d ON d.id = s.odc_id LEFT JOIN odps p ON p.id = s.odp_id`;
@@ -548,6 +596,41 @@ function parseCookies(req) {
   return out;
 }
 
+// Satu splitter hanya menerima satu input. Nomor core receiver ODC anak
+// berlaku pada kabel masuknya sendiri, bukan otomatis pada feeder langsung.
+function splitterUpstream(splitterId, excludeOutputId = 0) {
+  return db.prepare(`SELECT id FROM splitter_outputs WHERE id<>? AND (
+    (target_type='splitter' AND target_splitter_id=?) OR
+    (target_type='odc' AND target_odc_splitter_id=?)
+  ) LIMIT 1`).get(excludeOutputId, splitterId, splitterId);
+}
+function directFeederInputs(odcId, core, excludeSplitterId = 0) {
+  return db.prepare(`SELECT COUNT(*) AS n FROM splitters s
+    WHERE s.odc_id=? AND s.input_core=? AND s.id<>? AND NOT EXISTS (
+      SELECT 1 FROM splitter_outputs o WHERE
+        (o.target_type='splitter' AND o.target_splitter_id=s.id) OR
+        (o.target_type='odc' AND o.target_odc_splitter_id=s.id)
+    )`).get(odcId, Number(core), excludeSplitterId).n;
+}
+function isMappedFeederSplitter(splitter) {
+  return splitter?.odc_id != null && splitter.input_core != null &&
+    !splitterUpstream(splitter.id) &&
+    !!db.prepare("SELECT id FROM interface_mappings WHERE odc_id=? AND core=?")
+      .get(splitter.odc_id, splitter.input_core);
+}
+function validateDirectSplitterInput(odcId, core, splitterId = 0) {
+  if (odcId == null || core == null || (splitterId && splitterUpstream(splitterId))) return;
+  if (db.prepare("SELECT id FROM core_links WHERE odc_id=? AND odc_core=?").get(odcId, Number(core))) {
+    throw httpError(409, "Core feeder ini sudah dipakai kabel langsung ke ODP. Lepaskan sambungan tersebut atau pilih core lain.");
+  }
+  // Data lama yang belum dipetakan tidak ditebak. Receiver pada kabel berbeda
+  // boleh mengulang nomor core; yang dilarang ialah menduplikasi feeder terbukti.
+  if (db.prepare("SELECT id FROM interface_mappings WHERE odc_id=? AND core=?").get(odcId, Number(core)) &&
+      directFeederInputs(odcId, core, splitterId) > 0) {
+    throw httpError(409, "Core feeder terpetakan ini sudah menjadi input splitter lain. Percabangan harus melalui output splitter; untuk kabel ODC anak, pilih receiver-nya terlebih dahulu.");
+  }
+}
+
 function authUser(req, url) {
   const header = req.headers["authorization"] || "";
   const cookieToken = parseCookies(req)["fiberops_token"];
@@ -566,7 +649,7 @@ function authUser(req, url) {
   if (!token) return null;
   const row = db
     .prepare(
-      "SELECT u.id, u.email, u.full_name, u.role FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ?",
+      "SELECT u.id, u.email, u.full_name, u.role FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ? AND julianday(s.created_at) > julianday('now', '-7 days')",
     )
     .get(token);
   return row ?? null;
@@ -651,7 +734,6 @@ function seedIfEmpty() {
   const insLink = db.prepare(
     "INSERT INTO core_links (odc_id, odc_core, odp_id, odp_core, notes, created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
   );
-  insLink.run(odc1, 1, odp1, 1, "Closure Perempatan", ts, ts);
   insLink.run(odc1, 2, odp1, 2, null, ts, ts);
 
   // Port feeder ODC — satu ODC boleh beberapa port (contoh: ODC-001 memakai 2 port)
@@ -659,6 +741,12 @@ function seedIfEmpty() {
   insFeeder.run(odc1, p1);
   insFeeder.run(odc1, p2);
   insFeeder.run(odc2, p6);
+
+  // Pemetaan eksplisit fixture demo, hanya saat database baru dibuat.
+  const insMapping = db.prepare("INSERT INTO interface_mappings (odc_id, core, port_id, notes) VALUES (?,?,?,?)");
+  insMapping.run(odc1, 1, p1, "Contoh demo: periksa sambungan fisik sebelum digunakan di lapangan");
+  insMapping.run(odc1, 2, p2, "Contoh demo kabel langsung");
+  insMapping.run(odc2, 1, p6, "Contoh demo");
 
   // Splitter bertingkat sesuai logika lapangan:
   //   OLT → ODC: SPL-1 (1:4) ─cascade─ SPL-2 (1:8)  [keduanya DI DALAM ODC]
@@ -711,6 +799,7 @@ const server = http.createServer(async (req, res) => {
       if (!user.password_hash.startsWith(`${PASSWORD_HASH_PREFIX}$`)) {
         db.prepare("UPDATE users SET password_hash=? WHERE id=?").run(hashPassword(password), user.id);
       }
+      db.prepare("DELETE FROM sessions WHERE julianday(created_at) <= julianday('now','-7 days') OR julianday(created_at) IS NULL").run();
       const token = crypto.randomBytes(24).toString("base64url");
       db.prepare("INSERT INTO sessions (token, user_id) VALUES (?,?)").run(token, user.id);
       return send(
@@ -770,9 +859,13 @@ const server = http.createServer(async (req, res) => {
       });
     }
 
-    // ---------------- OLT ----------------
+    // ---------------- OLT & profil penamaan interface ----------------
     if (p === "/api/olts" && method === "GET") {
-      const rows = db.prepare("SELECT o.*, (SELECT COUNT(*) FROM olt_cards c WHERE c.olt_id=o.id) AS card_count, (SELECT COUNT(*) FROM odcs d WHERE d.olt_id=o.id) AS odc_count FROM olts o").all();
+      const rows = db.prepare(`SELECT o.*,
+        (SELECT COUNT(*) FROM olt_cards c WHERE c.olt_id=o.id AND c.is_builtin=0) AS card_count,
+        (SELECT COUNT(*) FROM olt_ports pt JOIN olt_cards c ON c.id=pt.card_id WHERE c.olt_id=o.id) AS interface_count,
+        (SELECT port_count FROM olt_cards c WHERE c.olt_id=o.id AND c.is_builtin=1 LIMIT 1) AS fixed_port_count,
+        (SELECT COUNT(*) FROM odcs d WHERE d.olt_id=o.id) AS odc_count FROM olts o`).all();
       return send(req, res, 200, sortByNameNatural(rows));
     }
     if (p === "/api/olts" && method === "POST") {
@@ -781,8 +874,15 @@ const server = http.createServer(async (req, res) => {
       if ([b.olt_type, b.location, b.ip, b.notes].some((v) => !isOptionalText(v))) {
         return send(req, res, 400, { error: "Tipe, lokasi, IP, dan catatan harus berupa teks" });
       }
-      const r = db.prepare("INSERT INTO olts (name, olt_type, location, ip, notes) VALUES (?,?,?,?,?)")
-        .run(b.name.trim(), b.olt_type || null, b.location || null, b.ip || null, b.notes || null);
+      const mode = b.interface_mode ?? defaultInterfaceMode(b.olt_type);
+      if (!INTERFACE_MODES.some((m) => m.value === mode)) return send(req, res, 400, { error: "Format interface tidak valid" });
+      const count = b.fixed_port_count ?? 8;
+      if (mode !== "shelf_slot_port" && !validIntRange(count, 1, 128)) {
+        return send(req, res, 400, { error: "Jumlah port bawaan harus antara 1 dan 128" });
+      }
+      const r = db.prepare("INSERT INTO olts (name, olt_type, location, ip, notes, interface_mode) VALUES (?,?,?,?,?,?)")
+        .run(b.name.trim(), b.olt_type || null, b.location || null, b.ip || null, b.notes || null, mode);
+      if (mode !== "shelf_slot_port") ensureBuiltinCard(r.lastInsertRowid, count);
       return send(req, res, 201, db.prepare("SELECT * FROM olts WHERE id=?").get(r.lastInsertRowid));
     }
     let m = p.match(/^\/api\/olts\/(\d+)$/);
@@ -797,8 +897,32 @@ const server = http.createServer(async (req, res) => {
         if ([b.olt_type, b.location, b.ip, b.notes].some((v) => !isOptionalText(v))) {
           return send(req, res, 400, { error: "Tipe, lokasi, IP, dan catatan harus berupa teks" });
         }
-        db.prepare("UPDATE olts SET name=?, olt_type=?, location=?, ip=?, notes=?, updated_at=? WHERE id=?")
-          .run(b.name.trim(), b.olt_type || null, b.location || null, b.ip || null, b.notes || null, now(), id);
+        if (!INTERFACE_MODES.some((m) => m.value === b.interface_mode)) return send(req, res, 400, { error: "Format interface tidak valid" });
+        if (b.interface_mode !== current.interface_mode) {
+          // PON langsung ↔ nama manual aman bila belum ada port. Jangan mengubah
+          // penamaan port aktif diam-diam atau menghapus card beserta jalurnya.
+          if (db.prepare(`SELECT p.id FROM olt_ports p JOIN olt_cards c ON c.id=p.card_id WHERE c.olt_id=? LIMIT 1`).get(id)
+              || db.prepare("SELECT id FROM olt_cards WHERE olt_id=? AND is_builtin=0 LIMIT 1").get(id)) {
+            return send(req, res, 409, { error: "Format tidak dapat diganti selama card/interface masih tercatat. Buat OLT baru untuk perangkat berbeda agar jalur lama tetap aman." });
+          }
+        }
+        const builtin = db.prepare("SELECT * FROM olt_cards WHERE olt_id=? AND is_builtin=1").get(id);
+        const count = b.fixed_port_count ?? builtin?.port_count ?? 8;
+        if (b.interface_mode !== "shelf_slot_port" && !validIntRange(count, 1, 128)) {
+          return send(req, res, 400, { error: "Jumlah port bawaan harus antara 1 dan 128" });
+        }
+        if (builtin && b.interface_mode !== "shelf_slot_port") {
+          const max = db.prepare("SELECT MAX(port) AS n FROM olt_ports WHERE card_id=?").get(builtin.id)?.n;
+          if (max > Number(count)) return send(req, res, 400, { error: `Port ${max} masih tercatat; jumlah port tidak boleh lebih kecil` });
+        }
+        db.prepare("UPDATE olts SET name=?, olt_type=?, location=?, ip=?, notes=?, interface_mode=?, updated_at=? WHERE id=?")
+          .run(b.name.trim(), b.olt_type || null, b.location || null, b.ip || null, b.notes || null, b.interface_mode, now(), id);
+        if (b.interface_mode === "shelf_slot_port") {
+          if (builtin) db.prepare("DELETE FROM olt_cards WHERE id=?").run(builtin.id);
+        } else {
+          const card = ensureBuiltinCard(id, count);
+          db.prepare("UPDATE olt_cards SET port_count=?, updated_at=? WHERE id=?").run(Number(count), now(), card.id);
+        }
         return send(req, res, 200, db.prepare("SELECT * FROM olts WHERE id=?").get(id));
       }
       if (method === "DELETE") {
@@ -808,121 +932,117 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
-    // ---------------- Card OLT ----------------
+    // ---------------- Card OLT (posisi shelf + slot) ----------------
     if (p === "/api/cards" && method === "GET") {
       const oltId = url.searchParams.get("olt_id");
       const rows = oltId
-        ? db.prepare("SELECT * FROM olt_cards WHERE olt_id=? ORDER BY slot").all(Number(oltId))
-        : db.prepare("SELECT * FROM olt_cards ORDER BY olt_id, slot").all();
+        ? db.prepare("SELECT * FROM olt_cards WHERE olt_id=? ORDER BY shelf, slot").all(Number(oltId))
+        : db.prepare("SELECT * FROM olt_cards ORDER BY olt_id, shelf, slot").all();
       return send(req, res, 200, rows);
     }
     if (p === "/api/cards" && method === "POST") {
       const b = await readBody(req);
+      const shelf = b.shelf ?? 1;
       const portCount = b.port_count ?? 8;
       const cardType = b.card_type ?? "OTHER";
-      if (!validPositiveInt(b.olt_id) || !validIntRange(b.slot, 1, 256)) {
-        return send(req, res, 400, { error: "OLT dan nomor slot yang valid wajib diisi" });
+      if (!validPositiveInt(b.olt_id) || !validIntRange(shelf, 1, 256) || !validIntRange(b.slot, 1, 256)) {
+        return send(req, res, 400, { error: "OLT, shelf, dan nomor slot yang valid wajib diisi (shelf/slot 1–256)" });
       }
-      if (!db.prepare("SELECT id FROM olts WHERE id=?").get(Number(b.olt_id))) {
-        return send(req, res, 400, { error: "OLT tidak ditemukan" });
-      }
+      const olt = db.prepare("SELECT * FROM olts WHERE id=?").get(Number(b.olt_id));
+      if (!olt) return send(req, res, 400, { error: "OLT tidak ditemukan" });
+      if (olt.interface_mode !== "shelf_slot_port") return send(req, res, 400, { error: "OLT port langsung tidak memerlukan card. Atur jumlah port dari Edit OLT." });
       if (!validIntRange(portCount, 1, 32)) return send(req, res, 400, { error: "Jumlah port card harus antara 1 dan 32" });
       if (!isText(cardType) || !isOptionalText(b.label) || !isOptionalText(b.notes)) {
         return send(req, res, 400, { error: "Tipe card, label, dan catatan harus berupa teks" });
       }
-      if (db.prepare("SELECT id FROM olt_cards WHERE olt_id=? AND slot=?").get(Number(b.olt_id), Number(b.slot))) {
-        return send(req, res, 409, { error: `Slot ${b.slot} sudah dipakai pada OLT ini` });
+      if (db.prepare("SELECT id FROM olt_cards WHERE olt_id=? AND shelf=? AND slot=?").get(Number(b.olt_id), Number(shelf), Number(b.slot))) {
+        return send(req, res, 409, { error: `Shelf ${shelf} slot ${b.slot} sudah dipakai pada OLT ini` });
       }
-      const r = db.prepare("INSERT INTO olt_cards (olt_id, slot, card_type, label, port_count, notes) VALUES (?,?,?,?,?,?)")
-        .run(Number(b.olt_id), Number(b.slot), cardType.trim(), b.label || null, Number(portCount), b.notes || null);
+      const r = db.prepare("INSERT INTO olt_cards (olt_id, shelf, slot, card_type, label, port_count, notes) VALUES (?,?,?,?,?,?,?)")
+        .run(Number(b.olt_id), Number(shelf), Number(b.slot), cardType.trim(), b.label || null, Number(portCount), b.notes || null);
       return send(req, res, 201, db.prepare("SELECT * FROM olt_cards WHERE id=?").get(r.lastInsertRowid));
     }
     m = p.match(/^\/api\/cards\/(\d+)$/);
     if (m) {
       const id = Number(m[1]);
+      const current = db.prepare("SELECT * FROM olt_cards WHERE id=?").get(id);
+      if (!current) return send(req, res, 404, { error: "Card tidak ditemukan" });
+      if (current.is_builtin) return send(req, res, 400, { error: "Port bawaan dikelola dari Edit OLT, bukan melalui card" });
       if (method === "PATCH") {
-        const body = await readBody(req);
-        const current = db.prepare("SELECT * FROM olt_cards WHERE id=?").get(id);
-        if (!current) return send(req, res, 404, { error: "Card tidak ditemukan" });
-        const b = { ...current, ...body };
-        if (!validIntRange(b.slot, 1, 256)) return send(req, res, 400, { error: "Nomor slot harus bilangan bulat antara 1 dan 256" });
+        const b = { ...current, ...await readBody(req) };
+        if (!validIntRange(b.shelf, 1, 256) || !validIntRange(b.slot, 1, 256)) return send(req, res, 400, { error: "Shelf dan slot harus bilangan bulat antara 1 dan 256" });
         if (!validIntRange(b.port_count, 1, 32)) return send(req, res, 400, { error: "Jumlah port card harus antara 1 dan 32" });
-        if (!isText(b.card_type) || !isOptionalText(b.label) || !isOptionalText(b.notes)) {
-          return send(req, res, 400, { error: "Tipe card, label, dan catatan harus berupa teks" });
-        }
-        if (db.prepare("SELECT id FROM olt_cards WHERE olt_id=? AND slot=? AND id<>?").get(current.olt_id, Number(b.slot), id)) {
-          return send(req, res, 409, { error: `Slot ${b.slot} sudah dipakai pada OLT ini` });
+        if (!isText(b.card_type) || !isOptionalText(b.label) || !isOptionalText(b.notes)) return send(req, res, 400, { error: "Tipe card, label, dan catatan harus berupa teks" });
+        if (db.prepare("SELECT id FROM olt_cards WHERE olt_id=? AND shelf=? AND slot=? AND id<>?").get(current.olt_id, Number(b.shelf), Number(b.slot), id)) {
+          return send(req, res, 409, { error: `Shelf ${b.shelf} slot ${b.slot} sudah dipakai pada OLT ini` });
         }
         const maxPort = db.prepare("SELECT MAX(port) AS n FROM olt_ports WHERE card_id=?").get(id)?.n;
-        if (maxPort != null && maxPort > Number(b.port_count)) {
-          return send(req, res, 400, { error: `Hapus atau pindahkan port ${maxPort} sebelum mengurangi jumlah port card` });
-        }
-        db.prepare("UPDATE olt_cards SET slot=?, card_type=?, label=?, port_count=?, notes=?, updated_at=? WHERE id=?")
-          .run(Number(b.slot), b.card_type.trim(), b.label || null, Number(b.port_count), b.notes || null, now(), id);
+        if (maxPort > Number(b.port_count)) return send(req, res, 400, { error: `Hapus port ${maxPort} sebelum mengurangi jumlah port card` });
+        db.prepare("UPDATE olt_cards SET shelf=?, slot=?, card_type=?, label=?, port_count=?, notes=?, updated_at=? WHERE id=?")
+          .run(Number(b.shelf), Number(b.slot), b.card_type.trim(), b.label || null, Number(b.port_count), b.notes || null, now(), id);
         return send(req, res, 200, db.prepare("SELECT * FROM olt_cards WHERE id=?").get(id));
       }
       if (method === "DELETE") {
-        const result = db.prepare("DELETE FROM olt_cards WHERE id=?").run(id);
-        if (!result.changes) return send(req, res, 404, { error: "Card tidak ditemukan" });
+        if (db.prepare("SELECT m.id FROM interface_mappings m JOIN olt_ports p ON p.id=m.port_id WHERE p.card_id=? LIMIT 1").get(id)) {
+          return send(req, res, 409, { error: "Card masih memiliki mapping interface ke core. Lepaskan mapping tersebut dahulu agar jalur tidak hilang tanpa sengaja." });
+        }
+        db.prepare("DELETE FROM olt_cards WHERE id=?").run(id);
         return send(req, res, 200, { ok: true });
       }
     }
 
-    // ---------------- Port OLT ----------------
+    // ---------------- Interface / port OLT ----------------
     if (p === "/api/ports" && method === "GET") {
       const cardId = url.searchParams.get("card_id");
-      const rows = cardId
-        ? db.prepare("SELECT * FROM olt_ports WHERE card_id=? ORDER BY port").all(Number(cardId))
-        : db.prepare(`
-            SELECT p.*, c.slot, c.label AS card_label, c.olt_id, o.name AS olt_name
-            FROM olt_ports p JOIN olt_cards c ON c.id=p.card_id JOIN olts o ON o.id=c.olt_id
-            ORDER BY p.card_id, p.port`).all();
-      return send(req, res, 200, rows);
+      const oltId = url.searchParams.get("olt_id");
+      const rows = cardId ? db.prepare(PORT_SQL + " WHERE p.card_id=? ORDER BY p.port").all(Number(cardId))
+        : oltId ? db.prepare(PORT_SQL + " WHERE c.olt_id=? ORDER BY c.shelf, c.slot, p.port").all(Number(oltId))
+        : db.prepare(PORT_SQL + " ORDER BY c.olt_id, c.shelf, c.slot, p.port").all();
+      return send(req, res, 200, rows.map(withInterface));
     }
     if (p === "/api/ports" && method === "POST") {
       const b = await readBody(req);
-      if (!validPositiveInt(b.card_id)) return send(req, res, 400, { error: "Card tidak valid" });
-      const card = db.prepare("SELECT port_count FROM olt_cards WHERE id=?").get(Number(b.card_id));
-      if (!card) return send(req, res, 400, { error: "Card tidak ditemukan" });
-      if (!validIntRange(b.port, 1, Number(card.port_count))) {
-        return send(req, res, 400, { error: `Nomor port harus antara 1 dan ${card.port_count}` });
+      let card = validPositiveInt(b.card_id) ? db.prepare("SELECT * FROM olt_cards WHERE id=?").get(Number(b.card_id)) : null;
+      if (!card && b.card_id == null && validPositiveInt(b.olt_id)) {
+        card = db.prepare("SELECT * FROM olt_cards WHERE olt_id=? AND is_builtin=1").get(Number(b.olt_id));
       }
+      if (!card) return send(req, res, 400, { error: "Card atau port bawaan OLT tidak ditemukan" });
+      if (!validIntRange(b.port, 1, Number(card.port_count))) return send(req, res, 400, { error: `Nomor port harus antara 1 dan ${card.port_count}` });
       const status = b.status ?? "inactive";
       if (!PORT_STATUSES.has(status)) return send(req, res, 400, { error: "Status port tidak valid" });
-      if ([b.sfp, b.serial, b.notes].some((v) => !isOptionalText(v))) {
-        return send(req, res, 400, { error: "SFP, serial, dan catatan harus berupa teks" });
+      if ([b.sfp, b.serial, b.notes, b.interface_name].some((v) => !isOptionalText(v))) return send(req, res, 400, { error: "Nama interface, SFP, serial, dan catatan harus berupa teks" });
+      const olt = db.prepare("SELECT * FROM olts WHERE id=?").get(card.olt_id);
+      if (olt.interface_mode === "custom") {
+        const bad = checkInterfaceName(card.olt_id, b.interface_name);
+        if (bad) return send(req, res, 400, { error: bad });
       }
-      if (db.prepare("SELECT id FROM olt_ports WHERE card_id=? AND port=?").get(Number(b.card_id), Number(b.port))) {
-        return send(req, res, 409, { error: `Port ${b.port} sudah tercatat pada card ini` });
-      }
-      const r = db.prepare("INSERT INTO olt_ports (card_id, port, sfp, serial, status, notes) VALUES (?,?,?,?,?,?)")
-        .run(Number(b.card_id), Number(b.port), b.sfp || null, b.serial || null, status, b.notes || null);
-      return send(req, res, 201, db.prepare("SELECT * FROM olt_ports WHERE id=?").get(r.lastInsertRowid));
+      if (db.prepare("SELECT id FROM olt_ports WHERE card_id=? AND port=?").get(card.id, Number(b.port))) return send(req, res, 409, { error: `Port ${b.port} sudah tercatat` });
+      const r = db.prepare("INSERT INTO olt_ports (card_id, port, interface_name, sfp, serial, status, notes) VALUES (?,?,?,?,?,?,?)")
+        .run(card.id, Number(b.port), olt.interface_mode === "custom" ? b.interface_name.trim() : null, b.sfp || null, b.serial || null, status, b.notes || null);
+      return send(req, res, 201, getPort(r.lastInsertRowid));
     }
     m = p.match(/^\/api\/ports\/(\d+)$/);
     if (m) {
       const id = Number(m[1]);
       if (method === "PATCH") {
-        const body = await readBody(req);
-        const current = db.prepare("SELECT * FROM olt_ports WHERE id=?").get(id);
+        const current = getPort(id);
         if (!current) return send(req, res, 404, { error: "Port tidak ditemukan" });
-        const b = { ...current, ...body };
-        const card = db.prepare("SELECT port_count FROM olt_cards WHERE id=?").get(current.card_id);
-        if (!card || !validIntRange(b.port, 1, Number(card.port_count))) {
-          return send(req, res, 400, { error: `Nomor port harus antara 1 dan ${card?.port_count ?? 0}` });
-        }
+        const b = { ...current, ...await readBody(req) };
+        const card = db.prepare("SELECT * FROM olt_cards WHERE id=?").get(current.card_id);
+        if (!validIntRange(b.port, 1, Number(card.port_count))) return send(req, res, 400, { error: `Nomor port harus antara 1 dan ${card.port_count}` });
         if (!PORT_STATUSES.has(b.status)) return send(req, res, 400, { error: "Status port tidak valid" });
-        if ([b.sfp, b.serial, b.notes].some((v) => !isOptionalText(v))) {
-          return send(req, res, 400, { error: "SFP, serial, dan catatan harus berupa teks" });
+        if ([b.sfp, b.serial, b.notes, b.interface_name].some((v) => !isOptionalText(v))) return send(req, res, 400, { error: "Nama interface, SFP, serial, dan catatan harus berupa teks" });
+        if (current.interface_mode === "custom") {
+          const bad = checkInterfaceName(current.olt_id, b.interface_name, id);
+          if (bad) return send(req, res, 400, { error: bad });
         }
-        if (db.prepare("SELECT id FROM olt_ports WHERE card_id=? AND port=? AND id<>?").get(current.card_id, Number(b.port), id)) {
-          return send(req, res, 409, { error: `Port ${b.port} sudah tercatat pada card ini` });
-        }
-        db.prepare("UPDATE olt_ports SET port=?, sfp=?, serial=?, status=?, notes=?, updated_at=? WHERE id=?")
-          .run(Number(b.port), b.sfp || null, b.serial || null, b.status, b.notes || null, now(), id);
-        return send(req, res, 200, db.prepare("SELECT * FROM olt_ports WHERE id=?").get(id));
+        if (db.prepare("SELECT id FROM olt_ports WHERE card_id=? AND port=? AND id<>?").get(current.card_id, Number(b.port), id)) return send(req, res, 409, { error: `Port ${b.port} sudah tercatat` });
+        db.prepare("UPDATE olt_ports SET port=?, interface_name=?, sfp=?, serial=?, status=?, notes=?, updated_at=? WHERE id=?")
+          .run(Number(b.port), current.interface_mode === "custom" ? b.interface_name.trim() : null, b.sfp || null, b.serial || null, b.status, b.notes || null, now(), id);
+        return send(req, res, 200, getPort(id));
       }
       if (method === "DELETE") {
+        if (db.prepare("SELECT id FROM interface_mappings WHERE port_id=? LIMIT 1").get(id)) return send(req, res, 409, { error: "Interface masih dipetakan ke core feeder. Lepaskan mapping dahulu sebelum menghapus port." });
         const result = db.prepare("DELETE FROM olt_ports WHERE id=?").run(id);
         if (!result.changes) return send(req, res, 404, { error: "Port tidak ditemukan" });
         return send(req, res, 200, { ok: true });
@@ -974,8 +1094,13 @@ const server = http.createServer(async (req, res) => {
           : db.prepare("SELECT port_id FROM odc_feeder_ports WHERE odc_id=? ORDER BY id").all(id).map((row) => row.port_id);
         const badFeeder = checkFeederPorts(b.olt_id, feederIds);
         if (badFeeder) return send(req, res, 400, { error: badFeeder });
+        const mapped = db.prepare("SELECT port_id FROM interface_mappings WHERE odc_id=? AND port_id IS NOT NULL").all(id);
+        if (mapped.length && (Number(b.olt_id) !== current.olt_id || mapped.some((m) => !feederIds.map(Number).includes(m.port_id)))) {
+          return send(req, res, 409, { error: "Masih ada mapping interface ke core feeder. Lepaskan atau pindahkan mapping dahulu sebelum mengganti OLT atau membuang interface feeder." });
+        }
         const capacity = cableInfo(b.cable_type).cores;
         const hasOutOfRangeCore =
+          db.prepare("SELECT id FROM interface_mappings WHERE odc_id=? AND core>? LIMIT 1").get(id, capacity) ||
           db.prepare("SELECT id FROM core_assignments WHERE source='olt_to_odc' AND odc_id=? AND core>? LIMIT 1").get(id, capacity) ||
           db.prepare("SELECT id FROM core_links WHERE odc_id=? AND odc_core>? LIMIT 1").get(id, capacity) ||
           db.prepare("SELECT id FROM splitters WHERE odc_id=? AND input_core>? LIMIT 1").get(id, capacity);
@@ -1150,17 +1275,68 @@ const server = http.createServer(async (req, res) => {
       const odcId = url.searchParams.get("odc_id");
       const base = `
         SELECT fp.id, fp.odc_id, fp.port_id,
-          o.id AS olt_id, o.name AS olt_name,
-          c.slot, c.label AS card_label,
-          pt.port, pt.sfp
+          o.id AS olt_id, o.name AS olt_name, o.olt_type, o.interface_mode,
+          c.shelf, c.slot, c.label AS card_label,
+          pt.port, pt.interface_name, pt.sfp, pt.status
         FROM odc_feeder_ports fp
         JOIN olt_ports pt ON pt.id = fp.port_id
         JOIN olt_cards c ON c.id = pt.card_id
         JOIN olts o ON o.id = c.olt_id`;
       const rows = odcId
-        ? db.prepare(base + " WHERE fp.odc_id=? ORDER BY o.name, c.slot, pt.port").all(Number(odcId))
-        : db.prepare(base + " ORDER BY fp.odc_id, o.name, c.slot, pt.port").all();
-      return send(req, res, 200, rows);
+        ? db.prepare(base + " WHERE fp.odc_id=? ORDER BY o.name, c.shelf, c.slot, pt.port").all(Number(odcId))
+        : db.prepare(base + " ORDER BY fp.odc_id, o.name, c.shelf, c.slot, pt.port").all();
+      return send(req, res, 200, rows.map(withInterface));
+    }
+
+    // ---------------- Mapping interface → core kabel feeder langsung ----------------
+    if (p === "/api/interface-mappings" && method === "GET") {
+      const odcId = url.searchParams.get("odc_id");
+      const rows = odcId
+        ? db.prepare(MAPPING_SQL + " WHERE m.odc_id=? ORDER BY m.core").all(Number(odcId))
+        : db.prepare(MAPPING_SQL + " ORDER BY m.odc_id, m.core").all();
+      return send(req, res, 200, rows.map(withMappingInterface));
+    }
+    if (p === "/api/interface-mappings" && method === "PUT") {
+      const b = await readBody(req);
+      if (!validPositiveInt(b.odc_id) || !validPositiveInt(b.port_id) || !validPositiveInt(b.core)) {
+        return send(req, res, 400, { error: "Pilih ODC, core feeder, dan interface sumber yang valid" });
+      }
+      if (!isOptionalText(b.notes)) return send(req, res, 400, { error: "Catatan mapping harus berupa teks" });
+      const odc = db.prepare("SELECT * FROM odcs WHERE id=?").get(Number(b.odc_id));
+      if (!odc) return send(req, res, 400, { error: "ODC tidak ditemukan" });
+      if (!validIntRange(b.core, 1, cableInfo(odc.cable_type)?.cores ?? 0)) {
+        return send(req, res, 400, { error: "Nomor core melebihi kapasitas kabel feeder ODC" });
+      }
+      const port = getPort(b.port_id);
+      if (!port || port.olt_id !== odc.olt_id) return send(req, res, 400, { error: "Interface harus milik OLT induk ODC ini" });
+      if (!db.prepare("SELECT id FROM odc_feeder_ports WHERE odc_id=? AND port_id=?").get(odc.id, port.id)) {
+        return send(req, res, 400, { error: "Pilih interface ini pada daftar feeder di Edit ODC terlebih dahulu" });
+      }
+      const firstInputs = db.prepare(`SELECT COUNT(*) AS n FROM splitters s
+        WHERE s.odc_id=? AND s.input_core=? AND NOT EXISTS (
+          SELECT 1 FROM splitter_outputs o WHERE
+            (o.target_type='splitter' AND o.target_splitter_id=s.id) OR
+            (o.target_type='odc' AND o.target_odc_splitter_id=s.id)
+        )`).get(odc.id, Number(b.core)).n;
+      const directInputs = db.prepare("SELECT COUNT(*) AS n FROM core_links WHERE odc_id=? AND odc_core=?").get(odc.id, Number(b.core)).n;
+      if (firstInputs + directInputs > 1) {
+        return send(req, res, 409, { error: "Core feeder ini memiliki beberapa input langsung (splitter/kabel langsung). Periksa dan koreksi sambungan ganda di Mapping Core sebelum menentukan interface asal. Percabangan harus melalui output splitter." });
+      }
+      const used = db.prepare("SELECT m.*, d.name AS odc_name FROM interface_mappings m JOIN odcs d ON d.id=m.odc_id WHERE m.port_id=?").get(port.id);
+      if (used && (used.odc_id !== odc.id || used.core !== Number(b.core))) {
+        return send(req, res, 409, { error: `${port.interface_label} sudah masuk ${used.odc_name} core ${used.core}. Satu port fisik hanya memiliki satu feeder langsung; percabangan dicatat melalui output splitter.` });
+      }
+      db.prepare(`INSERT INTO interface_mappings (odc_id, core, port_id, notes) VALUES (?,?,?,?)
+        ON CONFLICT(odc_id, core) DO UPDATE SET port_id=excluded.port_id, notes=excluded.notes, updated_at=?`)
+        .run(odc.id, Number(b.core), port.id, b.notes || null, now());
+      const row = db.prepare(MAPPING_SQL + " WHERE m.odc_id=? AND m.core=?").get(odc.id, Number(b.core));
+      return send(req, res, 200, withMappingInterface(row));
+    }
+    m = p.match(/^\/api\/interface-mappings\/(\d+)$/);
+    if (m && method === "DELETE") {
+      const result = db.prepare("DELETE FROM interface_mappings WHERE id=?").run(Number(m[1]));
+      if (!result.changes) return send(req, res, 404, { error: "Mapping interface tidak ditemukan" });
+      return send(req, res, 200, { ok: true });
     }
 
     // ---------------- Sambungan core (mapping ODC core <-> ODP core) ----------------
@@ -1201,6 +1377,9 @@ const server = http.createServer(async (req, res) => {
       if (db.prepare("SELECT id FROM core_links WHERE odp_id=? AND odp_core=?").get(Number(b.odp_id), Number(b.odp_core))) {
         return send(req, res, 409, { error: `Core ${b.odp_core} di ODP tersebut sudah terpakai sambungan lain` });
       }
+      if (directFeederInputs(Number(b.odc_id), Number(b.odc_core)) > 0) {
+        return send(req, res, 409, { error: "Core feeder ini sudah menjadi input splitter langsung. Pilih core lain; percabangan harus melalui output splitter." });
+      }
       const r = db.prepare("INSERT INTO core_links (odc_id, odc_core, odp_id, odp_core, notes) VALUES (?,?,?,?,?)")
         .run(Number(b.odc_id), Number(b.odc_core), Number(b.odp_id), Number(b.odp_core), b.notes || null);
       return send(req, res, 201, db.prepare("SELECT * FROM core_links WHERE id=?").get(r.lastInsertRowid));
@@ -1240,6 +1419,7 @@ const server = http.createServer(async (req, res) => {
       if (!isText(b.name) || !ratioSah(b.ratio)) {
         return send(req, res, 400, { error: `Nama dan rasio splitter valid wajib diisi — pilih: ${SPLITTER_RATIOS.join(", ")}` });
       }
+      b.ratio = b.ratio.trim();
       const hasOdc = b.odc_id != null && b.odc_id !== "";
       const hasOdp = b.odp_id != null && b.odp_id !== "";
       if (hasOdc === hasOdp) return send(req, res, 400, { error: "Splitter harus ditempatkan di tepat satu ODC atau ODP" });
@@ -1268,6 +1448,7 @@ const server = http.createServer(async (req, res) => {
       if (!isOptionalText(b.input_note) || !isOptionalText(b.notes)) {
         return send(req, res, 400, { error: "Keterangan input dan catatan harus berupa teks" });
       }
+      validateDirectSplitterInput(parentType === "odc" ? parentId : null, inputCore);
       const r = db.prepare("INSERT INTO splitters (odc_id, odp_id, name, ratio, input_core, input_note, notes) VALUES (?,?,?,?,?,?,?)")
         .run(parentType === "odc" ? parentId : null, parentType === "odp" ? parentId : null, b.name.trim(), b.ratio, inputCore == null ? null : Number(inputCore), b.input_note || null, b.notes || null);
       syncSplitterPorts(r.lastInsertRowid, b.ratio);
@@ -1280,17 +1461,25 @@ const server = http.createServer(async (req, res) => {
         const body = await readBody(req);
         const current = db.prepare("SELECT * FROM splitters WHERE id=?").get(id);
         if (!current) return send(req, res, 404, { error: "Splitter tidak ditemukan" });
+        for (const key of ["odc_id", "odp_id"]) {
+          if (hasOwn(body, key)) {
+            if (body[key] != null && body[key] !== "" && !validPositiveInt(body[key])) return send(req, res, 400, { error: "ID induk splitter tidak valid" });
+            const proposed = body[key] == null || body[key] === "" ? null : Number(body[key]);
+            if (proposed !== current[key]) return send(req, res, 400, { error: "Induk splitter tidak dapat dipindahkan melalui edit. Gunakan ODC/ODP tempat splitter sebenarnya berada." });
+          }
+        }
         const b = { ...current, ...body };
         if (!isText(b.name) || !ratioSah(b.ratio)) {
           return send(req, res, 400, { error: `Nama dan rasio splitter valid wajib diisi — pilih: ${SPLITTER_RATIOS.join(", ")}` });
         }
+        b.ratio = b.ratio.trim();
         if (current.odp_id != null && b.ratio !== ODP_SPLITTER_RATIO) {
           return send(req, res, 400, { error: `Splitter di ODP harus ${ODP_SPLITTER_RATIO}` });
         }
         const inputCore = b.input_core == null || b.input_core === "" ? null : b.input_core;
-        const parentCable = b.odc_id != null
-          ? db.prepare("SELECT cable_type FROM odcs WHERE id=?").get(b.odc_id)?.cable_type
-          : db.prepare("SELECT cable_type FROM odps WHERE id=?").get(b.odp_id)?.cable_type;
+        const parentCable = current.odc_id != null
+          ? db.prepare("SELECT cable_type FROM odcs WHERE id=?").get(current.odc_id)?.cable_type
+          : db.prepare("SELECT cable_type FROM odps WHERE id=?").get(current.odp_id)?.cable_type;
         const capacity = cableInfo(parentCable)?.cores;
         if (!capacity) return send(req, res, 400, { error: "Tipe kabel induk splitter tidak valid" });
         if (inputCore != null && !validIntRange(inputCore, 1, capacity)) {
@@ -1302,6 +1491,12 @@ const server = http.createServer(async (req, res) => {
         const cascadeParent = db.prepare(
           "SELECT id FROM splitter_outputs WHERE target_type='splitter' AND target_splitter_id=? LIMIT 1",
         ).get(id);
+        validateDirectSplitterInput(current.odc_id, inputCore, id);
+        const occupied = db.prepare(`SELECT port FROM splitter_outputs WHERE splitter_id=? AND port>? AND (
+          target_odp_id IS NOT NULL OR target_splitter_id IS NOT NULL OR target_odc_id IS NOT NULL OR
+          target_odc_splitter_id IS NOT NULL OR length(trim(coalesce(notes,'')))>0
+        ) ORDER BY port LIMIT 1`).get(id, splitterPorts(b.ratio));
+        if (occupied) return send(req, res, 409, { error: `Output ${occupied.port} masih memiliki sambungan atau catatan. Lepaskan/pindahkan sambungan dan simpan catatannya sebelum mengecilkan rasio.` });
         db.prepare("UPDATE splitters SET name=?, ratio=?, input_core=?, input_note=?, notes=?, updated_at=? WHERE id=?")
           .run(
             b.name.trim(),
@@ -1322,7 +1517,6 @@ const server = http.createServer(async (req, res) => {
           return send(req, res, 400, { error: "Splitter bawaan ODP bersifat permanen dan tidak bisa dihapus (ikut terhapus bila ODP-nya dihapus)" });
         }
         db.prepare("UPDATE splitter_outputs SET target_type=NULL, target_splitter_id=NULL WHERE target_splitter_id=?").run(id);
-        db.prepare("UPDATE splitter_outputs SET target_type=NULL, target_odc_id=NULL, target_odc_core=NULL, target_odc_splitter_id=NULL WHERE target_odc_id=?").run(id);
         // Pertahankan rute ke ODC, tetapi tandai receiver-nya belum dipilih.
         // Ini menjaga graf dan validasi anti-loop tetap melihat koneksi ODC tersebut.
         db.prepare("UPDATE splitter_outputs SET target_odc_core=NULL, target_odc_splitter_id=NULL WHERE target_odc_splitter_id=?").run(id);
@@ -1388,6 +1582,9 @@ const server = http.createServer(async (req, res) => {
           if (db.prepare("SELECT id FROM splitter_outputs WHERE target_type='odc' AND target_odc_splitter_id=? AND id<>? LIMIT 1").get(odcSplitterId, id)) {
             return send(req, res, 409, { error: "Splitter tujuan sudah menerima jalur masuk. Pilih splitter lain di ODC yang sama." });
           }
+          if (isMappedFeederSplitter(db.prepare("SELECT * FROM splitters WHERE id=?").get(odcSplitterId))) {
+            return send(req, res, 409, { error: "Splitter tujuan masih memakai feeder yang dipetakan ke interface OLT. Lepaskan mapping feeder itu atau pilih receiver lain sebelum mengganti sumber input." });
+          }
           if (odcReaches(odcId, owner)) {
             return send(req, res, 400, { error: "Akan membentuk lingkaran ODC induk/anak" });
           }
@@ -1402,7 +1599,7 @@ const server = http.createServer(async (req, res) => {
           if (!validPositiveInt(b.target_id)) return send(req, res, 400, { error: "Splitter tujuan tidak valid" });
           splId = Number(b.target_id);
           const source = db.prepare("SELECT id, odc_id, odp_id FROM splitters WHERE id=?").get(out.splitter_id);
-          const destination = db.prepare("SELECT id, odc_id, odp_id FROM splitters WHERE id=?").get(splId);
+          const destination = db.prepare("SELECT * FROM splitters WHERE id=?").get(splId);
           if (!destination) return send(req, res, 400, { error: "Splitter tujuan tidak ditemukan" });
           if (splId === out.splitter_id) {
             return send(req, res, 400, { error: "Splitter tidak bisa di-cascade ke dirinya sendiri" });
@@ -1412,10 +1609,11 @@ const server = http.createServer(async (req, res) => {
           if (!sameOdc && !sameOdp) {
             return send(req, res, 400, { error: "Cascade hanya boleh menghubungkan splitter dalam ODC/ODP yang sama; gunakan tujuan ODP atau ODC anak untuk keluar lokasi" });
           }
-          if (db.prepare(
-            "SELECT id FROM splitter_outputs WHERE target_type='splitter' AND target_splitter_id=? AND id<>? LIMIT 1",
-          ).get(splId, id)) {
+          if (splitterUpstream(splId, id)) {
             return send(req, res, 409, { error: "Splitter tujuan sudah menerima input dari output lain" });
+          }
+          if (isMappedFeederSplitter(destination)) {
+            return send(req, res, 409, { error: "Splitter tujuan masih memakai feeder yang dipetakan ke interface OLT. Lepaskan mapping feeder itu terlebih dahulu sebelum menjadikannya tahap cascade." });
           }
           if (splitterReaches(splId, out.splitter_id)) {
             return send(req, res, 400, { error: "Cascade akan membentuk lingkaran antar-splitter" });

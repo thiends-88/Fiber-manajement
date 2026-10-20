@@ -87,11 +87,40 @@ lapangan.
      Klik simpul untuk menyorot jalurnya dan melihat **"Alur core sampai ke
      sini"** — rantai penuh dari OLT ke simpul itu (mis. `OLT-PST-01 → ODC-001 →
      SPL-1 → SPL-2 → ODP-001`), jawaban cepat untuk "core ini datang dari mana?".
-9. **Laporan** — ekspor CSV + manajemen user berbasis peran (admin/operator/user).
+9. **Laporan** — tab **Per Interface** dengan filter OLT/interface, ringkasan
+   ODC/ODP unik dan rincian jalur sampai ODP; CSV/PDF mengikuti filter yang sama.
+   Jalur belum dipetakan/perlu diperiksa tetap terpisah. Laporan Alur Core ODC,
+   Power ODP dan Rekap Core tetap tersedia. Akses berbasis peran (admin/operator/user).
 
 **Database sederhana versi Arena:** SQLite bawaan Node (`node:sqlite`) dalam
 satu file `data/fiberops.db`. Tidak ada Supabase, tidak ada koneksi keluar.
 Hapus file tersebut untuk mereset ke data demo.
+
+## Interface OLT dan penelusuran sampai ODP
+
+- **ZTE C300/C320:** identitas `GPON 1/1/1` dari shelf / slot / port, dengan
+  pratinjau nama CLI `gpon-olt_1/1/1`. Posisi dan kapasitas card mengikuti perangkat.
+- **Multi-vendor:** profil port PON langsung (mis. HSGQ) tanpa form card, atau nama
+  interface manual sesuai model OLT. Bukan integrasi SSH/SNMP/monitoring otomatis.
+- **Pemetaan eksplisit:** pilih feeder di Edit ODC, lalu catat interface → core
+  kabel feeder pada **Mapping Core → Interface OLT → Core Feeder**. Bagian yang
+  sama tersedia pada detail ODC. Daftar feeder saja tidak menentukan asal core.
+- **Alur Core / Diagram:** filter OLT + interface hanya menampilkan cabang sumber
+  tersebut, termasuk cascade dan ODC anak. ODC/jalur masuk berbeda tidak digabung
+  sehingga sumber tidak tertukar pada kabinet bersama.
+- **Detail ODP:** tampilkan semua jalur asal hingga interface OLT. Tautan interface
+  membuka Alur Core dengan filter yang sesuai; pilihan juga tersimpan pada URL.
+- **Laporan → Per Interface:** pilih OLT dan interface untuk membaca core
+  feeder (warna/tube), output splitter, ODC anak dan ODP tujuan. Pencarian
+  memilih interface beserta seluruh cabangnya. CSV/PDF memuat hasil filter,
+  status manual, lokasi dan catatan; ODP dihitung unik walau memiliki beberapa
+  jalur. Tersedia Muat ulang, port tanpa mapping, dan kelompok sumber belum pasti.
+- **Data lama aman:** migrasi tidak membuat mapping secara otomatis. Tersedia
+  penanda/filter **Belum dipetakan**, perlindungan hapus port/card/feeder yang masih
+  dipakai, dan peringatan input core ganda. Status port tetap catatan manual.
+
+**Panduan teknisi, contoh ZTE, penyiapan HSGQ, dan cakupan model kabel:**
+[PANDUAN-INTERFACE.md](PANDUAN-INTERFACE.md).
 
 ## Tampilan (mode + warna)
 
@@ -161,9 +190,13 @@ dan menyebutkan rutenya. Port server bisa diganti: `ARENA_API_PORT=3000 npm run 
 ## Uji otomatis lainnya (sebelum masuk Proxmox)
 
 ```bash
-npm test              # logika + API + tata letak runtime (tidak butuh server jalan)
-npm run test:logic    # topologi, alur core, data kabel, peta jalur core (murni, 45 pemeriksaan)
-npm run test:api      # login, hak akses, CRUD semua entitas, penjaga validasi (76 pemeriksaan)
+npm run build         # siapkan dist untuk uji tata letak runtime
+npm test              # seluruh regresi, termasuk audit sesi, data, dan interaksi UI
+npm run test:logic    # topologi, alur core, data kabel, peta jalur core (murni, 70 pemeriksaan)
+npm run test:api      # login, hak akses, CRUD semua entitas, penjaga validasi
+npm run test:interfaces # penamaan, sumber jalur, API baru, persistensi, migrasi
+npm run test:interfaces:ui # alur pencatatan interface → ODC → mapping → ODP
+npm run test:audit    # 42 skenario tambahan: sesi, pengamanan sambungan, race UI
 npm run test:layout   # server tetap jalan hanya dengan file yang disalin Dockerfile
 npm run test:render   # semua halaman ter-render (butuh server jalan)
 ```
@@ -175,6 +208,10 @@ lingkaran), mapping core (core ganda → 409), manajemen user, dashboard/laporan
 input rusak tidak membuat server mati, serta penjaga bahwa **API tidak lagi
 mengirim field redaman/daya** (`tx_power`, `rx_power`, `power_dbm`,
 `feeder_loss_db`, `loss_db`).
+
+Hasil audit dan perbaikan alur, aturan receiver/kabel yang dipertahankan,
+serta batas pengujian dicatat di **[AUDIT-ALUR.md](AUDIT-ALUR.md)**.
+Sesi diverifikasi ke server saat membuka aplikasi dan berlaku maksimal tujuh hari.
 
 Panduan **instalasi lengkap di Proxmox** — jalur utama **LXC Ubuntu 24.04**
 (buat container, IP statis via netplan, install Node 22.5+, service systemd,
@@ -197,6 +234,9 @@ lihat **[DEPLOY-PROXMOX.md](DEPLOY-PROXMOX.md)**. Tersedia juga `Dockerfile`.
 | File | Isi |
 | --- | --- |
 | `server.mjs` | API HTTP + skema & seed SQLite (tanpa dependensi npm), termasuk migrasi otomatis DB lama |
+| `src/lib/interfaces.js` | Profil dan penamaan interface multi-vendor |
+| `src/lib/interface-routes.js` | Penelusuran sumber interface ke ODP tanpa menebak daftar feeder |
+| `src/lib/interface-topology.js` | Graf terpisah per core/jalur masuk untuk menjaga sumber tetap benar |
 | `src/lib/fiber.js` | Konstanta kabel, warna core TIA/EIA-598, status |
 | `src/lib/topology.js` | Tata letak diagram + `buildUpstreamChains()` (alur core ke hulu) — murni, bisa diuji via node |
 | `src/components/JalurCore.jsx` | Komponen gambar alur core (chip warna core, pohon jalur) — dipakai Alur Core & Mapping |

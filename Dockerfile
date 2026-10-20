@@ -8,7 +8,7 @@ FROM node:22-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
-COPY index.html vite.config.js ./
+COPY index.html vite.config.js server.mjs ./
 COPY src ./src
 RUN npm run build
 
@@ -19,6 +19,7 @@ WORKDIR /app
 COPY --from=build /app/server.mjs ./
 # server.mjs memakai daftar rasio splitter dari src/lib/fiber.js (satu sumber kebenaran)
 COPY --from=build /app/src/lib/fiber.js ./src/lib/fiber.js
+COPY --from=build /app/src/lib/interfaces.js ./src/lib/interfaces.js
 COPY --from=build /app/dist ./dist
 ENV ARENA_API_PORT=8080
 EXPOSE 8080

@@ -3,7 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "description": "FiberOps Arena — aplikasi manajemen fiber optik dengan database SQLite lokal",
+  "description": "FiberOps Arena \u2014 aplikasi manajemen fiber optik dengan database SQLite lokal",
   "scripts": {
     "dev": "vite",
     "api": "node server.mjs",
@@ -13,7 +13,12 @@
     "test:logic": "node tests/logic-uji.mjs",
     "test:api": "node tests/api-uji.mjs",
     "test:layout": "node tests/layout-uji.mjs",
-    "test": "npm run test:logic && npm run test:api && npm run test:layout"
+    "test": "npm run test:logic && npm run test:interfaces && npm run test:laporan && npm run test:api && npm run test:layout && npm run test:interfaces:ui && npm run test:audit",
+    "test:interfaces": "node tests/interfaces-logic-uji.mjs && node tests/interfaces-api-uji.mjs",
+    "test:interfaces:ui": "vite build --ssr tests/interfaces-ui.jsx --outDir .uji-interfaces --logLevel error && node tests/interfaces-ui.mjs",
+    "test:laporan": "node tests/interface-report-uji.mjs",
+    "test:audit:ui": "vite build --ssr tests/audit-ui.jsx --outDir .uji-audit --logLevel error && node tests/audit-ui.mjs",
+    "test:audit": "node tests/audit-client.mjs && node tests/audit-api.mjs && npm run test:audit:ui"
   },
   "dependencies": {
     "jspdf": "^4.2.1",

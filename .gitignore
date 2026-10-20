@@ -10,3 +10,9 @@ data/
 *.log
 .env
 .uji-out/
+
+# Artefak uji interaksi interface
+.uji-interfaces/
+
+# Artefak regresi audit alur
+.uji-audit/

@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Boxes, Download, ExternalLink, Eye, FileText, Network, Table2, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Boxes, Download, ExternalLink, Eye, FileText, Network, RefreshCw, Table2, Waypoints, X } from "lucide-react";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 import { api } from "../lib/api.js";
@@ -7,33 +7,30 @@ import { Badge, Card, Empty, Field, PageHeader, SearchBox, Toast, matchesQuery, 
 import { STATUS, colorForCoreInCable, coresPerTube, getCableInfo, tubeForCoreInCable } from "../lib/fiber.js";
 import { buildCoreRoutes, daftarRuteOdp } from "../lib/jalur-core.js";
 import { CoreChip } from "../components/JalurCore.jsx";
+import InterfaceReport from "../components/InterfaceReport.jsx";
+import { loadNetworkData } from "../lib/network-data.js";
+import { interfaceLabel } from "../lib/interfaces.js";
+import { buildInterfaceReport, filterInterfaceReport, interfaceReportExport, summarizeInterfaceReport } from "../lib/interface-report.js";
+import { createInterfaceReportPdf, pdfReportText } from "../lib/interface-report-pdf.js";
+import { downloadCsv, reportDate } from "../lib/report-csv.js";
 
 const TABS = [
+  { id: "interface", label: "Per Interface", icon: Waypoints },
   { id: "odc", label: "Alur Core ODC", icon: Boxes },
   { id: "odp", label: "Power ODP", icon: Network },
   { id: "rekap", label: "Rekap Core", icon: Table2 },
 ];
 
-const warnaCore = (core, cableType) => colorForCoreInCable(core, coresPerTube(cableType)).name;
+const warnaCore = (core, cableType) => core == null ? "" : colorForCoreInCable(core, coresPerTube(cableType)).name;
 const tubeCore = (core, cableType) => tubeForCoreInCable(core, coresPerTube(cableType));
 
-function unduhCsv(nama, head, rows) {
-  const cell = (value) => {
-    let text = String(value ?? "");
-    if (/^\s*[=+@-]/.test(text)) text = `'${text}`;
-    return `"${text.replaceAll('"', '""')}"`;
-  };
-  const lines = [head.join(";"), ...rows.map((r) => r.map(cell).join(";"))];
-  const blob = new Blob(["\uFEFF" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
-  const a = document.createElement("a");
-  const objectUrl = URL.createObjectURL(blob);
-  a.href = objectUrl;
-  a.download = `${nama}-${new Date().toISOString().slice(0, 10)}.csv`;
-  a.rel = "noopener";
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+const EMPTY_NETWORK = { olts: [], ports: [], odcs: [], odps: [], splitters: [], links: [], cores: [], feederPorts: [], interfaceMappings: [] };
+
+// Keanggotaan feeder bukan sumber setiap core. Laporan ODC lama juga memakai
+// hasil penelusuran yang telah dikonfirmasi, bukan daftar seluruh feeder ODC.
+function sourceLabel(origins, odc) {
+  const names = (origins || []).map((o) => `${o.olt?.name || odc.olt_name || "OLT"} / ${interfaceLabel(o.port)}`);
+  return [...new Set(names)].join(" | ") || `${odc.olt_name || "OLT"} / Interface asal belum dipetakan`;
 }
 
 /**
@@ -47,19 +44,21 @@ function PratinjauPdf({ bytes }) {
   const [memuat, setMemuat] = useState(true);
 
   useEffect(() => {
-    let batal = false;
+    let batal = false, loadingTask, renderTask;
     (async () => {
       try {
         setMemuat(true);
         setErr("");
         const pdfjs = await import("pdfjs-dist");
         const worker = await import("pdfjs-dist/build/pdf.worker.min.mjs?url");
+        if (batal) return;
         // Vite development can emit an absolute worker URL on the sandbox's
         // private IP. Rebase only the path onto the browser-visible app origin
         // so the preview iframe can fetch the module same-origin.
         const workerAsset = new URL(worker.default, window.location.href);
         pdfjs.GlobalWorkerOptions.workerSrc = `${window.location.origin}${workerAsset.pathname}${workerAsset.search}`;
-        const pdf = await pdfjs.getDocument({ data: bytes.slice(0) }).promise;
+        loadingTask = pdfjs.getDocument({ data: bytes.slice(0) });
+        const pdf = await loadingTask.promise;
         if (batal) return;
         const host = hostRef.current;
         if (!host) return;
@@ -75,7 +74,9 @@ function PratinjauPdf({ bytes }) {
           canvas.style.height = "auto";
           canvas.className = "mb-3 rounded-lg border border-line bg-white shadow";
           host.appendChild(canvas);
-          await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
+          renderTask = page.render({ canvasContext: canvas.getContext("2d"), viewport });
+          await renderTask.promise;
+          renderTask = null;
         }
         if (!batal) setMemuat(false);
       } catch (e) {
@@ -87,6 +88,8 @@ function PratinjauPdf({ bytes }) {
     })();
     return () => {
       batal = true;
+      renderTask?.cancel();
+      if (loadingTask) Promise.resolve(loadingTask.destroy()).catch(() => {});
     };
   }, [bytes]);
 
@@ -100,17 +103,17 @@ function PratinjauPdf({ bytes }) {
 }
 
 export default function Laporan() {
-  const [tab, setTab] = useState("odc");
+  const [tab, setTab] = useState("interface");
   const [error, setError] = useState("");
 
-  // Data mentah untuk laporan alur
-  const [odcs, setOdcs] = useState([]);
-  const [odps, setOdps] = useState([]);
-  const [splitters, setSplitters] = useState([]);
-  const [links, setLinks] = useState([]);
-  const [cores, setCores] = useState([]);
-  const [feederPorts, setFeederPorts] = useState([]);
+  const [network, setNetwork] = useState(null);
+  const { olts, odcs, odps, splitters, links, cores } = network || EMPTY_NETWORK;
   const [rekap, setRekap] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const requestId = useRef(0);
+  const [filterOlt, setFilterOlt] = useState("all");
+  const [filterInterface, setFilterInterface] = useState("all");
+  const [interfaceQuery, setInterfaceQuery] = useState("");
 
   const [filterOdc, setFilterOdc] = useState("all");
   const [q, setQ] = useState("");
@@ -120,19 +123,46 @@ export default function Laporan() {
   const [toastState, setToastState] = useState(null);
   const toast = useToast(setToastState);
 
-  useEffect(() => {
-    Promise.all([
-      api("/api/odcs"), api("/api/odps"), api("/api/splitters"),
-      api("/api/links"), api("/api/cores"), api("/api/feeder-ports"), api("/api/laporan"),
-    ])
-      .then(([d, p, s, l, c, f, r]) => {
-        setOdcs(d); setOdps(p); setSplitters(s); setLinks(l); setCores(c); setFeederPorts(f); setRekap(r);
-      })
-      .catch((e) => {
-        setError(e.message);
-        setRekap([]);
-      });
+  const load = useCallback(async () => {
+    const id = ++requestId.current;
+    setLoading(true); setError("");
+    try {
+      const [data, counts] = await Promise.all([loadNetworkData(), api("/api/laporan")]);
+      if (id !== requestId.current) return;
+      setNetwork(data); setRekap(counts);
+    } catch (e) {
+      if (id === requestId.current) setError(e.message);
+    } finally {
+      if (id === requestId.current) setLoading(false);
+    }
   }, []);
+  useEffect(() => { load(); return () => { requestId.current++; }; }, [load]);
+  const pdfUrl = pdfView?.url;
+  useEffect(() => {
+    if (!pdfUrl) return;
+    const close = (e) => { if (e.key === "Escape") setPdfView(null); };
+    window.addEventListener("keydown", close);
+    return () => { window.removeEventListener("keydown", close); setTimeout(() => URL.revokeObjectURL(pdfUrl), 1000); };
+  }, [pdfUrl]);
+
+  const interfaceReport = useMemo(() => buildInterfaceReport(network || EMPTY_NETWORK), [network]);
+  const interfaceItems = useMemo(() => filterInterfaceReport(interfaceReport.items, {
+    oltId: filterOlt, portId: filterInterface, query: interfaceQuery,
+  }), [interfaceReport, filterOlt, filterInterface, interfaceQuery]);
+  const interfaceSummary = useMemo(() => summarizeInterfaceReport(interfaceItems), [interfaceItems]);
+  const interfaceExport = useMemo(() => interfaceReportExport(interfaceItems), [interfaceItems]);
+  const interfaceOptions = useMemo(() => interfaceReport.items.filter((i) => i.port && (filterOlt === "all" || String(i.port.olt_id) === filterOlt)), [interfaceReport, filterOlt]);
+  const selectedInterface = interfaceOptions.find((i) => String(i.port.id) === filterInterface);
+  const selectedOlt = olts.find((o) => String(o.id) === filterOlt);
+  const invalidOlt = filterOlt !== "all" && !selectedOlt;
+  const invalidInterface = !["all", "unmapped"].includes(filterInterface) && !selectedInterface;
+  const interfaceFilterDescription = [
+    filterOlt === "all" ? "Semua OLT" : selectedOlt?.name || "OLT tidak tersedia",
+    filterInterface === "all" ? "Semua interface dan jalur belum dipetakan" : filterInterface === "unmapped" ? "Sumber belum dipetakan"
+      : `${selectedInterface?.olt?.name || selectedInterface?.port.olt_name || "OLT"} / ${interfaceLabel(selectedInterface?.port)}`,
+    interfaceQuery.trim() ? `Pencarian: "${interfaceQuery.trim()}" (seluruh jalur interface yang cocok)` : "",
+  ].filter(Boolean).join(" / ");
+  const unconnectedCount = filterInterface === "all" && !interfaceQuery.trim() ? interfaceReport.routes.unconnectedOdps.filter((p) => filterOlt === "all" || odcs.some((d) => d.id === p.odc_id && String(d.olt_id) === filterOlt)).length : 0;
 
   // ---------- Laporan 1: alur core per ODC (sumber → splitter → tujuan) ----------
   const barisAlur = useMemo(() => {
@@ -141,24 +171,18 @@ export default function Laporan() {
       if (filterOdc !== "all" && d.id !== Number(filterOdc)) continue;
       const myLinks = links.filter((l) => l.odc_id === d.id);
       const peta = buildCoreRoutes({ odcs, odps, splitters, links: myLinks, cores, odcId: d.id });
-      const rute = daftarRuteOdp(peta.trees);
-      const feeder = feederPorts
-        .filter((f) => f.odc_id === d.id)
-        .map((f) => `${f.card_label || `Card ${f.slot}`} p${f.port}`)
-        .join(" · ");
-      const sumber = `${d.olt_name}${feeder ? ` (${feeder})` : ""}`;
-
       for (const t of peta.trees) {
-        const rs = rute.filter((r) => r.core === t.core);
+        const sumber = sourceLabel(interfaceReport.routes.splitterOrigins.get(Number(t.root.id)), d);
+        const rs = daftarRuteOdp([t]);
         if (rs.length === 0) {
           hasil.push({
-            key: `${d.id}-c${t.core}-idle`, odc: d, sumber, core: t.core,
+            key: `${d.id}-spl${t.root.id}-idle`, odc: d, sumber, core: t.core,
             jalur: `${t.root.name} (${t.root.ratio})`, tujuan: "— output belum diarahkan",
           });
         }
         for (const r of rs) {
           hasil.push({
-            key: `${d.id}-c${t.core}-${r.odpId ?? `odc${r.odcAnakId}`}-${r.via.join("|")}`,
+            key: `${d.id}-spl${t.root.id}-${r.odpId ?? `odc${r.odcAnakId}`}-${r.via.join("|")}`,
             odc: d, sumber, core: t.core, jalur: r.via.join(" → "),
             tujuan: r.odpName
               ? `${r.odpName}${r.odcName ? ` · ${r.odcName}` : ""}`
@@ -167,6 +191,8 @@ export default function Laporan() {
         }
       }
       for (const l of myLinks) {
+        const group = interfaceReport.routes.groups.find((g) => Number(g.odc.id) === Number(d.id) && g.core === Number(l.odc_core));
+        const sumber = sourceLabel(group ? [{ olt: group.olt, port: group.port }] : [], d);
         hasil.push({
           key: `${d.id}-link-${l.id}`, odc: d, sumber, core: l.odc_core,
           jalur: "kabel langsung (tanpa splitter)",
@@ -177,7 +203,7 @@ export default function Laporan() {
     return hasil
       .filter((b) => matchesQuery(q, b.odc.name, b.sumber, `core ${b.core}`, warnaCore(b.core, b.odc.cable_type), b.jalur, b.tujuan))
       .sort((a, b) => a.odc.name.localeCompare(b.odc.name, "id", { numeric: true }) || a.core - b.core);
-  }, [odcs, odps, splitters, links, cores, feederPorts, filterOdc, q]);
+  }, [odcs, odps, splitters, links, cores, interfaceReport, filterOdc, q]);
 
   // ---------- Laporan 2: power ODP (core warna apa, datang dari mana) ----------
   const barisOdp = useMemo(() => {
@@ -222,14 +248,15 @@ export default function Laporan() {
 
   // Data ekspor (dipakai bersama CSV dan PDF) — mengikuti tab + filter + pencarian aktif
   function dataEkspor() {
+    if (tab === "interface") return interfaceExport;
     if (tab === "odc") {
       return {
         judul: "Laporan Alur Core ODC",
         slug: "laporan-alur-core-odc",
-        head: ["ODC", "Sumber (OLT · feeder)", "Core", "Warna", "Tube", "Jalur Splitter", "Tujuan"],
+        head: ["ODC", "Interface sumber (OLT)", "Core", "Warna", "Tube", "Jalur Splitter", "Tujuan"],
         rows: barisAlur.map((b) => [
           b.odc.name, b.sumber, b.core,
-          warnaCore(b.core, b.odc.cable_type), `Tube ${tubeCore(b.core, b.odc.cable_type)}`,
+          warnaCore(b.core, b.odc.cable_type), b.core == null ? "" : `Tube ${tubeCore(b.core, b.odc.cable_type)}`,
           b.jalur, b.tujuan,
         ]),
       };
@@ -277,7 +304,7 @@ export default function Laporan() {
   function exportCsv() {
     try {
       const d = dataEkspor();
-      unduhCsv(d.slug, d.head, d.rows);
+      downloadCsv(d.slug, d.head, d.rows);
       toast("CSV dibuat — cek folder unduhan. Bila tidak muncul, buka preview di tab browser terpisah.");
     } catch (e) {
       toast(`Gagal membuat CSV: ${e.message}`, "error");
@@ -287,8 +314,10 @@ export default function Laporan() {
   // PDF: judul + tanggal + keterangan filter, lalu tabel data yang sama dengan CSV
   function bikinPdf() {
     const d = dataEkspor();
+    const createdAt = new Date();
+    if (tab === "interface") return { doc: createInterfaceReportPdf(interfaceItems, { filterDescription: interfaceFilterDescription, generatedAt: createdAt }), slug: d.slug, createdAt };
     const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
-    const tanggal = new Date().toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" });
+    const tanggal = createdAt.toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" });
     const odcAktif = filterOdc === "all" ? "Semua ODC" : odcs.find((x) => x.id === Number(filterOdc))?.name ?? "";
 
     doc.setFontSize(14);
@@ -297,17 +326,20 @@ export default function Laporan() {
     doc.setTextColor(110);
     const keterangan = [
       `Dicetak: ${tanggal}`,
-      tab !== "rekap" ? `Filter: ${odcAktif}` : null,
-      q.trim() ? `Pencarian: "${q.trim()}"` : null,
+      ...(tab === "rekap" ? [
+        `Segmen: ${source === "all" ? "Semua" : source === "olt_to_odc" ? "OLT -> ODC" : "ODC -> ODP"}`,
+        `Status: ${status === "all" ? "Semua" : STATUS[status]?.label || status}`,
+      ] : [`Filter: ${odcAktif}`, q.trim() ? `Pencarian: "${q.trim()}"` : null]),
       `${d.rows.length} baris`,
     ].filter(Boolean).join("  ·  ");
-    doc.text(keterangan, 14, 20);
+    const lines = doc.splitTextToSize(pdfReportText(keterangan), doc.internal.pageSize.getWidth() - 28);
+    doc.text(lines, 14, 20);
     doc.setTextColor(0);
 
     autoTable(doc, {
-      head: [d.head],
-      body: d.rows,
-      startY: 25,
+      head: [d.head.map(pdfReportText)],
+      body: d.rows.map((r) => r.map(pdfReportText)),
+      startY: 23 + lines.length * 4,
       styles: { fontSize: 7.5, cellPadding: 1.6, overflow: "linebreak" },
       headStyles: { fillColor: [16, 98, 134], textColor: 255 },
       alternateRowStyles: { fillColor: [244, 248, 250] },
@@ -323,13 +355,13 @@ export default function Laporan() {
         doc.setTextColor(0);
       },
     });
-    return { doc, slug: d.slug };
+    return { doc, slug: d.slug, createdAt };
   }
 
   function bukaPratinjau(unduhDulu) {
     try {
-      const { doc, slug } = bikinPdf();
-      const nama = `${slug}-${new Date().toISOString().slice(0, 10)}.pdf`;
+      const { doc, slug, createdAt } = bikinPdf();
+      const nama = `${slug}-${reportDate(createdAt)}.pdf`;
       if (unduhDulu) doc.save(nama);
       setPdfView({
         url: URL.createObjectURL(doc.output("blob")),
@@ -346,17 +378,17 @@ export default function Laporan() {
   const lihatPdf = () => bukaPratinjau(false);
 
   function tutupPdf() {
-    if (pdfView?.url) setTimeout(() => URL.revokeObjectURL(pdfView.url), 1000);
     setPdfView(null);
   }
 
-  const adaEkspor = tab === "odc" ? barisAlur.length > 0 : tab === "odp" ? barisOdp.length > 0 : rekapFiltered.length > 0;
+  const adaEkspor = !loading && !error && (tab === "interface" ? interfaceItems.length > 0 : tab === "odc" ? barisAlur.length > 0 : tab === "odp" ? barisOdp.length > 0 : rekapFiltered.length > 0);
 
   return (
     <div>
-      <PageHeader title="Laporan" desc="Alur core per ODC, power ODP, dan rekap penugasan core.">
+      <PageHeader title="Laporan" desc="Laporan per interface OLT sampai ODP, alur core ODC, dan rekap core. Ekspor mengikuti filter aktif.">
         <div className="flex flex-wrap gap-2">
-          <button className="btn" onClick={lihatPdf} disabled={!adaEkspor} title="Buka PDF di tab baru">
+          <button className="btn" onClick={load} disabled={loading} title="Muat ulang data laporan"><RefreshCw size={15} /> Muat ulang</button>
+          <button className="btn" onClick={lihatPdf} disabled={!adaEkspor} title="Pratinjau PDF sesuai filter aktif">
             <Eye size={15} /> Lihat PDF
           </button>
           <button className="btn btn-primary" onClick={unduhPdf} disabled={!adaEkspor}>
@@ -369,12 +401,16 @@ export default function Laporan() {
       </PageHeader>
 
       {/* Tab */}
-      <div className="mb-4 flex flex-wrap gap-2">
+      <div className="mb-4 flex flex-wrap gap-2" role="tablist" aria-label="Jenis laporan">
         {TABS.map((t) => {
           const Icon = t.icon;
           return (
             <button
               key={t.id}
+              role="tab"
+              id={`laporan-tab-${t.id}`}
+              aria-selected={tab === t.id}
+              aria-controls="laporan-hasil"
               className={`btn ${tab === t.id ? "btn-primary" : ""}`}
               onClick={() => setTab(t.id)}
             >
@@ -386,6 +422,29 @@ export default function Laporan() {
 
       {/* Filter */}
       <Card className="mb-4 flex flex-wrap items-center gap-3">
+        {tab === "interface" && (
+          <>
+            <Field label="OLT sumber" className="w-full sm:w-auto">
+              <select className="input w-full sm:w-56" aria-label="OLT laporan interface" value={filterOlt} disabled={loading} onChange={(e) => { setFilterOlt(e.target.value); setFilterInterface("all"); }}>
+                <option value="all">Semua OLT</option>
+                {invalidOlt && <option value={filterOlt}>OLT sudah tidak tersedia</option>}
+                {olts.map((o) => <option key={o.id} value={o.id}>{o.name} — {o.olt_type}</option>)}
+              </select>
+            </Field>
+            <Field label="Interface / sumber" className="w-full sm:w-auto">
+              <select className="input w-full sm:w-80" aria-label="Interface laporan" value={filterInterface} disabled={loading} onChange={(e) => setFilterInterface(e.target.value)}>
+                <option value="all">Semua interface + belum dipetakan</option>
+                <option value="unmapped">Belum dipetakan / perlu diperiksa</option>
+                {invalidInterface && <option value={filterInterface}>Interface sudah tidak tersedia</option>}
+                {interfaceOptions.map((i) => <option key={i.port.id} value={i.port.id}>{i.olt?.name || i.port.olt_name} / {interfaceLabel(i.port)}</option>)}
+              </select>
+            </Field>
+            <Field label="Pencarian" className="w-full sm:w-auto">
+              <SearchBox value={interfaceQuery} onChange={setInterfaceQuery} placeholder="Cari interface, ODC, ODP, core, lokasi…" className="w-full sm:w-72" />
+            </Field>
+            {(filterOlt !== "all" || filterInterface !== "all" || interfaceQuery) && <button className="btn self-end" onClick={() => { setFilterOlt("all"); setFilterInterface("all"); setInterfaceQuery(""); }}>Reset filter</button>}
+          </>
+        )}
         {(tab === "odc" || tab === "odp") && (
           <>
             <Field label="ODC">
@@ -422,18 +481,26 @@ export default function Laporan() {
           </>
         )}
         <div className="ml-auto text-sm text-mut">
-          {tab === "odc" ? `${barisAlur.length} jalur` : tab === "odp" ? `${barisOdp.length} ODP` : `${rekapFiltered.length} baris`}
+          {loading ? "Memuat…" : error ? "Data belum tersedia" : tab === "interface" ? `${interfaceSummary.rows} baris rincian` : tab === "odc" ? `${barisAlur.length} jalur` : tab === "odp" ? `${barisOdp.length} ODP` : `${rekapFiltered.length} baris`}
         </div>
       </Card>
 
+      <div id="laporan-hasil" role="tabpanel" aria-labelledby={`laporan-tab-${tab}`} aria-busy={loading}>
+      {loading && <Card><p role="status" className="text-sm text-mut">Memuat data laporan…</p></Card>}
       {error && (
         <Card className="mb-4">
-          <div className="text-sm text-red-300" role="alert">Data laporan tidak dapat dimuat: {error}</div>
+          <div className="text-sm text-red-300" role="alert">Data laporan tidak dapat dimuat: {error}. Ekspor dinonaktifkan agar tidak memakai data yang tidak lengkap. Coba Muat ulang.</div>
         </Card>
+      )}
+      {tab === "interface" && !loading && !error && (
+        <>
+          {(invalidOlt || invalidInterface) && <Card className="mb-4"><p role="alert" className="text-sm text-amber-300">Pilihan OLT/interface sudah tidak tersedia. Atur ulang filter untuk memilih sumber yang masih tercatat.</p></Card>}
+          <InterfaceReport items={interfaceItems} summary={interfaceSummary} unconnectedCount={unconnectedCount} />
+        </>
       )}
 
       {/* ---------- Tab 1: Alur Core ODC ---------- */}
-      {tab === "odc" && (
+      {tab === "odc" && !loading && !error && (
         <Card className="overflow-x-auto p-0">
           {barisAlur.length === 0 ? (
             <div className="p-6"><Empty text="Belum ada jalur core terdata. Isi input core splitter / sambungan kabel langsung di menu Mapping." /></div>
@@ -442,7 +509,7 @@ export default function Laporan() {
               <thead className="border-b border-line">
                 <tr>
                   <th className="th">ODC</th>
-                  <th className="th">Sumber (OLT · feeder)</th>
+                  <th className="th">Interface sumber (OLT)</th>
                   <th className="th">Core</th>
                   <th className="th">Jalur Splitter</th>
                   <th className="th">Tujuan</th>
@@ -453,7 +520,7 @@ export default function Laporan() {
                   <tr key={b.key} className="border-b border-line-soft last:border-0">
                     <td className="td font-medium">{b.odc.name}</td>
                     <td className="td text-mut">{b.sumber}</td>
-                    <td className="td"><CoreChip core={b.core} cableType={b.odc.cable_type} small /></td>
+                    <td className="td">{b.core == null ? <span className="text-xs text-amber-300">Core belum diisi</span> : <CoreChip core={b.core} cableType={b.odc.cable_type} small />}</td>
                     <td className="td text-mut">{b.jalur}</td>
                     <td className="td">{b.tujuan}</td>
                   </tr>
@@ -465,7 +532,7 @@ export default function Laporan() {
       )}
 
       {/* ---------- Tab 2: Power ODP ---------- */}
-      {tab === "odp" && (
+      {tab === "odp" && !loading && !error && (
         <div className="space-y-3">
           {barisOdp.length === 0 && <Card><Empty text="Belum ada ODP." /></Card>}
           {barisOdp.map((b) => {
@@ -529,7 +596,7 @@ export default function Laporan() {
       )}
 
       {/* ---------- Tab 3: Rekap Core ---------- */}
-      {tab === "rekap" && (
+      {tab === "rekap" && !loading && !error && (
         <Card className="overflow-x-auto p-0">
           {!rekap ? (
             <div className="p-6 text-sm text-mut">Memuat…</div>
@@ -566,16 +633,19 @@ export default function Laporan() {
         </Card>
       )}
 
+      </div>
+
       {/* ---------- Pratinjau PDF dalam aplikasi ---------- */}
       {pdfView && (
         <div className="modal-overlay fixed inset-0 z-50 flex items-center justify-center p-4" onMouseDown={tutupPdf}>
           <div
             className="card flex h-[90vh] w-full max-w-5xl flex-col p-4"
+            role="dialog" aria-modal="true" aria-labelledby="laporan-pdf-title"
             onMouseDown={(e) => e.stopPropagation()}
           >
             <div className="mb-3 flex flex-wrap items-center gap-2">
               <FileText size={16} className="text-acc" />
-              <h2 className="text-sm font-semibold">{pdfView.nama}</h2>
+              <h2 id="laporan-pdf-title" className="break-all text-sm font-semibold">{pdfView.nama}</h2>
               <div className="ml-auto flex flex-wrap gap-2">
                 <a className="btn" href={pdfView.url} download={pdfView.nama}>
                   <Download size={14} /> Unduh

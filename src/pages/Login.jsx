@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Zap } from "lucide-react";
-import { useAuth } from "../lib/auth.jsx";
+import { AuthStatus, useAuth } from "../lib/auth.jsx";
 import ThemeMenu from "../components/ThemeMenu.jsx";
 import FiberBackground from "../components/FiberBackground.jsx";
 
 export default function Login() {
-  const { user, signIn } = useAuth();
+  const { user, status, signIn } = useAuth();
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -20,6 +20,7 @@ export default function Login() {
 
   async function submit(e) {
     e.preventDefault();
+    if (loading) return;
     setLoading(true);
     setError("");
     try {
@@ -31,6 +32,8 @@ export default function Login() {
       setLoading(false);
     }
   }
+
+  if (status !== "ready") return <AuthStatus />;
 
   return (
     <div className="relative flex min-h-screen items-center justify-center px-4">
@@ -53,13 +56,15 @@ export default function Login() {
           </div>
           <form onSubmit={submit} className="space-y-3">
             <div>
-              <label className="label">Email</label>
-              <input className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+              <label className="label" htmlFor="login-email">Email</label>
+              <input id="login-email" autoComplete="username" className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
             </div>
             <div>
-              <label className="label">Password</label>
+              <label className="label" htmlFor="login-password">Password</label>
               <input
                 className="input"
+                id="login-password"
+                autoComplete="current-password"
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
