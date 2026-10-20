@@ -240,7 +240,7 @@ export default function Olts() {
                         className="btn px-2 py-1"
                         title={`Edit OLT ${o.name}`}
                         onClick={() => {
-                          setForm({ interface_mode: interfaceMode(o), fixed_port_count: o.fixed_port_count || 8, name: o.name, olt_type: o.olt_type || OLT_TYPES[0], location: o.location || "", ip: o.ip || "", notes: o.notes || "" });
+                          setForm({ interface_mode: interfaceMode(o), fixed_port_count: o.fixed_port_count || 8, name: o.name, olt_type: o.olt_type ?? "", location: o.location || "", ip: o.ip || "", notes: o.notes || "" });
                           setOltModal({ mode: "edit", olt: o });
                         }}
                       >
@@ -390,13 +390,14 @@ export default function Olts() {
         </div>
       )}
 
-      <Modal open={!!oltModal} title={oltModal?.mode === "add" ? "Tambah OLT" : "Edit OLT"} onClose={() => setOltModal(null)}>
-        <form onSubmit={saveOlt} className="space-y-3">
+      <Modal open={!!oltModal} title={oltModal?.mode === "add" ? "Tambah OLT" : "Edit OLT"} onClose={() => { if (!saving) setOltModal(null); }}>
+        <form onSubmit={saveOlt}><fieldset disabled={saving} className="space-y-3">
           <Field label="Nama OLT">
             <input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
           </Field>
           <Field label="Tipe OLT">
             <select className="input" value={form.olt_type} onChange={(e) => setForm({ ...form, olt_type: e.target.value, interface_mode: oltModal?.mode === "add" ? defaultInterfaceMode(e.target.value) : form.interface_mode })}>
+              {!OLT_TYPES.includes(form.olt_type) && <option value={form.olt_type}>{form.olt_type || "Model belum diisi"}</option>}
               {OLT_TYPES.map((t) => <option key={t}>{t}</option>)}
             </select>
           </Field>
@@ -418,11 +419,11 @@ export default function Olts() {
             <textarea className="input" rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
           </Field>
           <button className="btn btn-primary w-full" disabled={saving}>{saving ? "Menyimpan…" : "Simpan"}</button>
-        </form>
+        </fieldset></form>
       </Modal>
 
-      <Modal open={!!cardModal} title={cardModal?.mode === "add" ? "Tambah Card" : "Edit Card"} onClose={() => setCardModal(null)}>
-        <form onSubmit={saveCard} className="space-y-3">
+      <Modal open={!!cardModal} title={cardModal?.mode === "add" ? "Tambah Card" : "Edit Card"} onClose={() => { if (!saving) setCardModal(null); }}>
+        <form onSubmit={saveCard}><fieldset disabled={saving} className="space-y-3">
           <Field label="Nomor Shelf"><input aria-label="Nomor Shelf" className="input" type="number" min={1} max={256} value={cardForm.shelf} onChange={(e) => setCardForm({ ...cardForm, shelf: e.target.value })} required /></Field>
           <div className="grid grid-cols-2 gap-3">
             <Field label="Nomor Slot">
@@ -442,6 +443,7 @@ export default function Olts() {
                 setCardForm({ ...cardForm, card_type: e.target.value, port_count: cardForm.port_count || ct?.defaultPorts || 8 });
               }}
             >
+              {!CARD_TYPES.some((t) => t.value === cardForm.card_type) && <option value={cardForm.card_type}>{cardForm.card_type || "Tipe belum diisi"} (tersimpan)</option>}
               {CARD_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
             </select>
           </Field>
@@ -449,7 +451,7 @@ export default function Olts() {
             <input className="input" value={cardForm.label} onChange={(e) => setCardForm({ ...cardForm, label: e.target.value })} />
           </Field>
           <button className="btn btn-primary w-full" disabled={saving}>{saving ? "Menyimpan…" : "Simpan"}</button>
-        </form>
+        </fieldset></form>
       </Modal>
 
       <Modal open={!!portModal} title={portModal?.mode === "add" ? "Catat Interface OLT" : "Edit Interface OLT"} onClose={() => { if (!saving) setPortModal(null); }}>

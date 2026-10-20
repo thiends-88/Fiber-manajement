@@ -3,7 +3,7 @@
  * FiberOps Arena — server API sederhana.
  *
  * Database: SQLite bawaan Node (node:sqlite), default data/fiberops.db (bisa diubah via ARENA_DB_PATH).
- * Satu file, tanpa dependensi eksternal, bisa di-reset dengan menghapus file-nya.
+ * Runtime tanpa dependensi npm. Gunakan snapshot SQLite; jangan hapus DB produksi.
  *
  * Port default: 4500 (env: ARENA_API_PORT)
  */
@@ -15,18 +15,35 @@ import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { CABLE_TYPES, SPLITTER_RATIOS } from "./src/lib/fiber.js";
 import { INTERFACE_MODES, defaultInterfaceMode, interfaceDetails } from "./src/lib/interfaces.js";
+import { PASSWORD_HASH_PREFIX, FACTORY_PASSWORD, MAX_PASSWORD_LENGTH, hashPassword, verifyPassword, validNewPassword, requestUrl, sameOriginWrite, sessionCookie, redactedUrl, PRIVATE_HEADERS, createLoginLimiter, trustedProxySet, loginClientIp, canonicalPublicOrigin } from "./server/security.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-// Lokasi database bisa diatur lewat ARENA_DB_PATH (berguna untuk uji coba / multi-instance)
+// Lokasi database bisa diatur lewat ARENA_DB_PATH (path volume / uji terisolasi; satu server per DB)
 const DB_FILE = process.env.ARENA_DB_PATH || path.join(__dirname, "data", "fiberops.db");
 const DATA_DIR = path.dirname(DB_FILE);
 const PORT = Number(process.env.ARENA_API_PORT || 4500);
 const HOST = process.env.ARENA_API_HOST || "0.0.0.0";
 const DIST_DIR = path.join(__dirname, "dist");
+const PRODUCTION = process.env.NODE_ENV === "production";
+const PUBLIC_ORIGIN = canonicalPublicOrigin(process.env.ARENA_PUBLIC_ORIGIN);
+if (![undefined,"","0","1"].includes(process.env.ARENA_SECURE_COOKIES)) throw Error("ARENA_SECURE_COOKIES harus 0 atau 1");
+const SECURE_COOKIES = process.env.ARENA_SECURE_COOKIES === "1" || PUBLIC_ORIGIN.startsWith("https:");
+const limitLogin = createLoginLimiter();
+const TRUSTED_PROXIES = trustedProxySet(process.env.ARENA_TRUSTED_PROXY_IPS || "");
+// File database/WAL baru tidak boleh dapat dibaca pengguna OS lain.
+process.umask(0o077);
+if (PRODUCTION && !fs.existsSync(DB_FILE)) {
+  throw new Error("Database produksi tidak ditemukan. Periksa ARENA_DB_PATH/volume; untuk instalasi baru jalankan scripts/create-admin.mjs. Data demo tidak dibuat pada mode production.");
+}
+if (PRODUCTION && !fs.existsSync(path.join(DIST_DIR, "index.html"))) {
+  throw new Error("Build produksi belum tersedia. Jalankan npm ci dan npm run build sebelum menyalakan service.");
+}
+
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript",
+  ".mjs": "text/javascript",
   ".css": "text/css",
   ".json": "application/json",
   ".svg": "image/svg+xml",
@@ -42,7 +59,9 @@ const MIME = {
 function sendFile(req, res, filePath) {
   const data = fs.readFileSync(filePath);
   const type = MIME[path.extname(filePath).toLowerCase()] || "application/octet-stream";
-  res.writeHead(200, { "Content-Type": type, "Content-Length": data.length });
+  const cache = filePath.startsWith(path.join(DIST_DIR, "assets") + path.sep)
+    ? "public, max-age=31536000, immutable" : "no-store";
+  res.writeHead(200, { ...PRIVATE_HEADERS, "Cache-Control": cache, "Content-Type": type, "Content-Length": data.length });
   res.end(req.method === "HEAD" ? undefined : data);
 }
 
@@ -201,42 +220,11 @@ const MIGRATIONS = [
     UNIQUE(odp_id, odp_core)
   )`,
 ];
-for (const stmt of MIGRATIONS) {
-  try { db.exec(stmt); } catch { /* kolom/tabel sudah ada */ }
-}
+for (const stmt of MIGRATIONS) db.exec(stmt);
 
-// Splitter yang sudah menjadi tujuan cascade bukan akar core langsung.
-// Rapikan data lama agar input-nya hanya mengikuti output splitter induk.
-db.exec(`
-  UPDATE splitters
-  SET input_core=NULL, input_note=NULL
-  WHERE input_core IS NOT NULL AND id IN (
-    SELECT target_splitter_id FROM splitter_outputs
-    WHERE target_type='splitter' AND target_splitter_id IS NOT NULL
-  )
-`);
-
-// ---------------------------------------------------------------------------
-// Bersih-bersih: kolom hitungan redaman/daya sudah TIDAK dipakai lagi.
-// Aplikasi ini memetakan ALUR CORE saja (OLT → ODC → ODP), jadi kolom daya
-// dibuang supaya tidak ada field menganggur yang membingungkan teknisi.
-// Butuh SQLite 3.35+ untuk DROP COLUMN (Node 22 membawa SQLite 3.4x/3.5x).
-// ---------------------------------------------------------------------------
-const KOLOM_TIDAK_DIPAKAI = [
-  ["core_assignments", "power_dbm"],
-  ["odcs", "feeder_loss_db"],
-  ["olt_ports", "tx_power"],
-  ["olt_ports", "rx_power"],
-  ["core_links", "loss_db"],
-];
-for (const [tabel, kolom] of KOLOM_TIDAK_DIPAKAI) {
-  try {
-    const ada = db.prepare("SELECT 1 FROM pragma_table_info(?) WHERE name=?").get(tabel, kolom);
-    if (ada) db.exec(`ALTER TABLE ${tabel} DROP COLUMN ${kolom}`);
-  } catch (err) {
-    console.warn(`[arena-api] kolom ${tabel}.${kolom} gagal dibuang: ${err.message}`);
-  }
-}
+// Data/kolom legacy yang tidak dipakai UI tetap dipertahankan. Jangan menghapus
+// catatan/daya lama atau mengubah input cascade secara diam-diam saat startup.
+// Penelusuran sumber mengecualikan input cascade, bukan merapikan data fisik.
 
 // Bangun ulang splitter_outputs pada database lama agar menerima target 'odc'
 // (CHECK constraint tidak bisa diubah tanpa membangun ulang tabel).
@@ -265,8 +253,9 @@ if (outTableSql && !outTableSql.includes("target_odc_id")) {
       DROP TABLE splitter_outputs_lama;
       COMMIT;
     `);
-  } catch {
-    try { db.exec("ROLLBACK"); } catch { /* abaikan */ }
+  } catch (error) {
+    try { db.exec("ROLLBACK"); } catch { /* transaksi mungkin belum dimulai */ }
+    throw new Error(`Migrasi splitter_outputs gagal; hentikan update dan periksa backup: ${error.message}`);
   } finally {
     db.exec("PRAGMA foreign_keys = ON");
   }
@@ -275,8 +264,9 @@ const hasTargetOdcCore = db.prepare("SELECT 1 FROM pragma_table_info('splitter_o
 if (!hasTargetOdcCore) db.exec("ALTER TABLE splitter_outputs ADD COLUMN target_odc_core INTEGER");
 const hasTargetOdcSplitter = db.prepare("SELECT 1 FROM pragma_table_info('splitter_outputs') WHERE name='target_odc_splitter_id'").get();
 if (!hasTargetOdcSplitter) db.exec("ALTER TABLE splitter_outputs ADD COLUMN target_odc_splitter_id INTEGER REFERENCES splitters(id) ON DELETE SET NULL");
-// Migrasi jalur lama hanya bila input splitter tujuan dapat dipastikan unik.
-db.exec(`
+// Hanya pada penambahan kolom pertama kali. Jangan mengisi receiver kosong
+// setiap restart: receiver yang sengaja dilepas harus tetap belum dipetakan.
+if (!hasTargetOdcSplitter) db.exec(`
   UPDATE splitter_outputs
   SET target_odc_splitter_id = (
     SELECT MIN(dest.id) FROM splitters dest
@@ -301,20 +291,24 @@ db.exec(`
 const feederTableExisted = !!db
   .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='odc_feeder_ports'")
   .get();
-db.exec(`CREATE TABLE IF NOT EXISTS odc_feeder_ports (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  odc_id INTEGER NOT NULL REFERENCES odcs(id) ON DELETE CASCADE,
-  port_id INTEGER NOT NULL REFERENCES olt_ports(id) ON DELETE CASCADE,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  UNIQUE(odc_id, port_id)
-)`);
-if (!feederTableExisted) {
-  // Database lama hanya menyimpan satu feeder_port_id per ODC — pindahkan ke tabel baru
-  try {
-    db.exec(
-      "INSERT OR IGNORE INTO odc_feeder_ports (odc_id, port_id) SELECT id, feeder_port_id FROM odcs WHERE feeder_port_id IS NOT NULL",
-    );
-  } catch { /* kolom feeder_port_id tidak ada (database baru) */ }
+const hasLegacyFeeder = !!db.prepare("SELECT 1 FROM pragma_table_info('odcs') WHERE name='feeder_port_id'").get();
+db.exec("BEGIN IMMEDIATE");
+try {
+  db.exec(`CREATE TABLE IF NOT EXISTS odc_feeder_ports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    odc_id INTEGER NOT NULL REFERENCES odcs(id) ON DELETE CASCADE,
+    port_id INTEGER NOT NULL REFERENCES olt_ports(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(odc_id, port_id)
+  )`);
+  if (!feederTableExisted && hasLegacyFeeder) {
+    // Hanya pindahkan referensi eksplisit lama, tidak menebak sumber core.
+    db.exec("INSERT OR IGNORE INTO odc_feeder_ports (odc_id,port_id) SELECT id,feeder_port_id FROM odcs WHERE feeder_port_id IS NOT NULL");
+  }
+  db.exec("COMMIT");
+} catch (error) {
+  db.exec("ROLLBACK");
+  throw new Error(`Migrasi feeder ODC gagal; periksa data lama dan backup: ${error.message}`);
 }
 
 // Migrasi interface: tidak menyimpulkan port sumber dari daftar feeder ODC.
@@ -344,37 +338,25 @@ db.exec(`
   );
 `);
 
+// Rotasi satu kali untuk sesi lama yang mungkin pernah bocor lewat URL/log.
+// Metadata autentikasi ini tidak mengubah ID atau tabel inventaris jaringan.
+db.exec("CREATE TABLE IF NOT EXISTS security_migrations (id TEXT PRIMARY KEY, applied_at TEXT NOT NULL)");
+if (!db.prepare("SELECT id FROM security_migrations WHERE id='header-only-sessions-v1'").get()) {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.prepare("DELETE FROM sessions").run();
+    db.prepare("INSERT INTO security_migrations (id,applied_at) VALUES (?,?)").run("header-only-sessions-v1", new Date().toISOString());
+    db.exec("COMMIT");
+  } catch (error) { db.exec("ROLLBACK"); throw error; }
+}
+const blockedFactoryAccounts = new Set();
+
 // Sambungan baru hanya dibuat dari input eksplisit atau fixture database baru.
 // Jangan membuat sambungan berdasarkan kemiripan nama ODC/ODP pada database lama.
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-const PASSWORD_HASH_PREFIX = "scrypt";
-function hashPassword(password) {
-  const salt = crypto.randomBytes(16).toString("hex");
-  const derived = crypto.scryptSync(String(password), salt, 64).toString("hex");
-  return `${PASSWORD_HASH_PREFIX}$${salt}$${derived}`;
-}
-function secretMatches(actual, expected) {
-  const a = Buffer.from(actual, "hex");
-  const b = Buffer.from(expected, "hex");
-  return a.length === b.length && a.length > 0 && crypto.timingSafeEqual(a, b);
-}
-function verifyPassword(password, stored) {
-  if (typeof stored !== "string") return false;
-  const parts = stored.split("$");
-  if (parts.length === 3 && parts[0] === PASSWORD_HASH_PREFIX) {
-    const [, salt, expected] = parts;
-    if (!/^[a-f0-9]{32}$/.test(salt) || !/^[a-f0-9]{128}$/.test(expected)) return false;
-    const actual = crypto.scryptSync(String(password), salt, 64).toString("hex");
-    return secretMatches(actual, expected);
-  }
-  // Hash SHA-256 tanpa salt dari versi lama: verifikasi sekali lalu migrasikan
-  // ke scrypt saat login berhasil, tanpa memaksa reset password pengguna.
-  const legacy = crypto.createHash("sha256").update(String(password)).digest("hex");
-  return /^[a-f0-9]{64}$/.test(stored) && secretMatches(legacy, stored);
-}
 const now = () => new Date().toISOString();
 const CORE_STATUSES = new Set(["idle", "used", "reserved", "damaged"]);
 const PORT_STATUSES = new Set(["active", "inactive", "reserved", "damaged"]);
@@ -582,13 +564,15 @@ function syncFeederPorts(odcId, ids) {
   for (const raw of ids || []) ins.run(odcId, Number(raw));
 }
 
+// Simpan nilai legacy di DB/backup, tetapi jangan menyajikannya sebagai fitur optik aktif.
+const OMIT_LEGACY_MEASUREMENTS = new Set(["tx_power","rx_power","power_dbm","feeder_loss_db","loss_db"]);
 function send(req, res, status, body, extraHeaders = {}) {
   if (res.headersSent || res.destroyed) return;
-  const headers = { "Content-Type": "application/json", ...extraHeaders };
+  const headers = { ...PRIVATE_HEADERS, "Content-Type": "application/json", ...extraHeaders };
   res.writeHead(status, headers);
-  const safeUrl = req.url.replace(/([?&]token=)[^&]+/g, "$1***");
+  const safeUrl = redactedUrl(req.url);
   console.log(`[arena-api] ${req.method} ${safeUrl} -> ${status}${req.authVia ? ` (auth:${req.authVia})` : ""}`);
-  res.end(req.method === "HEAD" ? undefined : JSON.stringify(body));
+  res.end(req.method === "HEAD" ? undefined : JSON.stringify(body, (key,value) => OMIT_LEGACY_MEASUREMENTS.has(key) ? undefined : value));
 }
 
 function readBody(req) {
@@ -682,28 +666,21 @@ function validateDirectSplitterInput(odcId, core, splitterId = 0) {
   }
 }
 
-function authUser(req, url) {
-  const header = req.headers["authorization"] || "";
-  const cookieToken = parseCookies(req)["fiberops_token"];
-  let token = null;
-  req.authVia = null;
-  if (header.startsWith("Bearer ")) {
-    token = header.slice(7);
-    req.authVia = "header";
-  } else if (cookieToken) {
-    token = cookieToken;
-    req.authVia = "cookie";
-  } else if (url && url.searchParams.get("token")) {
-    token = url.searchParams.get("token");
-    req.authVia = "param";
-  }
-  if (!token) return null;
+function authUser(req) {
+  const header = req.headers.authorization;
+  const appHeader = typeof req.headers["x-fiberops-token"] === "string" ? req.headers["x-fiberops-token"] : null;
+  req.authVia = header ? "header" : appHeader ? "app-header" : "cookie";
+  // Header khusus menjaga kompatibilitas proxy yang menyaring Authorization.
+  // Tidak pernah menerima token dari query string; header invalid tidak berpindah akun via cookie.
+  const token = header ? /^Bearer[ \t]+([^\s]+)$/i.exec(header)?.[1] : appHeader || parseCookies(req).fiberops_token;
+  req.authToken = token;
+  if (typeof token !== "string" || !token || token.length > 512) return null;
   const row = db
     .prepare(
       "SELECT u.id, u.email, u.full_name, u.role FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ? AND julianday(s.created_at) > julianday('now', '-7 days')",
     )
     .get(token);
-  return row ?? null;
+  return row && !blockedFactoryAccounts.has(row.id) ? row : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -712,6 +689,7 @@ function authUser(req, url) {
 function seedIfEmpty() {
   const { n } = db.prepare("SELECT COUNT(*) AS n FROM users").get();
   if (n > 0) return;
+  if (PRODUCTION) throw new Error("Belum ada akun produksi. Buat admin melalui scripts/create-admin.mjs; akun/inventaris demo tidak dibuat.");
 
   const ts = now();
   const insUser = db.prepare(
@@ -832,19 +810,25 @@ function seedIfEmpty() {
 // Router
 // ---------------------------------------------------------------------------
 const server = http.createServer(async (req, res) => {
-  const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
-  const p = url.pathname;
   const method = req.method;
-
   try {
+    let url;
+    try { url = requestUrl(req); } catch { return send(req, res, 400, { error: "Host atau URL permintaan tidak valid" }); }
+    const p = url.pathname;
+    if (!sameOriginWrite(req, PUBLIC_ORIGIN)) return send(req, res, 403, { error: "Permintaan lintas origin ditolak. Buka aplikasi dari alamat yang benar." });
     if (p === "/healthz") return send(req, res, 200, { ok: true, service: "fiberops-arena-api" });
 
     // ---------------- Login (tanpa auth) ----------------
     if (p === "/api/login" && method === "POST") {
+      const retry = limitLogin(loginClientIp(req, TRUSTED_PROXIES));
+      if (retry) return send(req, res, 429, { error: "Terlalu banyak percobaan login. Coba lagi beberapa menit kemudian." }, { "Retry-After": String(retry) });
       const body = await readBody(req);
-      const user = db.prepare("SELECT * FROM users WHERE email = ?").get(String(body.email || "").toLowerCase().trim());
-      const password = String(body.password || "");
-      if (!user || !verifyPassword(password, user.password_hash)) {
+      if (typeof body.email !== "string" || body.email.length > 254 || !validNewPassword(body.password, 1)) {
+        return send(req, res, 400, { error: `Email dan password harus berupa teks (password maksimal ${MAX_PASSWORD_LENGTH} karakter)` });
+      }
+      const user = db.prepare("SELECT * FROM users WHERE email = ?").get(body.email.toLowerCase().trim());
+      const password = body.password;
+      if (!user || (PRODUCTION && password === FACTORY_PASSWORD) || !verifyPassword(password, user.password_hash)) {
         return send(req, res, 401, { error: "Email atau password salah" });
       }
       if (!user.password_hash.startsWith(`${PASSWORD_HASH_PREFIX}$`)) {
@@ -858,26 +842,19 @@ const server = http.createServer(async (req, res) => {
         res,
         200,
         { token, user: { id: user.id, email: user.email, full_name: user.full_name, role: user.role } },
-        { "Set-Cookie": `fiberops_token=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800` },
+        { "Set-Cookie": sessionCookie(token, SECURE_COOKIES) },
       );
     }
 
     if (!p.startsWith("/api/")) return serveStatic(req, res, p);
 
     // ---------------- Semua /api/* di bawah ini butuh login ----------------
-    const user = authUser(req, url);
+    const user = authUser(req);
     if (!user) return send(req, res, 401, { error: "Silakan login terlebih dahulu" });
 
     if (p === "/api/logout" && method === "POST") {
-      const user0 = authUser(req, url);
-      if (user0) {
-        const header = req.headers["authorization"] || "";
-        const token = header.startsWith("Bearer ")
-          ? header.slice(7)
-          : parseCookies(req)["fiberops_token"] || url.searchParams.get("token");
-        if (token) db.prepare("DELETE FROM sessions WHERE token = ?").run(token);
-      }
-      return send(req, res, 200, { ok: true }, { "Set-Cookie": "fiberops_token=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0" });
+      db.prepare("DELETE FROM sessions WHERE token=?").run(req.authToken);
+      return send(req, res, 200, { ok: true }, { "Set-Cookie": sessionCookie("", SECURE_COOKIES) });
     }
 
     if (p === "/api/me" && method === "GET") return send(req, res, 200, { user });
@@ -1749,8 +1726,8 @@ const server = http.createServer(async (req, res) => {
           return send(req, res, 400, { error: "Email tidak valid" });
         }
         if (!isText(b.full_name)) return send(req, res, 400, { error: "Nama wajib diisi" });
-        if (typeof b.password !== "string" || b.password.length < 8) {
-          return send(req, res, 400, { error: "Password minimal 8 karakter" });
+        if (!validNewPassword(b.password) || (PRODUCTION && b.password === FACTORY_PASSWORD)) {
+          return send(req, res, 400, { error: `Password harus 8–${MAX_PASSWORD_LENGTH} karakter dan bukan password pabrik` });
         }
         if (!USER_ROLES.has(b.role)) return send(req, res, 400, { error: "Peran tidak valid" });
         const email = b.email.toLowerCase().trim();
@@ -1789,11 +1766,27 @@ const server = http.createServer(async (req, res) => {
     return send(req, res, 404, { error: `Endpoint tidak ditemukan: ${method} ${p}` });
   } catch (e) {
     console.error("[arena-api] error:", e);
-    return send(req, res, e.status ?? 500, { error: e.message });
+    const status = Number.isInteger(e.status) && e.status >= 400 && e.status < 500 ? e.status : 500;
+    return send(req, res, status, { error: status === 500 ? "Kesalahan internal server. Periksa log server atau hubungi administrator." : e.message });
   }
 });
 
+server.requestTimeout = 15000;
+server.headersTimeout = 10000;
+const shutdown = () => server.close(() => { db.close(); });
+process.once("SIGTERM", shutdown);
+process.once("SIGINT", shutdown);
+
 seedIfEmpty();
+if (PRODUCTION) {
+  for (const account of db.prepare("SELECT id,password_hash FROM users").all()) {
+    if (verifyPassword(FACTORY_PASSWORD, account.password_hash)) {
+      blockedFactoryAccounts.add(account.id);
+      db.prepare("DELETE FROM sessions WHERE user_id=?").run(account.id);
+    }
+  }
+  if (blockedFactoryAccounts.size) console.warn(`[arena-api] ${blockedFactoryAccounts.size} akun berpassword pabrik diblokir. Gunakan admin pribadi dan hapus akun demo.`);
+}
 
 // Pastikan semua ODP lama juga punya splitter 1:8 bawaan
 for (const row of db

@@ -19,3 +19,12 @@ data/
 
 # Artefak regresi dashboard per OLT/card
 .uji-dashboard/
+
+# Kredensial lingkungan dan DB/backup di luar data/
+.env.*
+!.env.example
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3

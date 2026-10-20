@@ -213,6 +213,18 @@ Peran user/baca saja dapat mengakses dan mengekspor laporan.
 - Admin dan operator dapat mengubah mapping. Peran user hanya dapat membaca.
 - Backup database sebelum menerapkan pembaruan ke server lapangan.
 
+## Batas model dan update produksi
+
+- Aturan ODP existing memakai splitter **1:8 bawaan/permanen**. Model ODP tanpa
+  splitter atau rasio lain belum didukung oleh form/API ini; perlu konfirmasi dan
+  pekerjaan terpisah jika kondisi lapangan berbeda. Penamaan interface multi-vendor
+  tidak berarti semua variasi perangkat internal sudah dimodelkan.
+- Receiver yang sengaja dilepas/tidak diketahui tidak dipilih ulang saat restart.
+  Catatan cascade/kolom pengukuran lama dipertahankan di DB, bukan monitoring aktif.
+- Untuk server lapangan gunakan **[DEPLOY-PROXMOX.md](DEPLOY-PROXMOX.md)** dan
+  **[AUDIT-PRA-DEPLOY.md](AUDIT-PRA-DEPLOY.md)**. Backup harus mencakup WAL secara
+  konsisten; jangan hapus DB/volume atau memakai akun/password demo di produksi.
+
 ## Pengujian pengembang
 
 ```bash

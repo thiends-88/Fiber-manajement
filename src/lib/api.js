@@ -30,17 +30,17 @@ export class ApiError extends Error {
 
 export async function api(path, { method = "GET", body, timeoutMs = 30000 } = {}) {
   const token = getToken(), version = sessionVersion;
-  let url = path;
   const headers = { "Content-Type": "application/json" };
   if (token) {
-    url += (path.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(token);
     headers.Authorization = `Bearer ${token}`;
+    // Beberapa preview/proxy menyaring Authorization/cookie. Tetap header, bukan URL.
+    headers["X-Fiberops-Token"] = token;
   }
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   let res, data = null, validJson = false;
   try {
-    res = await fetch(url, { method, headers, credentials: "same-origin", signal: controller.signal, body: body === undefined ? undefined : JSON.stringify(body) });
+    res = await fetch(path, { method, headers, credentials: "same-origin", signal: controller.signal, body: body === undefined ? undefined : JSON.stringify(body) });
     try { data = await res.json(); validJson = true; } catch (error) { if (controller.signal.aborted) throw error; }
   } catch (error) {
     if (controller.signal.aborted) throw new ApiError("Server terlalu lama merespons. Periksa koneksi lalu coba lagi.", 408);

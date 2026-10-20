@@ -40,11 +40,12 @@ await check("request macet memiliki batas waktu dan pesan yang bisa ditindaklanj
   globalThis.fetch = (_, { signal }) => new Promise((_, reject) => signal.addEventListener("abort", () => reject(new DOMException("Timeout", "AbortError"))));
   await assert.rejects(api("/api/odcs", { timeoutMs: 10 }), e => e.status === 408 && /koneksi/.test(e.message));
 });
-await check("token ter-encode pada URL yang sudah memiliki parameter dan juga dikirim lewat header", async () => {
+await check("token hanya di header, tidak bocor pada URL yang memiliki filter", async () => {
   setMemToken("a +/&?");
   globalThis.fetch = async (url, opts) => {
-    assert.equal(new URL(url, "https://preview.test").searchParams.get("token"), "a +/&?");
-    assert.equal(opts.headers.Authorization, "Bearer a +/&?"); assert.equal(opts.credentials, "same-origin"); return json([]);
+    assert.equal(new URL(url, "https://preview.test").searchParams.get("token"), null);
+    assert.equal(new URL(url, "https://preview.test").searchParams.get("odc_id"), "2");
+    assert.equal(opts.headers.Authorization, "Bearer a +/&?"); assert.equal(opts.headers["X-Fiberops-Token"], "a +/&?"); assert.equal(opts.credentials, "same-origin"); return json([]);
   };
   assert.deepEqual(await api("/api/links?odc_id=2"), []);
 });

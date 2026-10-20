@@ -2,7 +2,7 @@
 
 Aplikasi manajemen fiber optik (OLT → ODC → ODP) yang **dibangun dari nol**
 untuk lingkungan Arena. Fitur dipelajari dari aplikasi aslinya
-(tanpa memakai kode aplikasi lama): manajemen OLT + card + port GPON, ODC/ODC dengan
+(tanpa memakai kode aplikasi lama): manajemen OLT + card + port GPON, ODC/ODP dengan
 tipe kabel standar, penugasan core berwarna TIA/EIA-598, laporan CSV, dan
 manajemen user berbasis peran.
 
@@ -40,7 +40,9 @@ lapangan.
    tanpa perlu angka redaman. Sambungan **kabel langsung** (1 core ODC → 1 ODP
    tanpa splitter) dipisahkan di bawah pohon supaya tidak tercampur.
 6. **Splitter bertingkat** — pilih rasio **1:2 / 1:4 / 1:8 / 1:16 / 1:32**,
-   ditempatkan **di dalam ODC maupun di dalam ODP**. Setiap output splitter bisa
+   di dalam **ODC**. Aturan aplikasi yang sudah ada untuk **ODP adalah splitter
+   1:8 bawaan/permanen**; jangan menganggap model ini sudah mendukung semua ODP
+   tanpa splitter atau rasio berbeda. Cocokkan dengan keadaan lapangan. Setiap output splitter bisa
    diarahkan **ke ODP**, **di-cascade ke splitter berikutnya dalam ODC/ODP yang
    sama**, atau **ke ODC lain**. Jika beberapa output splitter harus masuk ke kabinet
    ODC yang sama, tiap output diarahkan ke **splitter penerima yang tepat** di ODC
@@ -100,9 +102,11 @@ lapangan.
     fixed-port ditampilkan sebagai port bawaan, bukan card fisik fiktif. Lihat
     [cara membaca angkanya](PANDUAN-INTERFACE.md#ringkasan-perangkat-olt-di-dashboard).
 
-**Database sederhana versi Arena:** SQLite bawaan Node (`node:sqlite`) dalam
-satu file `data/fiberops.db`. Tidak ada Supabase, tidak ada koneksi keluar.
-Hapus file tersebut untuk mereset ke data demo.
+**Database lokal:** SQLite bawaan Node (`node:sqlite`), data utama di
+`data/fiberops.db` dengan jurnal WAL/SHM. Tidak memakai Supabase/database eksternal.
+Backup aktif harus melalui SQLite; **jangan menyalin `.db` saja atau menghapus DB
+produksi untuk reset/login**. Demo otomatis hanya untuk pengembangan; produksi
+memakai bootstrap admin tanpa menambah inventaris fiktif.
 
 ## Interface OLT dan penelusuran sampai ODP
 
@@ -163,23 +167,30 @@ npm run dev            # frontend di port 8080 (proxy /api → 4500)
 
 ## Produksi / deploy (mis. Proxmox)
 
-Syarat: **Node.js 22.5+** (database memakai `node:sqlite` bawaan Node).
+Syarat: **Node.js 22.13+**; diuji pada Node 22.22.3. Runtime memakai SQLite
+bawaan Node dan tidak membutuhkan `node_modules` setelah frontend di-build.
+Satu proses `node server.mjs` melayani API dan frontend.
+
+**Produksi berbeda dari demo:** wajib `NODE_ENV=production`, path DB/volume yang
+benar, admin dengan password pribadi, dan build `dist/`. Startup menolak DB/build
+hilang atau pengguna kosong; tidak membuat perangkat demo. Password pabrik
+`Arena123!` dan sesi akun yang masih memakainya diblokir pada mode produksi.
 
 ```bash
-npm install
-npm run build          # menghasilkan dist/
-node server.mjs        # SATU proses melayani API + frontend (port 4500)
+npm ci
+npm run build
+# Pemeriksaan read-only pada DB yang SUDAH ada (bukan membuat DB baru):
+node scripts/preflight.mjs /path/database-anda/fiberops.db
 ```
 
-Setelah di-build, `node server.mjs` membuka `http://server:4500` berisi
-aplikasi lengkap — tidak ada server frontend terpisah, dan `node_modules`
-tidak dibutuhkan saat runtime.
-
-> Kode terbaru sudah ada di **`main`** (cabang lama
-> `arena/34102c90-fiber-manajement` sudah di-merge). Untuk clone baru di
-> server:
-> `git clone --depth 1 https://github.com/thiends-88/Fiber-manajement.git`
-> Untuk memperbarui server yang sudah ada: `git pull && npm install && npm run build`.
+Ikuti **[DEPLOY-PROXMOX.md](DEPLOY-PROXMOX.md)** untuk bootstrap/rotasi password
+melalui stdin, systemd, HTTPS/origin, migrasi ownership volume Docker, backup
+konsisten, update dan rollback. **Jangan update hanya dengan `git pull` lalu
+restart**, jangan menghapus DB agar login berhasil, dan jangan mengganti volume.
+Setelah upgrade keamanan, hard-refresh sebelum login ulang; sesi lama dicabut
+sekali untuk menutup risiko token yang pernah masuk URL/log. Tunggu PR/release
+perubahan disetujui dan di-merge; panduan ini tidak menyatakan semua perubahan
+pada branch review sudah ada di `main`.
 
 ## Uji otomatis halaman (anti "halaman blank")
 
@@ -207,6 +218,9 @@ npm run test:interfaces:ui # alur pencatatan interface → ODC → mapping → O
 npm run test:audit    # 42 skenario tambahan: sesi, pengamanan sambungan, race UI
 npm run test:dashboard # 31 skenario API/UI: per OLT/card, hitungan, port bawaan, refresh
 npm run test:layout   # server tetap jalan hanya dengan file yang disalin Dockerfile
+npm run test:predeploy # 57 pemeriksaan keamanan, restart, bootstrap, backup WAL, preflight
+# Opt-in: Chromium lokal terpasang; tidak mengunduh browser otomatis:
+CHROMIUM_EXECUTABLE=/usr/bin/chromium npm run test:browser # 14 skenario browser produksi
 npm run test:render   # semua halaman ter-render (butuh server jalan)
 ```
 
@@ -214,20 +228,24 @@ Yang diperiksa `npm run test:api`: login/logout & token, hak akses per peran
 (admin/operator/user), CRUD OLT–kartu–port, ODC + port feeder banyak input, ODP,
 splitter (rasio sah, tempat di ODC/ODP, cascade, output → ODC anak, cegah
 lingkaran), mapping core (core ganda → 409), manajemen user, dashboard/laporan,
-input rusak tidak membuat server mati, serta penjaga bahwa **API tidak lagi
-mengirim field redaman/daya** (`tx_power`, `rx_power`, `power_dbm`,
-`feeder_loss_db`, `loss_db`).
+input rusak tidak membuat server mati, serta penjaga bahwa **API tidak menyajikan field redaman/daya sebagai fitur aktif**
+(`tx_power`, `rx_power`, `power_dbm`, `feeder_loss_db`, `loss_db`). Kolom/nilai legacy
+jika ada tetap disimpan di DB/backup, bukan dibuang saat restart.
 
 Hasil audit dan perbaikan alur, aturan receiver/kabel yang dipertahankan,
 serta batas pengujian dicatat di **[AUDIT-ALUR.md](AUDIT-ALUR.md)**.
 Sesi diverifikasi ke server saat membuka aplikasi dan berlaku maksimal tujuh hari.
 
-Panduan **instalasi lengkap di Proxmox** — jalur utama **LXC Ubuntu 24.04**
-(buat container, IP statis via netplan, install Node 22.5+, service systemd,
-backup, reverse proxy, troubleshooting), plus catatan kalau pakai VM Debian 12:
-lihat **[DEPLOY-PROXMOX.md](DEPLOY-PROXMOX.md)**. Tersedia juga `Dockerfile`.
+Audit pra-deploy lanjutan, reproduksi masalah, hasil browser production dan batas
+jaminan ada di **[AUDIT-PRA-DEPLOY.md](AUDIT-PRA-DEPLOY.md)**. Pengujian aplikasi
+bukan pengganti pemeriksaan host Proxmox, firewall/TLS dan sambungan fisik.
+Panduan operasional: **[DEPLOY-PROXMOX.md](DEPLOY-PROXMOX.md)**.
 
-## Login demo
+## Login demo (hanya pengembangan, bukan produksi)
+
+Akun berikut dibuat pada database demo pengembangan, bukan pada startup production.
+Jangan mengekspos dev server/data demo ke internet sebagai deployment produksi.
+
 
 | Peran    | Email                 | Password    |
 | -------- | --------------------- | ----------- |
@@ -257,4 +275,7 @@ lihat **[DEPLOY-PROXMOX.md](DEPLOY-PROXMOX.md)**. Tersedia juga `Dockerfile`.
 | `src/lib/api.js` | Klien fetch + sesi token |
 | `src/components/CoreManager.jsx` | Grid core interaktif (dipakai ODC & ODP) |
 | `src/pages/*` | Alur Core (halaman utama), Dashboard, OLT, ODC, ODP, Mapping Core, Laporan, Users |
-| `data/fiberops.db` | Database (di-gitignore, di-seed otomatis) |
+| `data/fiberops.db` | DB utama; WAL/SHM dan backup privat diabaikan Git; seed demo hanya pengembangan |
+| `server/security.mjs` | Hash/password, origin, cookie, redaksi URL dan pembatas login |
+| `scripts/create-admin.mjs` / `set-password.mjs` | Provisioning/rotasi lokal via stdin, tanpa menimpa identitas inventaris |
+| `scripts/preflight.mjs` / `backup.mjs` | Pemeriksaan read-only dan snapshot SQLite konsisten |

@@ -1,5 +1,10 @@
 # Audit alur aplikasi — 19 Oktober 2026
 
+> Dokumen historis audit 19 Oktober. Audit lanjutan **20 Oktober 2026**, termasuk
+> Chromium nyata, worker/canvas PDF build produksi, keamanan dan deployment,
+> ada di **[AUDIT-PRA-DEPLOY.md](AUDIT-PRA-DEPLOY.md)**. Batas pengujian di bawah
+> menggambarkan kondisi pada saat audit ini, bukan hasil audit lanjutan.
+
 ## Ringkasan
 
 Audit mencakup login/sesi/peran, Dashboard, OLT/card/port, ODC–ODP, assignment core, interface feeder, kabel langsung, splitter/cascade/receiver ODC anak, penelusuran dan diagram, laporan CSV/PDF, serta navigasi dan kondisi gagal muat.

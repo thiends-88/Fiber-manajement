@@ -4,3 +4,11 @@ data
 .git
 *.log
 .env
+
+.env.*
+.uji-*/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
