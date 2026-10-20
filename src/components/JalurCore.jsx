@@ -128,9 +128,15 @@ export function PohonJalur({ node, feed }) {
             })}
           </div>
         )}
+        {node.insideTrees?.some((t) => t.children?.length > 0) && (
+          <div className="ml-1.5 mt-2 space-y-2 border-l border-line pl-3">
+            {node.insideTrees.map((t) => <PohonJalur key={t.id} node={t} feed={feed} />)}
+          </div>
+        )}
         {node.insideSplitters.length > 0 && (
           <div className="mt-1 text-[11px] text-mut">
             Splitter di dalam ODP: {node.insideSplitters.map((s) => `${s.name} (${s.ratio})`).join(" · ")}
+            {node.inputCore === null && <span className="ml-1">· inventaris ODP; core masuk pada jalur ini belum ditentukan</span>}
           </div>
         )}
       </div>

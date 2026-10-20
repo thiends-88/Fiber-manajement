@@ -10,3 +10,21 @@ data/
 *.log
 .env
 .uji-out/
+
+# Artefak uji interaksi interface
+.uji-interfaces/
+
+# Artefak regresi audit alur
+.uji-audit/
+
+# Artefak regresi dashboard per OLT/card
+.uji-dashboard/
+
+# Kredensial lingkungan dan DB/backup di luar data/
+.env.*
+!.env.example
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3

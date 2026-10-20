@@ -1,0 +1,71 @@
+// Pemeriksaan read-only. Tidak mengimpor server, men-seed demo, atau memigrasikan DB.
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { DatabaseSync } from "node:sqlite";
+import { FACTORY_PASSWORD, verifyPassword, validStoredPasswordHash } from "../server/security.mjs";
+import { CABLE_TYPES } from "../src/lib/fiber.js";
+import { feederInputUsage } from "../src/lib/interface-routes.js";
+const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+const file = path.resolve(process.argv[2] || process.env.ARENA_DB_PATH || path.join(ROOT, "data", "fiberops.db"));
+let db, errors = 0, warnings = 0;
+const ok = text => console.log(`OK    ${text}`);
+const fail = text => { errors++; console.log(`GAGAL ${text}`); };
+const warn = text => { warnings++; console.log(`CEK   ${text}`); };
+try {
+  console.log(`PRA-DEPLOY READ-ONLY — Node ${process.versions.node}\nDatabase: ${file}`);
+  if (!fs.existsSync(file)) throw Error("Database tidak ditemukan. Periksa path/volume; tidak ada file atau demo baru yang dibuat.");
+  db = new DatabaseSync(file, {readOnly:true});
+  const check = db.prepare("PRAGMA quick_check").all();
+  if (check.length === 1 && check[0].quick_check === "ok") ok("SQLite quick_check"); else fail("SQLite tidak utuh. Jangan lanjutkan update; pulihkan/periksa backup.");
+  const fks = db.prepare("PRAGMA foreign_key_check").all();
+  if (fks.length) fail(`${fks.length} pelanggaran foreign key. Koreksi data pada salinan DB terlebih dahulu.`); else ok("Foreign key");
+  const exists = table => !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table);
+  const rows = table => exists(table) ? db.prepare(`SELECT * FROM ${table}`).all() : [];
+  const cols = table => db.prepare("SELECT name FROM pragma_table_info(?)").all(table).map(c=>c.name);
+  for (const table of ["users","olts","olt_cards","olt_ports","odcs","odps","splitters","splitter_outputs","core_assignments","core_links"]) {
+    if (!exists(table)) fail(`Tabel dasar ${table} tidak tersedia; database mungkin salah/belum diinisialisasi.`);
+  }
+  for (const table of ["odc_feeder_ports","interface_mappings"]) if (!exists(table)) warn(`${table} belum ada; versi lama akan dimigrasikan saat startup setelah backup.`);
+  const users = rows("users");
+  const badHashes = users.filter(u=>!validStoredPasswordHash(u.password_hash));
+  if (badHashes.length) fail(`${badHashes.length} hash password tidak didukung/rusak. Rotasi akun terkait lewat scripts/set-password.mjs.`);
+  if (!users.some(u=>u.role==="admin" && validStoredPasswordHash(u.password_hash) && !verifyPassword(FACTORY_PASSWORD,u.password_hash))) fail("Belum ada admin dengan hash valid dan password nonpabrik. Buat/rotasi admin lewat script lokal."); else ok("Admin dengan hash valid dan password nonpabrik tersedia (kekuatan/keunikan password tetap tanggung jawab pemilik)");
+  const factory = users.filter(u=>verifyPassword(FACTORY_PASSWORD,u.password_hash));
+  if (factory.length) fail(`${factory.length} akun masih memakai password pabrik. Login dengan admin pribadi lalu hapus/ganti akun demo.`); else ok("Tidak ada akun dengan password pabrik");
+  if (users.some(u=>!String(u.password_hash).startsWith("scrypt$"))) warn("Ada hash lama; otomatis dimigrasikan setelah login valid. Jangan mereset data pengguna.");
+  const olts=rows("olts"), cards=rows("olt_cards"), ports=rows("olt_ports"), odcs=rows("odcs"), odps=rows("odps");
+  const duplicates=(items,key)=>{const seen=new Set();let n=0;for(const item of items){const value=key(item);if(seen.has(value))n++;seen.add(value);}return n;};
+  const cardDuplicates=duplicates(cards,c=>`${c.olt_id}:${c.shelf??1}:${c.slot}`);
+  if(cardDuplicates)fail(`${cardDuplicates} posisi card ganda: dapat menghalangi migrasi unique index. Jangan hapus ID otomatis.`);else ok("Posisi card unik per OLT/shelf/slot");
+  const portDuplicates=duplicates(ports,p=>`${p.card_id}:${p.port}`);
+  if(portDuplicates)fail(`${portDuplicates} port ganda dalam card yang sama. Perlu koreksi manual.`);else ok("Nomor port unik per card");
+  if(cards.length && !cols("olt_cards").includes("shelf"))warn("Card lama akan diawali shelf 1; periksa shelf fisik setelah update.");
+  const cardById=new Map(cards.map(c=>[c.id,c]));
+  const invalidPorts=ports.filter(p=>!cardById.has(p.card_id)||!Number.isInteger(p.port)||p.port<1||p.port>cardById.get(p.card_id).port_count);
+  if(invalidPorts.length)fail(`${invalidPorts.length} port berada di luar kapasitas card/induknya.`);else ok("Port berada dalam kapasitas card tercatat");
+  const capacity=d=>CABLE_TYPES.find(c=>c.value===d?.cable_type)?.cores||0;
+  if([...odcs,...odps].some(d=>!capacity(d)))fail("Ada tipe kabel ODC/ODP tidak dikenal; periksa data sebelum mengeditnya.");else ok("Tipe kabel terdaftar");
+  const odcById=new Map(odcs.map(d=>[d.id,d])),odpById=new Map(odps.map(d=>[d.id,d]));
+  const badCores=rows("core_assignments").filter(c=>c.core<1||c.core>capacity(c.source==="olt_to_odc"?odcById.get(c.odc_id):odpById.get(c.odp_id)));
+  if(badCores.length)fail(`${badCores.length} assignment melampaui kapasitas kabel atau kehilangan induk.`);else ok("Assignment core sesuai kapasitas");
+  const outputs=rows("splitter_outputs"), splitters=rows("splitters").map(s=>({...s,outputs:outputs.filter(o=>o.splitter_id===s.id)}));
+  const missingOdpSplitters = odps.filter(d=>!splitters.some(s=>s.odp_id===d.id)).length;
+  if (missingOdpSplitters) warn(`${missingOdpSplitters} ODP belum punya splitter. Aturan aplikasi existing akan menambah 1:8 bawaan saat startup; cocokkan dahulu dengan fisik, jangan menganggapnya penemuan otomatis.`);
+  const inputUsage=feederInputUsage({splitters,links:rows("core_links")});
+  const portById=new Map(ports.map(p=>[p.id,p])),feeder=new Set(rows("odc_feeder_ports").map(f=>`${f.odc_id}:${f.port_id}`));
+  const badMappings=rows("interface_mappings").filter(m=>{
+    const d=odcById.get(m.odc_id),p=portById.get(m.port_id),c=p&&cardById.get(p.card_id);
+    return !d||!p||!c||c.olt_id!==d.olt_id||!feeder.has(`${m.odc_id}:${m.port_id}`)||m.core<1||m.core>capacity(d)||(inputUsage.get(`${m.odc_id}:${m.core}`)||0)>1;
+  });
+  if(badMappings.length)warn(`${badMappings.length} mapping interface belum valid/perlu diperiksa. Aplikasi tidak menebak sumbernya.`);else ok("Mapping interface tercatat konsisten");
+  const missingReceivers=outputs.filter(o=>o.target_type==="odc"&&!o.target_odc_splitter_id).length;
+  if(missingReceivers)warn(`${missingReceivers} jalur ODC belum memilih receiver. Verifikasi sambungan di lapangan; jangan diisi otomatis.`);
+  const dirStat=fs.statSync(path.dirname(file)),fileStat=fs.statSync(file);
+  if((dirStat.mode&0o077)!==0&&(fileStat.mode&0o077)!==0)warn("Database dan direktori masih dapat dibaca pengguna OS lain. Batasi data/ ke 0700 dan DB ke 0600 sesuai user service.");else ok("Akses file database dibatasi");
+  if(!fs.existsSync(path.join(ROOT,"dist","index.html")))warn("dist/index.html belum ada. Jalankan npm ci dan npm run build sebelum production.");
+  console.log(`Inventaris: ${olts.length} OLT, ${cards.filter(c=>!c.is_builtin).length} card fisik, ${ports.length} port, ${odcs.length} ODC, ${odps.length} ODP.`);
+  console.log("CEK OPERASIONAL: mode NODE_ENV=production, volume/path DB, backup & restore, HTTPS/VPN, firewall, kapasitas disk/RAM, dan akses user service harus diverifikasi di Proxmox.");
+} catch(error){fail(error.message);}finally{db?.close();}
+console.log(`\nHASIL: ${errors} penghalang, ${warnings} peringatan. ${errors?"TUNDA UPDATE sampai penghalang diperbaiki.":"Pemeriksaan DB lulus; tetap penuhi checklist operasional dan peringatan di atas."}`);
+if(errors)process.exitCode=1;

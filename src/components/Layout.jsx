@@ -17,7 +17,6 @@ import {
   Zap,
 } from "lucide-react";
 import { useAuth } from "../lib/auth.jsx";
-import { getStoredUser } from "../lib/api.js";
 import ThemeMenu from "./ThemeMenu.jsx";
 
 const NAV = [
@@ -47,8 +46,7 @@ const KUNCI_CIUT = "fiberops.sidebar.collapse";
  * kartunya sendiri, bukan mendorong/mengoyak tata letak halaman.
  */
 export default function Layout({ children }) {
-  const { user: ctxUser, signOut } = useAuth();
-  const user = ctxUser ?? getStoredUser();
+  const { user, signOut } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const nav = user?.role === "admin" ? [...NAV, { to: "/users", label: "User", icon: UsersIcon }] : NAV;

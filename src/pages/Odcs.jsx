@@ -1,4 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import { interfaceLabel } from "../lib/interfaces.js";
+import FeederInterfaceManager from "../components/FeederInterfaceManager.jsx";
 import { Boxes, Pencil, Plus, Trash2 } from "lucide-react";
 import { api } from "../lib/api.js";
 import { useAuth } from "../lib/auth.jsx";
@@ -13,15 +16,20 @@ export default function Odcs() {
   const { user } = useAuth();
   const canWrite = user.role === "admin" || user.role === "operator";
 
+  const [params, setParams] = useSearchParams();
   const [odcs, setOdcs] = useState([]);
   const [query, setQuery] = useState("");
   const [olts, setOlts] = useState([]);
-  const [selectedId, setSelectedId] = useState(null);
+  const selectedId = Number(params.get("odc")) || null;
+  const setSelectedId = (id) => setParams(id ? { odc: String(id) } : {});
   const [modal, setModal] = useState(null);
+  const submitBusy = useRef(false);
+  const [saving, setSaving] = useState(false);
   const [form, setForm] = useState(empty);
   const [ports, setPorts] = useState([]);
   const [feederPorts, setFeederPorts] = useState([]);
   const [splitters, setSplitters] = useState([]);
+  const [networkVersion, setNetworkVersion] = useState(0);
   const [toastState, setToastState] = useState(null);
   const toast = useToast(setToastState);
 
@@ -40,8 +48,15 @@ export default function Odcs() {
     load().catch((e) => toast(e.message, "error"));
   }, [load, toast]);
 
+  const networkChanged = useCallback(async () => {
+    await load();
+    setNetworkVersion((v) => v + 1);
+  }, [load]);
+
   async function save(e) {
     e.preventDefault();
+    if (submitBusy.current) return;
+    submitBusy.current = true; setSaving(true);
     try {
       const body = {
         ...form,
@@ -51,12 +66,12 @@ export default function Odcs() {
 
       if (modal.mode === "add") await api("/api/odcs", { method: "POST", body });
       else await api(`/api/odcs/${modal.odc.id}`, { method: "PATCH", body: { ...modal.odc, ...body } });
-      setModal(null);
       await load();
+      setModal(null);
       toast("ODC tersimpan");
     } catch (err) {
       toast(err.message, "error");
-    }
+    } finally { submitBusy.current = false; setSaving(false); }
   }
 
   async function remove(odc) {
@@ -72,11 +87,19 @@ export default function Odcs() {
   }
 
   const selected = odcs.find((d) => d.id === selectedId);
+  useEffect(() => {
+    if (params.get("edit") !== "1" || !selected || !canWrite) return;
+    setForm({ name: selected.name, olt_id: selected.olt_id, location: selected.location || "",
+      cable_type: selected.cable_type, notes: selected.notes || "",
+      feeder_port_ids: feederPorts.filter((f) => f.odc_id === selected.id).map((f) => f.port_id) });
+    setModal({ mode: "edit", odc: selected });
+    setParams({ odc: String(selected.id) }, { replace: true });
+  }, [params, selected, feederPorts, canWrite, setParams]);
   const shownOdcs = odcs.filter((d) =>
-    matchesQuery(query, d.name, d.olt_name, d.location, getCableInfo(d.cable_type)?.label ?? d.cable_type),
+    matchesQuery(query, d.name, d.olt_name, d.location, getCableInfo(d.cable_type)?.label ?? d.cable_type, ...feederPorts.filter((f) => f.odc_id === d.id).map(interfaceLabel)),
   );
   const feederOf = (odcId) => feederPorts.filter((f) => f.odc_id === odcId);
-  const feederLabel = (f) => `${f.card_label || `Card ${f.slot}`} p${f.port}`;
+  const feederLabel = interfaceLabel;
   const portsForOlt = ports.filter((p) => p.olt_id === Number(form.olt_id));
 
   // ODC yang disuplai dari output splitter ODC lain = ODC anak
@@ -131,7 +154,7 @@ export default function Odcs() {
               <th className="th">Nama</th>
               <th className="th">Induk OLT</th>
               <th className="th">Kabel</th>
-              <th className="th">Port Feeder OLT</th>
+              <th className="th">Interface Feeder OLT</th>
               <th className="th">Lokasi</th>
               <th className="th">Core</th>
               <th className="th">ODP</th>
@@ -180,6 +203,7 @@ export default function Odcs() {
                     <div className="flex gap-1">
                       <button
                         className="btn px-2 py-1"
+                        title={`Edit ODC ${d.name}`}
                         onClick={() => {
                           setForm({
                             name: d.name, olt_id: d.olt_id, location: d.location || "",
@@ -191,7 +215,7 @@ export default function Odcs() {
                       >
                         <Pencil size={13} />
                       </button>
-                      <button className="btn px-2 py-1 text-red-400" onClick={() => remove(d)}>
+                      <button className="btn px-2 py-1 text-red-400" title={`Hapus ODC ${d.name}`} onClick={() => remove(d)}>
                         <Trash2 size={13} />
                       </button>
                     </div>
@@ -210,9 +234,14 @@ export default function Odcs() {
         </table>
       </Card>
 
+      {selected && <div className="mt-6"><FeederInterfaceManager reloadKey={networkVersion} key={`${selected.id}:${selected.cable_type}:${feederOf(selected.id).map((f) => f.port_id).join(",")}`} odcId={selected.id} cableType={selected.cable_type} /></div>}
+
       {selected && (
         <Card className="mt-6">
           <CoreManager
+            key={`${selected.id}:${selected.cable_type}`}
+            reloadKey={networkVersion}
+            onChanged={networkChanged}
             source="olt_to_odc"
             parentId={selected.id}
             cableType={selected.cable_type}
@@ -223,11 +252,11 @@ export default function Odcs() {
 
       {selected && (
         <Card className="mt-6">
-          <SplitterManager parentType="odc" parentId={selected.id} title={`Splitter di ${selected.name}`} />
+          <SplitterManager key={`${selected.id}:${selected.cable_type}`} onChanged={networkChanged} parentType="odc" parentId={selected.id} title={`Splitter di ${selected.name}`} />
         </Card>
       )}
 
-      <Modal open={!!modal} title={modal?.mode === "add" ? "Tambah ODC" : "Edit ODC"} onClose={() => setModal(null)}>
+      <Modal open={!!modal} title={modal?.mode === "add" ? "Tambah ODC" : "Edit ODC"} onClose={() => { if (!saving) setModal(null); }}>
         <form onSubmit={save} className="space-y-3">
           <Field label="Nama ODC">
             <input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
@@ -243,10 +272,10 @@ export default function Odcs() {
               {CABLE_TYPES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
             </select>
           </Field>
-          <Field label={`Port Feeder OLT — boleh lebih dari satu (${form.feeder_port_ids.length} dipilih)`}>
+          <Field label={`Interface feeder langsung dari OLT — boleh lebih dari satu (${form.feeder_port_ids.length} dipilih)`}>
             <div className="max-h-44 space-y-1 overflow-y-auto rounded-lg border border-line bg-panel2 p-2">
               {portsForOlt.length === 0 && (
-                <div className="px-1 py-2 text-xs text-mut">OLT ini belum punya port tercatat.</div>
+                <div className="px-1 py-2 text-xs text-mut">OLT ini belum punya interface tercatat. Catat port di Manajemen OLT terlebih dahulu.</div>
               )}
               {portsForOlt.map((p) => (
                 <label key={p.id} className="flex cursor-pointer items-center gap-2 rounded px-1 py-1 text-xs hover:bg-panel">
@@ -262,7 +291,7 @@ export default function Odcs() {
                       })
                     }
                   />
-                  <span className="font-medium">{p.card_label || `Card ${p.slot}`} port {p.port}</span>
+                  <span className="font-medium">{interfaceLabel(p)}</span>
                   <span className="text-mut">
                     {p.sfp ? `${p.sfp} · ` : ""}{p.status === "active" ? "aktif" : p.status}
                   </span>
@@ -270,6 +299,7 @@ export default function Odcs() {
               ))}
             </div>
           </Field>
+          <p className="text-[11px] text-mut">Daftar di atas hanya mencatat port yang masuk ke kabinet. Setelah disimpan, klik ODC lalu isi “Interface OLT → Core Feeder” untuk menentukan asal setiap core. Jika dari ODC induk, gunakan sambungan output splitter, bukan feeder langsung.</p>
           <Field label="Lokasi / Koordinat">
             <input
               className="input"
@@ -281,7 +311,7 @@ export default function Odcs() {
           <Field label="Catatan">
             <textarea className="input" rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
           </Field>
-          <button className="btn btn-primary w-full">Simpan</button>
+          <button className="btn btn-primary w-full" disabled={saving}>{saving ? "Menyimpan…" : "Simpan"}</button>
         </form>
       </Modal>
 

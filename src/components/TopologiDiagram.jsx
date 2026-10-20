@@ -7,15 +7,15 @@ import { STATUS } from "../lib/fiber.js";
 const ZOOMS = [0.6, 0.75, 0.9, 1, 1.15, 1.3, 1.5];
 
 /** Diagram alur jaringan: OLT → ODC → splitter → ODP (bisa bertingkat). */
-export default function TopologiDiagram({ olts, odcs, odps, splitters, links, feederPorts, cores = [], query = "" }) {
+export default function TopologiDiagram({ graph: suppliedGraph, olts, odcs, odps, splitters, links, feederPorts, cores = [], query = "" }) {
   const [selected, setSelected] = useState(null);
   const [searchTarget, setSearchTarget] = useState("");
   const [zoom, setZoom] = useState(1);
   const [labels, setLabels] = useState(true);
 
   const graph = useMemo(
-    () => buildTopologyGraph({ olts, odcs, odps, splitters, links, feederPorts, cores }),
-    [olts, odcs, odps, splitters, links, feederPorts, cores],
+    () => suppliedGraph || buildTopologyGraph({ olts, odcs, odps, splitters, links, feederPorts, cores }),
+    [suppliedGraph, olts, odcs, odps, splitters, links, feederPorts, cores],
   );
   const cleanQuery = query.trim();
   const searchMatches = useMemo(
@@ -42,7 +42,7 @@ export default function TopologiDiagram({ olts, odcs, odps, splitters, links, fe
   }, [cleanQuery, searchMatches, searchTarget]);
 
   // Alur core ke hulu dari simpul terpilih (OLT → … → simpul ini)
-  const chains = useMemo(() => (selected ? buildUpstreamChains(graph, selected) : []), [graph, selected]);
+  const chains = useMemo(() => (selected ? buildUpstreamChains(graph, selected, { maxKedalaman: 80 }) : []), [graph, selected]);
 
   // Label otomatis disembunyikan bila garisnya terlalu banyak (biar tidak penuh)
   useEffect(() => {
@@ -181,11 +181,13 @@ export default function TopologiDiagram({ olts, odcs, odps, splitters, links, fe
         </span>
       </div>
       <p className="mb-3 text-[11px] text-mut">
-        Warna garis feed, cascade, dan output mengikuti warna core kabel ODC asal (TIA/EIA-598). Pada kotak ODP: titik bulat di kanan-bawah adalah core yang masuk, kotak kecil di kiri-bawah adalah core power ODP (kabel ODP sendiri). Klik simpul untuk rincian core dan alur hulu.
+        ODC yang sama dapat tampil lebih dari sekali karena setiap core/jalur masuk dipisahkan agar sumber interface tidak tercampur. Warna garis feed, cascade, dan output mengikuti warna core kabel ODC asal (TIA/EIA-598). Pada kotak ODP: titik bulat di kanan-bawah adalah core yang masuk, kotak kecil di kiri-bawah adalah core power ODP (kabel ODP sendiri). Klik simpul untuk rincian core dan alur hulu.
       </p>
 
       <Card className="overflow-x-auto p-3">
         <svg
+          role="group"
+          aria-label="Diagram jalur interface OLT sampai ODP"
           width={graph.width * zoom}
           height={graph.height * zoom}
           viewBox={`0 0 ${graph.width} ${graph.height}`}
@@ -236,6 +238,13 @@ export default function TopologiDiagram({ olts, odcs, odps, splitters, links, fe
             return (
               <g
                 key={n.id}
+                role="button"
+                tabIndex={0}
+                aria-label={`${NODE_STYLE[n.kind]?.label || "Simpul"}: ${n.fullTitle || n.title}${n.sourceLabel ? `, ${n.sourceLabel}` : ""}`}
+                aria-pressed={isSel}
+                onKeyDown={(ev) => {
+                  if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); ev.stopPropagation(); setSelected(isSel ? null : n.id); }
+                }}
                 transform={`translate(${n.x},${n.y})`}
                 opacity={dim ? 0.22 : 1}
                 style={{ cursor: "pointer" }}
@@ -244,6 +253,7 @@ export default function TopologiDiagram({ olts, odcs, odps, splitters, links, fe
                   setSelected(isSel ? null : n.id);
                 }}
               >
+                <title>{`${n.fullTitle || n.title} · ${n.sub}${n.sourceLabel ? ` · ${n.sourceLabel}` : ""}`}</title>
                 <rect
                   width={NODE_W}
                   height={NODE_H}
@@ -302,9 +312,10 @@ export default function TopologiDiagram({ olts, odcs, odps, splitters, links, fe
         <Card className="mt-3">
           <div className="flex flex-wrap items-center gap-2 text-sm">
             <Badge cls="bg-acc/15 text-ink" >{NODE_STYLE[node.kind]?.label}</Badge>
-            <span className="font-semibold">{node.title}</span>
+            <span className="font-semibold">{node.fullTitle || node.title}</span>
             <span className="text-mut">{node.sub}</span>
           </div>
+          {node.sourceLabel && <p className="mt-2 text-xs text-cyan-300">Sumber jalur: {node.sourceLabel}</p>}
           <div className="mt-2 grid gap-1 text-xs text-mut sm:grid-cols-2">
             <div>
               <span className="text-ink">Masuk dari: </span>
@@ -370,14 +381,14 @@ export default function TopologiDiagram({ olts, odcs, odps, splitters, links, fe
                       <span key={l.node.id} className="flex items-center gap-1">
                         {j > 0 && (
                           <span className="text-mut">
-                            {l.edge?.label ? <span className="mr-0.5 rounded bg-panel2 px-1">{l.edge.label}</span> : null}→
+                            {c.langkah[j - 1]?.edge?.label ? <span className="mr-0.5 rounded bg-panel2 px-1">{c.langkah[j - 1].edge.label}</span> : null}→
                           </span>
                         )}
                         <span
                           className="rounded-md border border-line bg-panel2 px-1.5 py-0.5 font-medium"
                           style={{ borderLeftColor: NODE_STYLE[l.node.kind]?.color, borderLeftWidth: 3 }}
                         >
-                          {l.node.title}
+                          {l.node.fullTitle || l.node.title}
                         </span>
                       </span>
                     ))}

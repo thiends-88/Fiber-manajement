@@ -1,4 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import { interfaceLabel } from "../lib/interfaces.js";
+import { buildInterfaceRoutes } from "../lib/interface-routes.js";
+import InterfaceBadge from "../components/InterfaceBadge.jsx";
+import FeederInterfaceManager from "../components/FeederInterfaceManager.jsx";
 import { GitBranch, Link2, Pencil, Plus, Trash2, Workflow } from "lucide-react";
 import { api } from "../lib/api.js";
 import { useAuth } from "../lib/auth.jsx";
@@ -13,45 +18,45 @@ export default function Mapping() {
   const { user } = useAuth();
   const canWrite = user.role === "admin" || user.role === "operator";
 
+  const [params, setParams] = useSearchParams();
+  const [ports, setPorts] = useState([]);
+  const [interfaceMappings, setInterfaceMappings] = useState([]);
   const [odcs, setOdcs] = useState([]);
   const [odps, setOdps] = useState([]);
   const [olts, setOlts] = useState([]);
   const [allCores, setAllCores] = useState([]);
   const [feederPorts, setFeederPorts] = useState([]);
   const [splitters, setSplitters] = useState([]);
-  const [odcId, setOdcId] = useState("");
-  const [links, setLinks] = useState([]);
+  const odcId = params.has("odc") ? params.get("odc") : odcs[0]?.id || "";
+  const setOdcId = (id) => { setParams({ odc: String(id) }); setModal(null); };
+  const [allLinks, setAllLinks] = useState([]);
+  const links = useMemo(() => allLinks.filter((l) => Number(l.odc_id) === Number(odcId)), [allLinks, odcId]);
+  const submitBusy = useRef(false);
+  const [saving, setSaving] = useState(false);
   const [modal, setModal] = useState(null);
   const [form, setForm] = useState(emptyLink);
   const [toastState, setToastState] = useState(null);
   const toast = useToast(setToastState);
 
   const load = useCallback(async () => {
-    const [d, p, o, c, pt, spl] = await Promise.all([
+    const [d, p, o, c, pt, spl, ps, mappings, ls] = await Promise.all([
       api("/api/odcs"), api("/api/odps"), api("/api/olts"), api("/api/cores"), api("/api/feeder-ports"),
-      api("/api/splitters"),
+      api("/api/splitters"), api("/api/ports"), api("/api/interface-mappings"), api("/api/links"),
     ]);
+    setAllLinks(ls);
+    setPorts(ps);
+    setInterfaceMappings(mappings);
     setFeederPorts(pt);
     setSplitters(spl);
     setOdcs(d);
     setOdps(p);
     setOlts(o);
     setAllCores(c);
-    setOdcId((cur) => cur || d[0]?.id || "");
   }, []);
 
   useEffect(() => {
     load().catch((e) => toast(e.message, "error"));
   }, [load, toast]);
-
-  const loadLinks = useCallback(async (id) => {
-    if (!id) return setLinks([]);
-    setLinks(await api(`/api/links?odc_id=${id}`));
-  }, []);
-
-  useEffect(() => {
-    loadLinks(odcId).catch((e) => toast(e.message, "error"));
-  }, [odcId, loadLinks, toast]);
 
   const odc = odcs.find((d) => d.id === Number(odcId));
   const odcOlts = olts.find((o) => o.id === odc?.olt_id);
@@ -68,7 +73,7 @@ export default function Mapping() {
     () => feederPorts.filter((f) => f.odc_id === Number(odcId)),
     [feederPorts, odcId],
   );
-  const feederLabel = (f) => `${f.card_label || `Card ${f.slot}`} port ${f.port}`;
+  const feederLabel = interfaceLabel;
 
   // Core ODC → ODP untuk tiap ODP (dipakai untuk fallback tampilan)
   const odpCores = useMemo(
@@ -77,6 +82,10 @@ export default function Mapping() {
   );
 
   const cable = odc?.cable_type;
+  const interfaceRoutes = useMemo(() => buildInterfaceRoutes({ olts, odcs, odps, ports, splitters, links: allLinks, cores: allCores, feederPorts, interfaceMappings }),
+    [olts, odcs, odps, ports, splitters, allLinks, allCores, feederPorts, interfaceMappings]);
+  const sourceForCore = (core) => interfaceRoutes.groups.find((g) => Number(g.odc.id) === Number(odcId) && Number(g.core) === Number(core))?.port || null;
+
 
   // Pohon jalur per core ODC (1 core → splitter → ODP / ODC anak) +
   // sambungan kabel langsung yang dipisahkan
@@ -96,7 +105,11 @@ export default function Mapping() {
   // Rute via splitter (hasil meratakan pohon) → untuk deteksi core terpakai
   // otomatis dan keterangan "Core terpakai dari ODC" per ODP.
   const ruteOdp = useMemo(() => daftarRuteOdp(peta.trees), [peta]);
-  const treeByCore = useMemo(() => new Map(peta.trees.map((t) => [t.core, t])), [peta]);
+  const treesByCore = useMemo(() => {
+    const groups = new Map();
+    for (const tree of peta.trees) groups.set(tree.core, [...(groups.get(tree.core) || []), tree]);
+    return groups;
+  }, [peta]);
 
   // Semua core yang NYATANYA terpakai: masuk splitter ATAU kabel langsung.
   // Digabung dengan assignment manual supaya core yang belum dicatat tetap muncul.
@@ -118,6 +131,8 @@ export default function Mapping() {
 
   async function save(e) {
     e.preventDefault();
+    if (submitBusy.current) return;
+    submitBusy.current = true; setSaving(true);
     try {
       const body = {
         odc_id: Number(form.odc_id),
@@ -129,18 +144,18 @@ export default function Mapping() {
       if (modal.mode === "add") await api("/api/links", { method: "POST", body });
       else await api(`/api/links/${modal.link.id}`, { method: "PATCH", body });
       setModal(null);
-      await loadLinks(odcId);
+      await load();
       toast("Sambungan core tersimpan");
     } catch (err) {
       toast(err.message, "error");
-    }
+    } finally { submitBusy.current = false; setSaving(false); }
   }
 
   async function remove(link) {
     if (!confirm(`Hapus sambungan ODC core ${link.odc_core} → ${link.odp_name} core ${link.odp_core}?`)) return;
     try {
       await api(`/api/links/${link.id}`, { method: "DELETE" });
-      await loadLinks(odcId);
+      await load();
       toast("Sambungan dihapus");
     } catch (err) {
       toast(err.message, "error");
@@ -150,7 +165,7 @@ export default function Mapping() {
   const formOdc = odcs.find((d) => d.id === Number(form.odc_id));
   const formOdps = odps.filter((p) => p.odc_id === Number(form.odc_id));
   const formOdp = formOdps.find((p) => p.id === Number(form.odp_id));
-  const usedFormCores = links.filter((l) => l.odc_id === Number(form.odc_id)).map((l) => l.odc_core);
+  const usedFormCores = allLinks.filter((l) => l.odc_id === Number(form.odc_id)).map((l) => l.odc_core);
 
   return (
     <div>
@@ -197,6 +212,7 @@ export default function Mapping() {
 
       {odc && (
         <div className="space-y-5">
+          <FeederInterfaceManager reloadKey={allLinks} key={odc.id} odcId={odc.id} cableType={cable} onChanged={load} />
           {/* Peta jalur core: pohon splitter per core + sambungan langsung */}
           <Card>
             <div className="mb-3 flex items-center gap-2">
@@ -215,11 +231,12 @@ export default function Mapping() {
                   const feeder = t.feeder;
                   const status = feeder ? STATUS[feeder.status] : null;
                   return (
-                    <div key={`pohon-${t.core}`} className="rounded-xl border border-line bg-panel-soft p-3">
+                    <div key={`pohon-${t.root.id}-${t.core}`} className="rounded-xl border border-line bg-panel-soft p-3">
                       <div className="mb-2 flex flex-wrap items-center gap-2">
                         <CoreChip core={t.core} cableType={cable} small />
                         {status && <Badge cls={status.cls}>{status.label}</Badge>}
                         <span className="text-[11px] text-mut">{odc.name}</span>
+                        {(interfaceRoutes.splitterOrigins.get(t.root.id) || [{ port: null }]).map((origin, i) => <span key={i} title={origin.text}><InterfaceBadge port={origin.port} link /></span>)}
                       </div>
                       <PohonJalur node={t.root} feed={{ core: t.core, cableType: cable }} />
                     </div>
@@ -249,9 +266,7 @@ export default function Mapping() {
                       <div className="rounded-lg border border-line bg-panel px-2.5 py-1.5 text-xs">
                         <div className="font-semibold">{odc.olt_name}</div>
                         <div className="text-mut">
-                          {feederPortsForOdc.length === 0
-                            ? "port feeder belum diatur"
-                            : feederPortsForOdc.map(feederLabel).join(" · ")}
+                          <InterfaceBadge port={sourceForCore(l.odc_core)} link />
                         </div>
                       </div>
                       <Arrow />
@@ -437,9 +452,8 @@ export default function Mapping() {
                   <tbody>
                     {feederRows.map(({ core, assign }) => {
                       const st = assign ? STATUS[assign.status] : null;
-                      const tree = treeByCore.get(core);
-                      const viaSplitter = ruteOdp.filter((r) => r.core === core);
-                      const terdeteksi = !!tree || linkedOdcCores.has(core);
+                      const trees = treesByCore.get(core) || [];
+                      const terdeteksi = trees.length > 0 || linkedOdcCores.has(core);
                       return (
                         <tr key={core} className="border-b border-line-soft last:border-0">
                           <td className="td"><CoreChip core={core} cableType={cable} small /></td>
@@ -459,21 +473,20 @@ export default function Mapping() {
                               const l = links.find((x) => x.odc_core === core);
                               return <div>→ {l.odp_name} core {l.odp_core} (kabel langsung)</div>;
                             })()}
-                            {tree && (
-                              <div>
+                            {trees.map((tree) => {
+                              // Identitas receiver membedakan kabel. Jangan menggabungkan
+                              // seluruh tujuan yang kebetulan memakai nomor core sama.
+                              const routes = daftarRuteOdp([tree]);
+                              const targets = [
+                                ...routes.filter((r) => r.odpName).map((r) => r.odpName),
+                                ...routes.filter((r) => r.odcAnakName).map((r) => `⇉ ${r.odcAnakName}${r.odcAnakCore != null ? ` core ${r.odcAnakCore}` : ""}`),
+                              ];
+                              return <div key={tree.root.id}>
                                 via {tree.root.name} ({tree.root.ratio})
-                                {(() => {
-                                  const tujuan = [
-                                    ...viaSplitter.filter((r) => r.odpName).map((r) => r.odpName),
-                                    ...viaSplitter.filter((r) => r.odcAnakName).map((r) => `⇉ ${r.odcAnakName}${r.odcAnakCore != null ? ` core ${r.odcAnakCore}` : ""}`),
-                                  ];
-                                  return tujuan.length > 0
-                                    ? ` → ${tujuan.join(", ")}`
-                                    : " — output belum diarahkan";
-                                })()}
-                              </div>
-                            )}
-                            {!tree && !linkedOdcCores.has(core) && "belum tersambung"}
+                                {targets.length ? ` → ${targets.join(", ")}` : " — output belum diarahkan"}
+                              </div>;
+                            })}
+                            {!trees.length && !linkedOdcCores.has(core) && "belum tersambung"}
                           </td>
                         </tr>
                       );
@@ -543,7 +556,7 @@ export default function Mapping() {
       <Modal
         open={!!modal}
         title={modal?.mode === "add" ? "Tambah Sambungan Core" : "Edit Sambungan Core"}
-        onClose={() => setModal(null)}
+        onClose={() => { if (!saving) setModal(null); }}
         wide
       >
         <form onSubmit={save} className="space-y-3">
@@ -597,7 +610,7 @@ export default function Mapping() {
               Core ODC yang sudah tersambung di ODC ini: {usedFormCores.sort((a, b) => a - b).join(", ")} — satu core hanya boleh satu sambungan.
             </p>
           )}
-          <button className="btn btn-primary w-full">Simpan Sambungan</button>
+          <button className="btn btn-primary w-full" disabled={saving}>{saving ? "Menyimpan…" : "Simpan Sambungan"}</button>
         </form>
       </Modal>
 
