@@ -92,6 +92,14 @@ lapangan.
    Jalur belum dipetakan/perlu diperiksa tetap terpisah. Laporan Alur Core ODC,
    Power ODP dan Rekap Core tetap tersedia. Akses berbasis peran (admin/operator/user).
 
+10. **Dashboard → Perangkat OLT** — rincian setiap OLT (nama/model), jumlah tiap
+    tipe card, posisi shelf/slot, kapasitas, port tercatat, port aktif manual dan
+    port terpakai berdasarkan mapping interface → core feeder. Feeder yang belum
+    memiliki mapping valid ditandai terpisah. Rincian bisa dilipat dan ditautkan
+    langsung ke OLT terkait; tombol **Muat ulang** mengambil data terbaru. OLT
+    fixed-port ditampilkan sebagai port bawaan, bukan card fisik fiktif. Lihat
+    [cara membaca angkanya](PANDUAN-INTERFACE.md#ringkasan-perangkat-olt-di-dashboard).
+
 **Database sederhana versi Arena:** SQLite bawaan Node (`node:sqlite`) dalam
 satu file `data/fiberops.db`. Tidak ada Supabase, tidak ada koneksi keluar.
 Hapus file tersebut untuk mereset ke data demo.
@@ -197,6 +205,7 @@ npm run test:api      # login, hak akses, CRUD semua entitas, penjaga validasi
 npm run test:interfaces # penamaan, sumber jalur, API baru, persistensi, migrasi
 npm run test:interfaces:ui # alur pencatatan interface → ODC → mapping → ODP
 npm run test:audit    # 42 skenario tambahan: sesi, pengamanan sambungan, race UI
+npm run test:dashboard # 31 skenario API/UI: per OLT/card, hitungan, port bawaan, refresh
 npm run test:layout   # server tetap jalan hanya dengan file yang disalin Dockerfile
 npm run test:render   # semua halaman ter-render (butuh server jalan)
 ```

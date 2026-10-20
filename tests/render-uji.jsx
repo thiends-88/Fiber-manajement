@@ -10,7 +10,7 @@ import { AuthProvider } from "../src/lib/auth.jsx";
 // menampilkan header tapi data demo tidak ikut ter-render, jadi penanda ini kuat.
 const ROUTES = [
   ["/", ["Alur Core", "SPL-1"]], // halaman utama: pohon jalur core benar-benar tergambar
-  ["/dashboard", "Core Terdaftar"],
+  ["/dashboard", ["Core Terdaftar", "Card terpasang", "Port terpakai", "Kapasitas", "OLT-PST-01", "GTGO", "GTGH"]],
   ["/olt", "OLT-PST-01"],
   ["/odc", ["ODC-001", "ODC anak", "Splitter di ODC-001", "Tahap 2", "SPL-2"]], // buka ODC dan cek cascade bertingkat
   ["/odp", "ODP-001"],

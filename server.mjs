@@ -425,6 +425,57 @@ function checkInterfaceName(oltId, name, excludeId = 0) {
   return null;
 }
 
+// Ringkasan fisik OLT, tanpa memperbanyak hitungan akibat banyaknya ODC/ODP.
+// Aktif berasal dari status manual; terpakai berasal dari mapping feeder eksplisit.
+function dashboardOltDevices() {
+  const cards = db.prepare(`WITH direct_inputs AS (
+    SELECT s.odc_id, s.input_core AS core FROM splitters s
+    WHERE s.odc_id IS NOT NULL AND NOT EXISTS (
+      SELECT 1 FROM splitter_outputs o WHERE
+        (o.target_type='splitter' AND o.target_splitter_id=s.id) OR
+        (o.target_type='odc' AND o.target_odc_splitter_id=s.id)
+    )
+    UNION ALL SELECT odc_id, odc_core AS core FROM core_links
+  ), input_usage AS (
+    SELECT odc_id, core, COUNT(*) AS n FROM direct_inputs GROUP BY odc_id, core
+  ), port_usage AS (
+    SELECT p.id, p.card_id, p.status,
+      EXISTS (
+        SELECT 1 FROM interface_mappings m
+        JOIN odcs d ON d.id=m.odc_id
+        JOIN odc_feeder_ports f ON f.odc_id=m.odc_id AND f.port_id=m.port_id
+        LEFT JOIN input_usage u ON u.odc_id=m.odc_id AND u.core=m.core
+        WHERE m.port_id=p.id AND d.olt_id=pc.olt_id AND COALESCE(u.n,0)<=1
+      ) AS mapped,
+      EXISTS (
+        SELECT 1 FROM odc_feeder_ports f JOIN odcs d ON d.id=f.odc_id
+        WHERE f.port_id=p.id AND d.olt_id=pc.olt_id
+      ) AS feeder
+    FROM olt_ports p JOIN olt_cards pc ON pc.id=p.card_id
+  ) SELECT c.id, c.olt_id, c.shelf, c.slot, c.card_type, c.label, c.port_count, c.is_builtin,
+    COUNT(p.id) AS portsRecorded,
+    COALESCE(SUM(p.status='active'),0) AS portsActive,
+    COALESCE(SUM(p.mapped),0) AS portsUsed,
+    COALESCE(SUM(p.feeder=1 AND p.mapped=0),0) AS portsFeederPending
+  FROM olt_cards c LEFT JOIN port_usage p ON p.card_id=c.id
+  GROUP BY c.id ORDER BY c.olt_id, c.shelf, c.slot, c.id`).all();
+  const cardsByOlt = new Map();
+  for (const card of cards) {
+    const rows = cardsByOlt.get(card.olt_id) || [];
+    rows.push(card); cardsByOlt.set(card.olt_id, rows);
+  }
+  return sortByNameNatural(db.prepare("SELECT id, name, olt_type, interface_mode, location FROM olts").all()).map((olt) => {
+    const installed = cardsByOlt.get(olt.id) || [];
+    const sum = (field) => installed.reduce((n, card) => n + card[field], 0);
+    return { ...olt, cards: installed,
+      cardCount: installed.filter((card) => !card.is_builtin).length,
+      portCapacity: sum("port_count"), portsRecorded: sum("portsRecorded"),
+      portsActive: sum("portsActive"), portsUsed: sum("portsUsed"),
+      portsFeederPending: sum("portsFeederPending"),
+    };
+  });
+}
+
 // Validasi daftar port feeder ODC: boleh banyak, tetapi harus milik OLT induk ODC
 function checkFeederPorts(oltId, ids) {
   if (!validPositiveInt(oltId)) return "OLT tidak valid";
@@ -842,11 +893,17 @@ const server = http.createServer(async (req, res) => {
       const c = (sql) => db.prepare(sql).get().n;
       const cores = db.prepare("SELECT status, COUNT(*) AS n FROM core_assignments GROUP BY status").all();
       const byStatus = Object.fromEntries(cores.map((r) => [r.status, r.n]));
+      const oltDevices = dashboardOltDevices();
+      const total = (field) => oltDevices.reduce((n, olt) => n + olt[field], 0);
       return send(req, res, 200, {
         olts: c("SELECT COUNT(*) n FROM olts"),
-        cards: c("SELECT COUNT(*) n FROM olt_cards"),
-        ports: c("SELECT COUNT(*) n FROM olt_ports"),
-        portsActive: c("SELECT COUNT(*) n FROM olt_ports WHERE status='active'"),
+        cards: total("cardCount"),
+        ports: total("portsRecorded"),
+        portsActive: total("portsActive"),
+        portsUsed: total("portsUsed"),
+        portsFeederPending: total("portsFeederPending"),
+        portCapacity: total("portCapacity"),
+        oltDevices,
         odcs: c("SELECT COUNT(*) n FROM odcs"),
         odps: c("SELECT COUNT(*) n FROM odps"),
         cores: c("SELECT COUNT(*) n FROM core_assignments"),

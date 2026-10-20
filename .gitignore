@@ -16,3 +16,6 @@ data/
 
 # Artefak regresi audit alur
 .uji-audit/
+
+# Artefak regresi dashboard per OLT/card
+.uji-dashboard/

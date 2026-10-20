@@ -44,6 +44,32 @@ struktur penomoran berbeda, catat OLT baru dan pindahkan sambungan secara terenc
 Jumlah port fixed-port masih dapat ditambah; tidak dapat dikurangi melewati port
 tertinggi yang sudah tercatat.
 
+### Ringkasan Perangkat OLT di Dashboard
+
+Buka **Dashboard → Perangkat OLT**. Setiap nama/model OLT memiliki rincian yang
+bisa dilipat: jumlah tiap tipe card terpasang, shelf/slot dan tabel per card.
+
+| Angka | Cara membaca |
+| --- | --- |
+| **Card terpasang** | Card fisik yang benar-benar dicatat, bukan jumlah slot chassis. Port bawaan HSGQ/profil PON/manual tidak dihitung sebagai card. |
+| **Kapasitas** | Jumlah port yang dikonfigurasi pada card atau port bawaan OLT. Tidak ditebak dari nama model atau tipe card. |
+| **Tercatat** | Interface yang sudah memiliki catatan port di Manajemen OLT. Kapasitas 16 dengan 2 port tercatat tetap ditampilkan sebagai 16 dan 2, bukan dianggap ada 14 port idle. |
+| **Aktif** | Port dengan status **Aktif** yang Anda isi manual pada Manajemen OLT. Bukan hasil pembacaan OLT. |
+| **Terpakai** | Port dengan pemetaan eksplisit **interface → core feeder** yang sesuai OLT induk, terpilih sebagai feeder ODC, dan tidak memiliki konflik input langsung. Dihitung sekali per port, bukan per ODC, ODP, atau output splitter. |
+| **Feeder belum dipetakan** | Port yang sudah dipilih sebagai feeder, tetapi belum memiliki mapping yang valid. Periksa di Mapping Core; data lama yang konflik tidak ditebak sumbernya. |
+
+**Aktif dan Terpakai bukan dua kelompok yang saling terpisah dan tidak boleh
+dijumlahkan.** Port bisa berstatus aktif tetapi belum dipetakan; sebaliknya,
+mapping tetap tercatat walaupun status manual port nonaktif/reserved/rusak.
+Terpakai bukan jumlah ONT/pelanggan atau bukti sinyal sedang menyala.
+
+Nama tipe card mengikuti inventaris apa adanya. Card tanpa catatan port tetap
+muncul dengan hitungan nol; OLT tanpa card tidak diisi card contoh. Untuk OLT
+fixed-port, baris **Port bawaan OLT** tidak menampilkan shelf/slot internal fiktif.
+Klik **Rincian OLT & interface** untuk membuka perangkat yang benar berdasarkan
+ID-nya. Setelah mengubah inventaris/mapping, kembali ke Dashboard atau klik
+**Muat ulang**. Pembacaan dashboard hanya membaca data, tidak mengubah inventaris.
+
 ## 2. Pilih interface feeder pada ODC
 
 Pada **Manajemen ODC → Edit ODC**, pilih interface yang benar-benar masuk ke
@@ -195,6 +221,7 @@ npm test                     # logika, API lama/baru, migrasi, runtime, interaks
 npm run test:interfaces       # penamaan, pemisahan sumber, API, restart & migrasi
 npm run test:interfaces:ui    # UI interface/laporan + ekspor, API SQLite sementara
 npm run test:laporan          # isolasi sumber, statistik, CSV aman, PDF dibaca ulang
+npm run test:dashboard        # hitungan per OLT/card, status/mapping, port bawaan, UI/refresh
 npm run test:render           # smoke test fixture demo; server berdata demo harus aktif
 ```
 
