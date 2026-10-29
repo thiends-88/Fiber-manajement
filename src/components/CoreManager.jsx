@@ -209,7 +209,7 @@ export default function CoreManager({ source, parentId, cableType, title, reload
         </div>
       )}
 
-      <Modal open={!!modal} title={modal ? `Core ${modal.core} — ${title}` : ""} onClose={() => { if (!saving) setModal(null); }}>
+      <Modal busy={saving} open={!!modal} title={modal ? `Core ${modal.core} — ${title}` : ""} onClose={() => { if (!saving) setModal(null); }}>
         {modal && (
           <form onSubmit={save} className="space-y-3">
             <div className="flex items-center gap-2 text-sm text-mut">

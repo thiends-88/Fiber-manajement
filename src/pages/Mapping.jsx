@@ -553,7 +553,7 @@ export default function Mapping() {
       )}
 
       {/* Modal sambungan core */}
-      <Modal
+      <Modal busy={saving}
         open={!!modal}
         title={modal?.mode === "add" ? "Tambah Sambungan Core" : "Edit Sambungan Core"}
         onClose={() => { if (!saving) setModal(null); }}

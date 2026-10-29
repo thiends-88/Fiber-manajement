@@ -359,7 +359,7 @@ export default function SplitterManager({ parentType, parentId, title, onChanged
       </div>
 
       {/* Modal splitter */}
-      <Modal open={!!modal} title={modal?.mode === "add" ? "Tambah Splitter" : "Edit Splitter"} onClose={() => { if (!saving) setModal(null); }}>
+      <Modal busy={saving} open={!!modal} title={modal?.mode === "add" ? "Tambah Splitter" : "Edit Splitter"} onClose={() => { if (!saving) setModal(null); }}>
         <form onSubmit={save} className="space-y-3">
           <Field label="Nama / Label Splitter">
             <input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
@@ -410,7 +410,7 @@ export default function SplitterManager({ parentType, parentId, title, onChanged
       </Modal>
 
       {/* Modal arah output */}
-      <Modal
+      <Modal busy={saving}
         open={!!outModal}
         title={outModal ? `${outModal.splitter.name} — output ${outModal.out.port}` : ""}
         onClose={() => { if (!saving) setOutModal(null); }}

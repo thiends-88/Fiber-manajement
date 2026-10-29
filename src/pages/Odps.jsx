@@ -134,6 +134,7 @@ export default function Odps() {
                     <div className="flex gap-1">
                       <button
                         className="btn px-2 py-1"
+                        title={`Edit ODP ${d.name}`}
                         onClick={() => {
                           setForm({ name: d.name, odc_id: d.odc_id, location: d.location || "", cable_type: d.cable_type, notes: d.notes || "" });
                           setModal({ mode: "edit", odp: d });
@@ -141,7 +142,7 @@ export default function Odps() {
                       >
                         <Pencil size={13} />
                       </button>
-                      <button className="btn px-2 py-1 text-red-400" onClick={() => remove(d)}>
+                      <button className="btn px-2 py-1 text-red-400" title={`Hapus ODP ${d.name}`} onClick={() => remove(d)}>
                         <Trash2 size={13} />
                       </button>
                     </div>
@@ -182,7 +183,7 @@ export default function Odps() {
         </Card>
       )}
 
-      <Modal open={!!modal} title={modal?.mode === "add" ? "Tambah ODP" : "Edit ODP"} onClose={() => { if (!saving) setModal(null); }}>
+      <Modal busy={saving} open={!!modal} title={modal?.mode === "add" ? "Tambah ODP" : "Edit ODP"} onClose={() => { if (!saving) setModal(null); }}>
         <form onSubmit={save} className="space-y-3">
           <Field label="Nama ODP">
             <input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />

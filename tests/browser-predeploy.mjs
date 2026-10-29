@@ -24,6 +24,35 @@ async function context({stripStandardAuth=false,...options}={}){const ctx=await 
     if(stripStandardAuth){const headers={...route.request().headers()};delete headers.authorization;delete headers.cookie;return route.continue({headers});}return route.continue();});return ctx;}
 async function loginPage(page,e=email,p=password){await page.goto(BASE+"/login");await page.getByLabel("Email",{exact:true}).fill(e);await page.getByLabel("Password",{exact:true}).fill(p);await page.getByRole("button",{name:"Masuk",exact:true}).click();await page.waitForURL(BASE+"/");await page.getByRole("heading",{name:"Alur Core OLT → ODC → ODP",exact:true}).waitFor();}
 const snapshotOlt=async id=>(await request("GET","/api/dashboard")).oltDevices.find(o=>o.id===id);
+// Tahan request browser sungguhan agar pending state tidak hanya dites di jsdom.
+async function heldSave(page, dialog, pathname, method, { failure = false } = {}) {
+  let arrived;
+  const seen = new Promise(resolve => { arrived = resolve; });
+  const gate = new Promise(resolve => { releasePatch = resolve; });
+  await page.route(BASE + pathname, async route => {
+    if (route.request().method() === method) {
+      arrived(); await gate;
+      if (failure) return route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "Simulasi simpan gagal" }) });
+    }
+    await route.continue();
+  });
+  await dialog.getByRole("button", { name: "Simpan", exact: true }).click();
+  await seen;
+  assert.equal(await dialog.getAttribute("aria-busy"), "true");
+  for (const control of await dialog.locator("input,select,textarea").all()) assert.ok(await control.isDisabled());
+  assert.ok(await dialog.getByRole("button", { name: "Tutup", exact: true }).isDisabled());
+  await page.keyboard.press("Escape"); await page.mouse.click(2, 2);
+  assert.ok(await dialog.isVisible());
+  releasePatch(); releasePatch = null;
+  if (failure) {
+    await dialog.getByRole("button", { name: "Simpan", exact: true }).waitFor();
+    for (const control of await dialog.locator("input,select,textarea").all()) assert.ok(await control.isEnabled());
+    assert.ok(await dialog.getByRole("button", { name: "Tutup", exact: true }).isEnabled());
+    assert.match(await page.getByRole("alert").innerText(), /Simulasi simpan gagal/);
+  } else await dialog.waitFor({ state: "hidden" });
+  await page.unroute(BASE + pathname);
+}
+
 try{
   console.log("\n=== BROWSER CHROMIUM / BUILD PRODUCTION ===");
   await start("development");await loginApi("admin@arena.test","Arena123!");
@@ -50,10 +79,52 @@ try{
   await check("form simpan lambat tidak dapat ditutup atau diubah hingga server menjawab",async()=>{
     const form=page.getByRole("dialog",{name:"Edit Card",exact:true});await form.getByLabel("Label Card",{exact:true}).fill("Edit label aman");let arrived;const seen=new Promise(r=>arrived=r),gate=new Promise(r=>releasePatch=r);
     await page.route(BASE+`/api/cards/${f.a2.id}`,async route=>{if(route.request().method()==="PATCH"){arrived();await gate;}await route.continue();});
-    await form.getByRole("button",{name:"Simpan",exact:true}).click();await seen;await page.keyboard.press("Escape");assert.ok(await form.isVisible());assert.ok(await form.getByLabel("Label Card",{exact:true}).isDisabled());await form.getByRole("button",{name:"Tutup",exact:true}).click();assert.ok(await form.isVisible());releasePatch();releasePatch=null;await form.waitFor({state:"hidden"});await page.unroute(BASE+`/api/cards/${f.a2.id}`);
+    await form.getByRole("button",{name:"Simpan",exact:true}).click();await seen;await page.keyboard.press("Escape");assert.ok(await form.isVisible());assert.ok(await form.getByLabel("Label Card",{exact:true}).isDisabled());assert.ok(await form.getByRole("button",{name:"Tutup",exact:true}).isDisabled());await form.getByRole("button",{name:"Tutup",exact:true}).dispatchEvent("click");assert.ok(await form.isVisible());releasePatch();releasePatch=null;await form.waitFor({state:"hidden"});await page.unroute(BASE+`/api/cards/${f.a2.id}`);
     assert.equal((await request("GET",`/api/cards?olt_id=${f.A.id}`)).find(c=>c.id===f.a2.id).card_type,"GTHG");
   });
   await check("edit model OLT tersimpan tidak otomatis menggantinya dengan model bawaan",async()=>{await page.goto(BASE+`/olt?olt=${f.empty.id}`);await page.getByTitle(`Edit OLT ${f.empty.name}`,{exact:true}).click();const form=page.getByRole("dialog",{name:"Edit OLT",exact:true});assert.equal(await form.getByLabel("Tipe OLT",{exact:true}).inputValue(),"Model Manual Lama");await form.getByLabel("Lokasi",{exact:true}).fill("Ruang pengujian");await form.getByRole("button",{name:"Simpan",exact:true}).click();await form.waitFor({state:"hidden"});assert.equal((await request("GET","/api/olts")).find(o=>o.id===f.empty.id).olt_type,"Model Manual Lama");});
+  await check("edit ODC mengunci seluruh input dan menunggu simpan tanpa mengubah feeder", async () => {
+    await page.goto(BASE + "/odc");
+    await page.getByTitle(`Edit ODC ${f.duplicateFeeder.name}`, { exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Edit ODC", exact: true });
+    await dialog.getByLabel("Lokasi / Koordinat", { exact: true }).fill("Lokasi audit pending");
+    await heldSave(page, dialog, `/api/odcs/${f.duplicateFeeder.id}`, "PATCH");
+    assert.equal((await request("GET", "/api/odcs")).find(d => d.id === f.duplicateFeeder.id).location, "Lokasi audit pending");
+    assert.equal((await request("GET", `/api/feeder-ports?odc_id=${f.duplicateFeeder.id}`)).length, 1);
+  });
+  await check("gagal simpan ODP membuka kunci, mempertahankan isian, dan retry tidak menggandakan data", async () => {
+    await page.goto(BASE + "/odp");
+    await page.getByRole("button", { name: "Tambah ODP", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Tambah ODP", exact: true });
+    await dialog.getByLabel("Nama ODP", { exact: true }).fill("ODP-PENDING-BROWSER");
+    await dialog.getByLabel("Induk ODC", { exact: true }).selectOption(String(f.da.id));
+    await heldSave(page, dialog, "/api/odps", "POST", { failure: true });
+    assert.equal(await dialog.getByLabel("Nama ODP", { exact: true }).inputValue(), "ODP-PENDING-BROWSER");
+    assert.equal((await request("GET", "/api/odps")).filter(p => p.name === "ODP-PENDING-BROWSER").length, 0);
+    await dialog.getByRole("button", { name: "Simpan", exact: true }).click();
+    await dialog.waitFor({ state: "hidden" });
+    assert.equal((await request("GET", "/api/odps")).filter(p => p.name === "ODP-PENDING-BROWSER").length, 1);
+  });
+  await check("form user tertunda mengunci identitas, password, dan role hingga server menjawab", async () => {
+    await page.goto(BASE + "/users");
+    await page.getByRole("button", { name: "Tambah User", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Tambah User", exact: true });
+    await dialog.getByLabel("Email", { exact: true }).fill("pending@browser.test");
+    await dialog.getByLabel("Password (min. 8 karakter)", { exact: true }).fill("PendingPrivatePassword123!");
+    await dialog.getByLabel("Nama Lengkap", { exact: true }).fill("Pengguna pending audit");
+    await heldSave(page, dialog, "/api/users", "POST");
+    const user = (await request("GET", "/api/users")).find(u => u.email === "pending@browser.test");
+    assert.equal(user.full_name, "Pengguna pending audit"); assert.equal(user.role, "user");
+  });
+  await check("form core tertunda tidak dapat mengganti status/tujuan yang sedang dikirim", async () => {
+    const core = (await request("GET", `/api/cores?source=olt_to_odc&odc_id=${f.da.id}`)).find(c => c.core === 3);
+    await page.goto(BASE + `/odc?odc=${f.da.id}`);
+    await page.getByTitle(/^Core 3 ·/).click();
+    const dialog = page.getByRole("dialog");
+    await dialog.getByLabel("Catatan", { exact: true }).fill("Catatan core audit pending");
+    await heldSave(page, dialog, `/api/cores/${core.id}`, "PATCH");
+    assert.equal((await request("GET", `/api/cores?source=olt_to_odc&odc_id=${f.da.id}`)).find(c => c.id === core.id).notes, "Catatan core audit pending");
+  });
   await check("mapping manual lewat form menaikkan port terpakai tepat satu, tanpa mengubah status aktif",async()=>{
     await page.goto(BASE+`/mapping?odc=${f.da.id}`);await page.getByRole("button",{name:"Petakan interface",exact:true}).click();await page.getByLabel("Core kabel feeder ODC",{exact:true}).selectOption("3");await page.getByLabel("Interface sumber dari OLT",{exact:true}).selectOption(String(f.aPorts[3].id));await page.getByRole("button",{name:"Simpan mapping interface",exact:true}).click();await page.getByRole("dialog").waitFor({state:"hidden"});const d=await snapshotOlt(f.A.id);assert.equal(d.portsUsed,3);assert.equal(d.portsActive,3);
   });

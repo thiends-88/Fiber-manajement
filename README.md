@@ -215,13 +215,16 @@ npm run test:logic    # topologi, alur core, data kabel, peta jalur core (murni,
 npm run test:api      # login, hak akses, CRUD semua entitas, penjaga validasi
 npm run test:interfaces # penamaan, sumber jalur, API baru, persistensi, migrasi
 npm run test:interfaces:ui # alur pencatatan interface → ODC → mapping → ODP
-npm run test:audit    # 42 skenario tambahan: sesi, pengamanan sambungan, race UI
+npm run test:audit    # 43 skenario: sesi, pengamanan sambungan, race UI
 npm run test:dashboard # 31 skenario API/UI: per OLT/card, hitungan, port bawaan, refresh
 npm run test:layout   # server tetap jalan hanya dengan file yang disalin Dockerfile
 npm run test:predeploy # 57 pemeriksaan keamanan, restart, bootstrap, backup WAL, preflight
+npm run test:regression # 34 regresi: otorisasi tertunda, simpan atomik, dependency
 # Opt-in: Chromium lokal terpasang; tidak mengunduh browser otomatis:
-CHROMIUM_EXECUTABLE=/usr/bin/chromium npm run test:browser # 14 skenario browser produksi
-npm run test:render   # semua halaman ter-render (butuh server jalan)
+CHROMIUM_EXECUTABLE=/usr/bin/chromium npm run test:browser # 18 skenario browser produksi
+npm run test:render   # semua halaman ter-render (butuh server demo jalan)
+# Opt-in, hanya lingkungan uji Linux dengan sudo -n; Git/npm/systemctl dimock:
+npm run test:update-native # 15 skenario updater dengan SQLite/API nyata
 ```
 
 Yang diperiksa `npm run test:api`: login/logout & token, hak akses per peran
@@ -239,6 +242,9 @@ Sesi diverifikasi ke server saat membuka aplikasi dan berlaku maksimal tujuh har
 Audit pra-deploy lanjutan, reproduksi masalah, hasil browser production dan batas
 jaminan ada di **[AUDIT-PRA-DEPLOY.md](AUDIT-PRA-DEPLOY.md)**. Pengujian aplikasi
 bukan pengganti pemeriksaan host Proxmox, firewall/TLS dan sambungan fisik.
+Hasil pemeriksaan terbaru **29 Oktober 2026**, perbaikan request tertunda/transaksi/
+form, pembaruan DOMPurify, dan bukti pelestarian data ada di
+**[AUDIT-LANJUTAN-2026-10-29.md](AUDIT-LANJUTAN-2026-10-29.md)**.
 Panduan operasional: **[DEPLOY-PROXMOX.md](DEPLOY-PROXMOX.md)**.
 
 ## Login demo (hanya pengembangan, bukan produksi)

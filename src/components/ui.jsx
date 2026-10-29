@@ -33,9 +33,9 @@ export function Field({ label, children, className = "" }) {
   );
 }
 
-export function Modal({ open, title, onClose, children, wide }) {
+export function Modal({ open, title, onClose, children, wide, busy = false }) {
   const dialog = useRef(null), close = useRef(onClose), titleId = useId();
-  close.current = onClose;
+  close.current = () => { if (!busy) onClose?.(); };
   useEffect(() => {
     if (!open) return;
     const previous = document.activeElement, overflow = document.body.style.overflow;
@@ -59,19 +59,19 @@ export function Modal({ open, title, onClose, children, wide }) {
   }, [open]);
   if (!open) return null;
   return (
-    <div className="modal-overlay fixed inset-0 z-50 flex items-center justify-center p-4" onMouseDown={onClose}>
+    <div className="modal-overlay fixed inset-0 z-50 flex items-center justify-center p-4" onMouseDown={() => close.current?.()}>
       <div
-        ref={dialog} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}
+        ref={dialog} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-busy={busy} tabIndex={-1}
         className={`card max-h-[85vh] w-full overflow-y-auto p-5 ${wide ? "max-w-4xl" : "max-w-md"}`}
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="mb-4 flex items-center justify-between">
           <h2 id={titleId} className="text-base font-semibold">{title}</h2>
-          <button type="button" className="text-mut hover:text-ink" onClick={onClose} aria-label="Tutup">
+          <button type="button" className="text-mut hover:text-ink" onClick={() => close.current?.()} disabled={busy} aria-label="Tutup">
             <X size={18} />
           </button>
         </div>
-        {children}
+        <fieldset disabled={busy} className="m-0 min-w-0 border-0 p-0">{children}</fieldset>
       </div>
     </div>
   );

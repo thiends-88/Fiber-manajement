@@ -106,7 +106,7 @@ export default function FeederInterfaceManager({ odcId, cableType, onChanged, re
       })}</tbody>
     </table></div> : <div className="mt-3"><Empty text="Belum ada core berjalur. Anda bisa memetakan interface ke core terlebih dahulu, lalu menghubungkannya ke splitter atau ODP." /></div>}
 
-    <Modal open={!!modal} title="Petakan interface OLT ke core feeder" onClose={() => { if (!saving) setModal(null); }}>
+    <Modal busy={saving} open={!!modal} title="Petakan interface OLT ke core feeder" onClose={() => { if (!saving) setModal(null); }}>
       <form className="space-y-3" onSubmit={save}>
         <Field label="Core kabel feeder ODC"><select aria-label="Core kabel feeder ODC" className="input" required value={form.core} disabled={modal?.fixedCore || saving} onChange={(e) => setForm({ ...form, core: e.target.value })}>
           <option value="" disabled>Pilih core sesuai kabel fisik…</option>

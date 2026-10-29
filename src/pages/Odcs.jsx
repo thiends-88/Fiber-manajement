@@ -256,7 +256,7 @@ export default function Odcs() {
         </Card>
       )}
 
-      <Modal open={!!modal} title={modal?.mode === "add" ? "Tambah ODC" : "Edit ODC"} onClose={() => { if (!saving) setModal(null); }}>
+      <Modal busy={saving} open={!!modal} title={modal?.mode === "add" ? "Tambah ODC" : "Edit ODC"} onClose={() => { if (!saving) setModal(null); }}>
         <form onSubmit={save} className="space-y-3">
           <Field label="Nama ODC">
             <input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />

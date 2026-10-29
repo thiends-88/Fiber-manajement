@@ -390,7 +390,7 @@ export default function Olts() {
         </div>
       )}
 
-      <Modal open={!!oltModal} title={oltModal?.mode === "add" ? "Tambah OLT" : "Edit OLT"} onClose={() => { if (!saving) setOltModal(null); }}>
+      <Modal busy={saving} open={!!oltModal} title={oltModal?.mode === "add" ? "Tambah OLT" : "Edit OLT"} onClose={() => { if (!saving) setOltModal(null); }}>
         <form onSubmit={saveOlt}><fieldset disabled={saving} className="space-y-3">
           <Field label="Nama OLT">
             <input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
@@ -422,7 +422,7 @@ export default function Olts() {
         </fieldset></form>
       </Modal>
 
-      <Modal open={!!cardModal} title={cardModal?.mode === "add" ? "Tambah Card" : "Edit Card"} onClose={() => { if (!saving) setCardModal(null); }}>
+      <Modal busy={saving} open={!!cardModal} title={cardModal?.mode === "add" ? "Tambah Card" : "Edit Card"} onClose={() => { if (!saving) setCardModal(null); }}>
         <form onSubmit={saveCard}><fieldset disabled={saving} className="space-y-3">
           <Field label="Nomor Shelf"><input aria-label="Nomor Shelf" className="input" type="number" min={1} max={256} value={cardForm.shelf} onChange={(e) => setCardForm({ ...cardForm, shelf: e.target.value })} required /></Field>
           <div className="grid grid-cols-2 gap-3">
@@ -454,7 +454,7 @@ export default function Olts() {
         </fieldset></form>
       </Modal>
 
-      <Modal open={!!portModal} title={portModal?.mode === "add" ? "Catat Interface OLT" : "Edit Interface OLT"} onClose={() => { if (!saving) setPortModal(null); }}>
+      <Modal busy={saving} open={!!portModal} title={portModal?.mode === "add" ? "Catat Interface OLT" : "Edit Interface OLT"} onClose={() => { if (!saving) setPortModal(null); }}>
         <form onSubmit={savePort} className="space-y-3">
           <div className="rounded-lg border border-cyan-500/30 bg-cyan-500/5 p-3 text-xs">
             <div className="break-words font-semibold">{selectedOlt?.name} / {portPreview.interface_label}</div>

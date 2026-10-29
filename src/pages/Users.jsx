@@ -103,6 +103,7 @@ export default function Users() {
                   <div className="flex gap-1">
                     <button
                       className="btn px-2 py-1"
+                      title={`Edit user ${u.email}`}
                       onClick={() => {
                         setForm({ email: u.email, password: "", full_name: u.full_name, role: u.role });
                         setModal({ mode: "edit", u });
@@ -111,7 +112,7 @@ export default function Users() {
                       <Pencil size={13} />
                     </button>
                     {u.id !== me.id && (
-                      <button className="btn px-2 py-1 text-red-400" onClick={() => remove(u)}>
+                      <button className="btn px-2 py-1 text-red-400" title={`Hapus user ${u.email}`} onClick={() => remove(u)}>
                         <Trash2 size={13} />
                       </button>
                     )}
@@ -123,7 +124,7 @@ export default function Users() {
         </table>
       </Card>
 
-      <Modal open={!!modal} title={modal?.mode === "add" ? "Tambah User" : "Edit User"} onClose={() => { if (!saving) setModal(null); }}>
+      <Modal busy={saving} open={!!modal} title={modal?.mode === "add" ? "Tambah User" : "Edit User"} onClose={() => { if (!saving) setModal(null); }}>
         <form onSubmit={save} className="space-y-3">
           <Field label="Email">
             <input

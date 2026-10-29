@@ -168,6 +168,28 @@ export async function run({ request, admin, reader, fixtures: [A, B], hardware: 
       assert.equal(label.htmlFor, status.id); assert.ok(status.id);
       await change(status, "used"); submit(); await waitFor(() => !host.querySelector(".modal-overlay") && row(B.d.name).children[5].textContent === "2");
     });
+    await check("field form ODP/user tidak dapat diedit atau ditutup saat save tertunda", async () => {
+      for (const kind of ["odp", "users"]) {
+        const hold = gate(); let pending = false;
+        fetchWith(async (u, o) => {
+          if (urlOf(u).pathname === `/api/${kind === "odp" ? "odps" : "users"}` && o?.method === "POST") { pending = true; await hold.promise; }
+          return originalFetch(u, o);
+        });
+        await mount(`/${kind}`);
+        await waitFor(() => kind === "odp" ? row(B.p.name) : button("Tambah User"));
+        click(button(kind === "odp" ? "Tambah ODP" : "Tambah User"));
+        await waitFor(() => host.querySelector('[role="dialog"] form'));
+        if (kind === "odp") { await change(field("Nama ODP"), "ODP-FIELD-BUSY-AUDIT"); await change(field("Induk ODC"), B.d.id); }
+        else { await change(field("Email"), "busy-field-audit@test.local"); await change(field("Password"), "Audit123!"); await change(field("Nama Lengkap"), "User field busy"); }
+        submit(); await waitFor(() => pending && button("Menyimpan…"));
+        const dialog = host.querySelector('[role="dialog"]');
+        for (const control of dialog.querySelectorAll("input,select,textarea")) assert.ok(control.matches(":disabled"), `${kind}: ${control.tagName} belum dikunci`);
+        assert.ok(dialog.querySelector('button[aria-label="Tutup"]').disabled);
+        document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+        await delay(20); assert.ok(host.querySelector('[role="dialog"]'));
+        hold.release(); await waitFor(() => !host.querySelector('[role="dialog"]')); fetchWith(originalFetch);
+      }
+    });
     await check("submit ganda pada form ODP dan user hanya mengirim satu permintaan", async () => {
       for (const kind of ["odp", "users"]) {
         const hold = gate(); let posts = 0;

@@ -1,5 +1,7 @@
 # Audit pra-deploy — 20 Oktober 2026
 
+> Catatan historis. Pemeriksaan terbaru, advisori dependency yang muncul kemudian, dan hasil uji 29 Oktober 2026 ada di [audit lanjutan](AUDIT-LANJUTAN-2026-10-29.md). Angka di bawah berlaku pada audit terdahulu, bukan hasil pemeriksaan registry saat ini.
+
 ## Kesimpulan
 
 **Temuan yang berhasil direproduksi sudah diperbaiki dan regresinya lulus. Ini bukan jaminan aplikasi bebas seluruh bug, sertifikasi keamanan, atau bukti server Proxmox sudah aman.**
