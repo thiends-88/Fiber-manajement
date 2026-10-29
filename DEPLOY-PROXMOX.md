@@ -145,6 +145,8 @@ sudo -u fiberops node /opt/fiberops/scripts/preflight.mjs /opt/fiberops/data/fib
 
 ## B. Update native yang sudah berjalan
 
+**Versi sekali salin untuk Node langsung + systemd:** [PERINTAH-UPDATE-PROXMOX.md](PERINTAH-UPDATE-PROXMOX.md). Skrip memeriksa proses/DB efektif, backup sebelum perubahan kode, preflight dan ID lama; setup yang tidak didukung ditolak, bukan ditebak. Baca syarat dan batasannya dahulu.
+
 **Kerjakan pada maintenance window. Jangan izinkan pencatatan lapangan selama backup/update/rollback.** Catat DB/path, unit, environment dan port sebenarnya. Simpan konfigurasi lama di lokasi privat. Pastikan tracked code bersih; jangan menimpa perubahan lokal.
 
 ### B1. Backup konsisten sebelum mengambil perubahan
