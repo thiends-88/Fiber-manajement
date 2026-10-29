@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Pencil, Plus, Trash2 } from "lucide-react";
 import { api } from "../lib/api.js";
 import { useAuth } from "../lib/auth.jsx";
@@ -10,6 +10,8 @@ const empty = { email: "", password: "", full_name: "", role: "user" };
 export default function Users() {
   const { user: me } = useAuth();
   const [users, setUsers] = useState([]);
+  const submitBusy = useRef(false);
+  const [saving, setSaving] = useState(false);
   const [modal, setModal] = useState(null);
   const [form, setForm] = useState(empty);
   const [toastState, setToastState] = useState(null);
@@ -26,6 +28,8 @@ export default function Users() {
 
   async function save(e) {
     e.preventDefault();
+    if (submitBusy.current) return;
+    submitBusy.current = true; setSaving(true);
     try {
       if (modal.mode === "add") {
         await api("/api/users", { method: "POST", body: form });
@@ -37,7 +41,7 @@ export default function Users() {
       toast("User tersimpan");
     } catch (err) {
       toast(err.message, "error");
-    }
+    } finally { submitBusy.current = false; setSaving(false); }
   }
 
   async function remove(u) {
@@ -99,6 +103,7 @@ export default function Users() {
                   <div className="flex gap-1">
                     <button
                       className="btn px-2 py-1"
+                      title={`Edit user ${u.email}`}
                       onClick={() => {
                         setForm({ email: u.email, password: "", full_name: u.full_name, role: u.role });
                         setModal({ mode: "edit", u });
@@ -107,7 +112,7 @@ export default function Users() {
                       <Pencil size={13} />
                     </button>
                     {u.id !== me.id && (
-                      <button className="btn px-2 py-1 text-red-400" onClick={() => remove(u)}>
+                      <button className="btn px-2 py-1 text-red-400" title={`Hapus user ${u.email}`} onClick={() => remove(u)}>
                         <Trash2 size={13} />
                       </button>
                     )}
@@ -119,7 +124,7 @@ export default function Users() {
         </table>
       </Card>
 
-      <Modal open={!!modal} title={modal?.mode === "add" ? "Tambah User" : "Edit User"} onClose={() => setModal(null)}>
+      <Modal busy={saving} open={!!modal} title={modal?.mode === "add" ? "Tambah User" : "Edit User"} onClose={() => { if (!saving) setModal(null); }}>
         <form onSubmit={save} className="space-y-3">
           <Field label="Email">
             <input
@@ -151,7 +156,7 @@ export default function Users() {
               {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
             </select>
           </Field>
-          <button className="btn btn-primary w-full">Simpan</button>
+          <button className="btn btn-primary w-full" disabled={saving}>{saving ? "Menyimpan…" : "Simpan"}</button>
         </form>
       </Modal>
 

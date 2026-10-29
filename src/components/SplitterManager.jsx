@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { GitBranch, Pencil, Plus, Trash2 } from "lucide-react";
 import { api } from "../lib/api.js";
 import { useAuth } from "../lib/auth.jsx";
@@ -26,13 +26,17 @@ const sameEnclosure = (a, b) => {
  * Output splitter bisa diarahkan ke ODP lain ATAU ke splitter lain (cascade),
  * untuk topologi splitter bertingkat.
  */
-export default function SplitterManager({ parentType, parentId, title }) {
+export default function SplitterManager({ parentType, parentId, title, onChanged }) {
   const { user } = useAuth();
   const canWrite = user.role === "admin" || user.role === "operator";
   // ODP selalu memakai splitter 1:8 bawaan (dibuat otomatis & permanen) —
   // jadi tidak ada tombol tambah/hapus dan rasio terkunci di 1:8.
   const isOdp = parentType === "odp";
 
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const busy = useRef(false), request = useRef(0);
   const [splitters, setSplitters] = useState([]);
   const [odps, setOdps] = useState([]);
   const [odcs, setOdcs] = useState([]);
@@ -51,7 +55,7 @@ export default function SplitterManager({ parentType, parentId, title }) {
   const inputCoreMax = getCableInfo(parent?.cable_type)?.cores;
   const selectedTargetOdc = odcs.find((d) => Number(d.id) === Number(outForm.target_id));
   const odcCascadeInputs = new Set(allSplitters.flatMap((sp) =>
-    (sp.outputs || []).filter((o) => o.target_type === "splitter" && o.target_splitter_id).map((o) => Number(o.target_splitter_id)),
+    (sp.outputs || []).filter((o) => o.target_type === "splitter" && o.target_splitter_id && Number(o.id) !== Number(outModal?.out?.id)).map((o) => Number(o.target_splitter_id)),
   ));
   const linkedOdcInputs = new Set(allSplitters.flatMap((sp) =>
     (sp.outputs || [])
@@ -90,20 +94,29 @@ export default function SplitterManager({ parentType, parentId, title }) {
   }, [splitters]);
 
   const load = useCallback(async () => {
-    const [mine, o, all, ds] = await Promise.all([
-      api(`/api/splitters?${q}`),
-      api("/api/odps"),
-      api("/api/splitters"),
-      api("/api/odcs"),
-    ]);
-    setSplitters(mine);
-    setOdps(o);
-    setAllSplitters(all);
-    setOdcs(ds);
+    const version = ++request.current;
+    setLoading(true); setError(null);
+    try {
+      const [mine, o, all, ds] = await Promise.all([
+        api(`/api/splitters?${q}`),
+        api("/api/odps"),
+        api("/api/splitters"),
+        api("/api/odcs"),
+      ]);
+      if (version !== request.current) return;
+      setSplitters(mine);
+      setOdps(o);
+      setAllSplitters(all);
+      setOdcs(ds);
+    } catch (e) {
+      if (version === request.current) setError(e.message);
+      throw e;
+    } finally { if (version === request.current) setLoading(false); }
   }, [q]);
 
   useEffect(() => {
     load().catch((e) => toast(e.message, "error"));
+    return () => { request.current++; };
   }, [load, toast]);
 
   function openAdd() {
@@ -113,6 +126,8 @@ export default function SplitterManager({ parentType, parentId, title }) {
 
   async function save(e) {
     e.preventDefault();
+    if (busy.current || loading || error || !canWrite) return;
+    busy.current = true; setSaving(true);
     try {
       const body = {
         ...form,
@@ -124,21 +139,25 @@ export default function SplitterManager({ parentType, parentId, title }) {
       else await api(`/api/splitters/${modal.splitter.id}`, { method: "PATCH", body });
       setModal(null);
       await load();
+      await onChanged?.();
       toast("Splitter tersimpan");
     } catch (err) {
       toast(err.message, "error");
-    }
+    } finally { busy.current = false; setSaving(false); }
   }
 
   async function remove(sp) {
+    if (busy.current || !canWrite) return;
     if (!confirm(`Hapus splitter "${sp.name}" beserta arah output-nya?`)) return;
+    busy.current = true; setSaving(true);
     try {
       await api(`/api/splitters/${sp.id}`, { method: "DELETE" });
       await load();
+      await onChanged?.();
       toast("Splitter dihapus");
     } catch (err) {
       toast(err.message, "error");
-    }
+    } finally { busy.current = false; setSaving(false); }
   }
 
   function openOutput(sp, out) {
@@ -160,6 +179,8 @@ export default function SplitterManager({ parentType, parentId, title }) {
 
   async function saveOutput(e) {
     e.preventDefault();
+    if (busy.current || loading || error || !canWrite) return;
+    busy.current = true; setSaving(true);
     try {
       await api(`/api/splitter-outputs/${outModal.out.id}`, {
         method: "PATCH",
@@ -172,10 +193,11 @@ export default function SplitterManager({ parentType, parentId, title }) {
       });
       setOutModal(null);
       await load();
+      await onChanged?.();
       toast("Arah output disimpan");
     } catch (err) {
       toast(err.message, "error");
-    }
+    } finally { busy.current = false; setSaving(false); }
   }
 
   const targetLabel = (o) =>
@@ -219,7 +241,7 @@ export default function SplitterManager({ parentType, parentId, title }) {
               <span className="ml-auto flex gap-1">
                 <button
                   className="btn px-2 py-1"
-                  title="Edit splitter"
+                  disabled={loading || saving || !!error} title="Edit splitter"
                   onClick={() => {
                     const cascadeParent = cascadeParentById.get(Number(sp.id));
                     setForm({
@@ -235,7 +257,7 @@ export default function SplitterManager({ parentType, parentId, title }) {
                   <Pencil size={13} />
                 </button>
                 {!isOdp && (
-                  <button className="btn px-2 py-1 text-red-400" title="Hapus splitter" onClick={() => remove(sp)}>
+                  <button className="btn px-2 py-1 text-red-400" disabled={loading || saving || !!error} title="Hapus splitter" onClick={() => remove(sp)}>
                     <Trash2 size={13} />
                   </button>
                 )}
@@ -258,7 +280,7 @@ export default function SplitterManager({ parentType, parentId, title }) {
               return (
                 <button
                   key={o.id}
-                  disabled={!canWrite}
+                  disabled={!canWrite || loading || !!error || saving}
                   onClick={() => openOutput(sp, o)}
                   title={`Output ${o.port}${label ? ` → ${label.replace("⇄ ", "")}` : " (belum diarahkan)"}${o.notes ? ` · ${o.notes}` : ""}`}
                   className={`rounded-lg border px-2 py-1 text-[11px] transition hover:brightness-125 ${cls}`}
@@ -285,7 +307,7 @@ export default function SplitterManager({ parentType, parentId, title }) {
     ? cascadeParentById.get(Number(modal.splitter.id)) || null
     : null;
   const cascadeTargets = outModal
-    ? allSplitters.filter((sp) => Number(sp.id) !== Number(outModal.splitter.id) && sameEnclosure(outModal.splitter, sp))
+    ? allSplitters.filter((sp) => Number(sp.id) !== Number(outModal.splitter.id) && sameEnclosure(outModal.splitter, sp) && !odcCascadeInputs.has(Number(sp.id)) && !linkedOdcInputs.has(Number(sp.id)))
     : [];
   const selectedCascadeTarget = outForm.target_type === "splitter"
     ? allSplitters.find((sp) => Number(sp.id) === Number(outForm.target_id))
@@ -307,13 +329,15 @@ export default function SplitterManager({ parentType, parentId, title }) {
           </span>
         </h2>
         {canWrite && !isOdp && (
-          <button className="btn btn-primary" onClick={openAdd}>
+          <button className="btn btn-primary" disabled={loading || !!error || saving} onClick={openAdd}>
             <Plus size={14} /> Tambah Splitter
           </button>
         )}
       </div>
 
-      {splitters.length === 0 && (
+      {loading && <p className="mb-3 text-xs text-mut" role="status">Memuat splitter…</p>}
+      {error && <div className="mb-3 text-xs" role="alert"><p>{error}</p><button className="btn mt-2" onClick={() => load().catch((e) => toast(e.message, "error"))}>Coba lagi</button></div>}
+      {!loading && !error && splitters.length === 0 && (
         <Empty
           text={
             isOdp
@@ -335,7 +359,7 @@ export default function SplitterManager({ parentType, parentId, title }) {
       </div>
 
       {/* Modal splitter */}
-      <Modal open={!!modal} title={modal?.mode === "add" ? "Tambah Splitter" : "Edit Splitter"} onClose={() => setModal(null)}>
+      <Modal busy={saving} open={!!modal} title={modal?.mode === "add" ? "Tambah Splitter" : "Edit Splitter"} onClose={() => { if (!saving) setModal(null); }}>
         <form onSubmit={save} className="space-y-3">
           <Field label="Nama / Label Splitter">
             <input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
@@ -381,15 +405,15 @@ export default function SplitterManager({ parentType, parentId, title }) {
           <Field label="Catatan">
             <textarea className="input" rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
           </Field>
-          <button className="btn btn-primary w-full">Simpan</button>
+          <button className="btn btn-primary w-full" disabled={saving}>{saving ? "Menyimpan…" : "Simpan"}</button>
         </form>
       </Modal>
 
       {/* Modal arah output */}
-      <Modal
+      <Modal busy={saving}
         open={!!outModal}
         title={outModal ? `${outModal.splitter.name} — output ${outModal.out.port}` : ""}
-        onClose={() => setOutModal(null)}
+        onClose={() => { if (!saving) setOutModal(null); }}
       >
         {outModal && (
           <form onSubmit={saveOutput} className="space-y-3">
@@ -493,7 +517,7 @@ export default function SplitterManager({ parentType, parentId, title }) {
             <Field label="Catatan">
               <input className="input" value={outForm.notes} onChange={(e) => setOutForm({ ...outForm, notes: e.target.value })} />
             </Field>
-            <button className="btn btn-primary w-full">Simpan Arah Output</button>
+            <button className="btn btn-primary w-full" disabled={saving}>{saving ? "Menyimpan…" : "Simpan Arah Output"}</button>
           </form>
         )}
       </Modal>

@@ -5,6 +5,7 @@
 //
 //   npm run test:layout   (butuh dist/ — jalankan `npm run build` dulu)
 import { spawn } from "node:child_process";
+import { once } from "node:events";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -40,14 +41,20 @@ for (const c of salinan) {
   console.log(`  salin ${c.dari} → ${c.ke}`);
 }
 
-const server = spawn("node", ["server.mjs"], {
+const server = spawn(process.execPath, ["server.mjs"], {
   cwd: TMP,
-  env: { ...process.env, ARENA_API_PORT: String(PORT), ARENA_DB_PATH: path.join(TMP, "data", "uji.db") },
+  env: { ...process.env, NODE_ENV: "development", ARENA_API_PORT: String(PORT), ARENA_DB_PATH: path.join(TMP, "data", "uji.db") },
   stdio: ["ignore", "pipe", "pipe"],
 });
 
-function selesai(kode) {
-  server.kill();
+let stopping = false;
+async function selesai(kode) {
+  if (stopping) return;
+  stopping = true;
+  clearTimeout(timer);
+  if (server.pid && server.exitCode == null && server.signalCode == null) {
+    const ended = once(server, "exit"); server.kill(); await ended;
+  }
   fs.rmSync(TMP, { recursive: true, force: true });
   process.exit(kode);
 }
@@ -69,7 +76,7 @@ server.stdout.on("data", (d) => {
         const r = await fetch(`${BASE}/healthz`);
         const data = await r.json();
         if (r.status === 200 && data.ok) {
-          console.log(`  OK    server jalan di layout runtime Docker (${salinan.length} file disalin)`);
+          console.log(`  OK    server jalan di layout runtime Docker (${salinan.length} entri disalin; fixture development)`);
           const r2 = await fetch(`${BASE}/api/login`, {
             method: "POST",
             headers: { "content-type": "application/json" },
@@ -98,7 +105,10 @@ server.stderr.on("data", (d) => {
   out += d.toString();
 });
 server.on("exit", (kode) => {
+  if (stopping) return;
   clearTimeout(timer);
   console.error(`  GAGAL server mati saat start (kode ${kode}):\n${out}`);
   selesai(1);
 });
+
+server.on("error", (error) => { console.error(error.message); selesai(1); });

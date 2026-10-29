@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Network, Pencil, Plus, Trash2 } from "lucide-react";
 import { api } from "../lib/api.js";
 import { useAuth } from "../lib/auth.jsx";
 import { Card, Field, Modal, PageHeader, SearchBox, Toast, matchesQuery, useToast } from "../components/ui.jsx";
 import CoreManager from "../components/CoreManager.jsx";
 import SplitterManager from "../components/SplitterManager.jsx";
+import OdpInterfaceOrigins from "../components/OdpInterfaceOrigins.jsx";
 import { CABLE_TYPES, getCableInfo } from "../lib/fiber.js";
 
 const empty = { name: "", odc_id: "", location: "", cable_type: CABLE_TYPES[4].value, notes: "" };
@@ -17,8 +18,11 @@ export default function Odps() {
   const [query, setQuery] = useState("");
   const [odcs, setOdcs] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
+  const submitBusy = useRef(false);
+  const [saving, setSaving] = useState(false);
   const [modal, setModal] = useState(null);
   const [form, setForm] = useState(empty);
+  const [networkVersion, setNetworkVersion] = useState(0);
   const [toastState, setToastState] = useState(null);
   const toast = useToast(setToastState);
 
@@ -32,8 +36,15 @@ export default function Odps() {
     load().catch((e) => toast(e.message, "error"));
   }, [load, toast]);
 
+  const networkChanged = useCallback(async () => {
+    await load();
+    setNetworkVersion((v) => v + 1);
+  }, [load]);
+
   async function save(e) {
     e.preventDefault();
+    if (submitBusy.current) return;
+    submitBusy.current = true; setSaving(true);
     try {
       const body = { ...form, odc_id: Number(form.odc_id) };
       if (modal.mode === "add") await api("/api/odps", { method: "POST", body });
@@ -43,7 +54,7 @@ export default function Odps() {
       toast("ODP tersimpan");
     } catch (err) {
       toast(err.message, "error");
-    }
+    } finally { submitBusy.current = false; setSaving(false); }
   }
 
   async function remove(odp) {
@@ -123,6 +134,7 @@ export default function Odps() {
                     <div className="flex gap-1">
                       <button
                         className="btn px-2 py-1"
+                        title={`Edit ODP ${d.name}`}
                         onClick={() => {
                           setForm({ name: d.name, odc_id: d.odc_id, location: d.location || "", cable_type: d.cable_type, notes: d.notes || "" });
                           setModal({ mode: "edit", odp: d });
@@ -130,7 +142,7 @@ export default function Odps() {
                       >
                         <Pencil size={13} />
                       </button>
-                      <button className="btn px-2 py-1 text-red-400" onClick={() => remove(d)}>
+                      <button className="btn px-2 py-1 text-red-400" title={`Hapus ODP ${d.name}`} onClick={() => remove(d)}>
                         <Trash2 size={13} />
                       </button>
                     </div>
@@ -149,9 +161,14 @@ export default function Odps() {
         </table>
       </Card>
 
+      {selected && <OdpInterfaceOrigins reloadKey={networkVersion} key={selected.id} odpId={selected.id} odpName={selected.name} />}
+
       {selected && (
         <Card className="mt-6">
           <CoreManager
+            key={`${selected.id}:${selected.cable_type}`}
+            reloadKey={networkVersion}
+            onChanged={networkChanged}
             source="odc_to_odp"
             parentId={selected.id}
             cableType={selected.cable_type}
@@ -162,11 +179,11 @@ export default function Odps() {
 
       {selected && (
         <Card className="mt-6">
-          <SplitterManager parentType="odp" parentId={selected.id} title={`Splitter di ${selected.name}`} />
+          <SplitterManager key={`${selected.id}:${selected.cable_type}`} onChanged={networkChanged} parentType="odp" parentId={selected.id} title={`Splitter di ${selected.name}`} />
         </Card>
       )}
 
-      <Modal open={!!modal} title={modal?.mode === "add" ? "Tambah ODP" : "Edit ODP"} onClose={() => setModal(null)}>
+      <Modal busy={saving} open={!!modal} title={modal?.mode === "add" ? "Tambah ODP" : "Edit ODP"} onClose={() => { if (!saving) setModal(null); }}>
         <form onSubmit={save} className="space-y-3">
           <Field label="Nama ODP">
             <input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
@@ -193,7 +210,7 @@ export default function Odps() {
           <Field label="Catatan">
             <textarea className="input" rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
           </Field>
-          <button className="btn btn-primary w-full">Simpan</button>
+          <button className="btn btn-primary w-full" disabled={saving}>{saving ? "Menyimpan…" : "Simpan"}</button>
         </form>
       </Modal>
 

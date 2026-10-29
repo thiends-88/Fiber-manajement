@@ -13,7 +13,18 @@
     "test:logic": "node tests/logic-uji.mjs",
     "test:api": "node tests/api-uji.mjs",
     "test:layout": "node tests/layout-uji.mjs",
-    "test": "npm run test:logic && npm run test:api && npm run test:layout"
+    "test": "npm run test:logic && npm run test:interfaces && npm run test:laporan && npm run test:api && npm run test:layout && npm run test:interfaces:ui && npm run test:audit && npm run test:dashboard && npm run test:predeploy && npm run test:regression",
+    "test:interfaces": "node tests/interfaces-logic-uji.mjs && node tests/interfaces-api-uji.mjs",
+    "test:interfaces:ui": "vite build --ssr tests/interfaces-ui.jsx --outDir .uji-interfaces --logLevel error && node tests/interfaces-ui.mjs",
+    "test:laporan": "node tests/interface-report-uji.mjs",
+    "test:audit:ui": "vite build --ssr tests/audit-ui.jsx --outDir .uji-audit --logLevel error && node tests/audit-ui.mjs",
+    "test:audit": "node tests/audit-client.mjs && node tests/audit-api.mjs && npm run test:audit:ui",
+    "test:dashboard": "vite build --ssr tests/dashboard-ui.jsx --outDir .uji-dashboard --logLevel error && node tests/dashboard-uji.mjs",
+    "preflight": "node scripts/preflight.mjs",
+    "test:predeploy": "node tests/security-logic.mjs && node tests/predeploy-api.mjs && node tests/predeploy-cli.mjs",
+    "test:browser": "node tests/browser-predeploy.mjs",
+    "test:regression": "node tests/audit-regression-api.mjs && node tests/dependency-security.mjs",
+    "test:update-native": "node tests/update-native-uji.mjs"
   },
   "dependencies": {
     "jspdf": "^4.2.1",
@@ -28,7 +39,11 @@
     "@tailwindcss/vite": "^4.2.1",
     "@vitejs/plugin-react": "^5.2.0",
     "jsdom": "^27.0.0",
+    "playwright-core": "^1.64.1",
     "tailwindcss": "^4.2.1",
     "vite": "^8.0.16"
+  },
+  "engines": {
+    "node": ">=22.13.0"
   }
 }

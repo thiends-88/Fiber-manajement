@@ -21,6 +21,8 @@ export const EDGE_STYLE = {
 
 export const NODE_STYLE = {
   olt: { color: "#22d3ee", label: "OLT" },
+  interface: { color: "#60a5fa", label: "Interface GPON/PON" },
+  warning: { color: "#fbbf24", label: "Perlu dilengkapi" },
   odc: { color: "#8b5cf6", label: "ODC" },
   odp: { color: "#f59e0b", label: "ODP" },
   spl: { color: "#a78bfa", label: "Splitter" },
@@ -253,6 +255,13 @@ export function buildTopologyGraph({
     }
   });
 
+  return layoutTopology(nodes, edges, { olts: olts.length, odcs: odcs.length, odps: odps.length, splitters: splitters.length, links: links.length });
+}
+
+// Tata letak bersama. Graf jalur interface memakai simpul ODC terpisah per
+// core/jalur masuk agar kabinet yang sama tidak menyatukan dua sumber GPON.
+export function layoutTopology(nodes, edges, stats = {}) {
+  const index = new Map(nodes.map((n, i) => [n.id, i]));
   // --- relasi ---
   const incoming = new Map();
   const outgoing = new Map();
@@ -333,14 +342,7 @@ export function buildTopologyGraph({
     maxDepth,
     width,
     height,
-    stats: {
-      olts: olts.length,
-      odcs: odcs.length,
-      odps: odps.length,
-      splitters: splitters.length,
-      links: links.length,
-      edges: edges.length,
-    },
+    stats: { ...stats, edges: edges.length },
   };
 }
 

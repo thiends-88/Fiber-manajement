@@ -1,7 +1,6 @@
 // Uji otomatis: render tiap halaman aplikasi (jsdom) dengan data sungguhan
 // dari server, memastikan tidak ada halaman yang "blank" / error render.
 // Berkas ini hanya untuk pengujian lokal, tidak dipakai aplikasi.
-import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { MemoryRouter } from "react-router-dom";
 import App from "../src/App.jsx";
@@ -11,7 +10,7 @@ import { AuthProvider } from "../src/lib/auth.jsx";
 // menampilkan header tapi data demo tidak ikut ter-render, jadi penanda ini kuat.
 const ROUTES = [
   ["/", ["Alur Core", "SPL-1"]], // halaman utama: pohon jalur core benar-benar tergambar
-  ["/dashboard", "Core Terdaftar"],
+  ["/dashboard", ["Core Terdaftar", "Card terpasang", "Port terpakai", "Kapasitas", "OLT-PST-01", "GTGO", "GTGH"]],
   ["/olt", "OLT-PST-01"],
   ["/odc", ["ODC-001", "ODC anak", "Splitter di ODC-001", "Tahap 2", "SPL-2"]], // buka ODC dan cek cascade bertingkat
   ["/odp", "ODP-001"],
@@ -110,21 +109,22 @@ export async function renderOne(route, tunggu = 1500) {
   const root = createRoot(div);
   let thrown = null;
   try {
-    await act(async () => {
-      root.render(
-        <MemoryRouter initialEntries={[route]}>
-          <AuthProvider>
-            <App />
-          </AuthProvider>
-        </MemoryRouter>,
-      );
-      await new Promise((r) => setTimeout(r, tunggu));
-    });
+    // Sama seperti run(): timer nyata memberi kesempatan efek/fetch halaman
+    // selesai. Membungkus seluruh jeda dalam act() menahan commit React 19
+    // sampai snapshot diambil, sehingga data tampak belum dimuat padahal API OK.
+    root.render(
+      <MemoryRouter initialEntries={[route]}>
+        <AuthProvider>
+          <App />
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+    await new Promise((r) => setTimeout(r, tunggu));
   } catch (e) {
     thrown = String(e && e.stack ? e.stack : e);
   }
   const text = (div.textContent || "").replace(/\s+/g, " ").trim();
-  try { await act(async () => root.unmount()); } catch { /* abaikan */ }
+  try { root.unmount(); } catch { /* abaikan */ }
   div.remove();
   console.error = orig;
   console.warn = origW;
