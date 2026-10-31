@@ -28,3 +28,6 @@ data/
 *.db-shm
 *.sqlite
 *.sqlite3
+
+# Artefak uji UI peta (koordinat fixture, bukan inventaris)
+.uji-map/

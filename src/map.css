@@ -1,0 +1,115 @@
+/* Leaflet hanya boleh menumpuk di dalam kanvas, tidak di atas drawer/modal app. */
+.network-map-shell {
+  position: relative;
+  isolation: isolate;
+  z-index: 0;
+  overflow: hidden;
+  border-radius: 14px;
+}
+.network-map-shell .network-map-canvas {
+  width: 100%;
+  height: clamp(360px, 54vh, 580px);
+  border: 1px solid var(--color-line);
+  border-radius: 14px;
+  background-color: var(--color-panel2);
+  color: var(--color-ink);
+  background-image:
+    linear-gradient(var(--color-line-soft) 1px, transparent 1px),
+    linear-gradient(90deg, var(--color-line-soft) 1px, transparent 1px);
+  background-size: 32px 32px;
+  font-family: inherit;
+}
+.network-map-notice {
+  position: absolute;
+  top: 12px;
+  left: 54px;
+  right: 12px;
+  z-index: 1000;
+  width: fit-content;
+  max-width: calc(100% - 66px);
+  padding: 8px 11px;
+  border: 1px solid var(--color-line);
+  border-radius: 8px;
+  background: var(--color-panel);
+  color: var(--color-mut);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.network-map-empty {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 900;
+  max-width: 80%;
+  padding: 12px;
+  border-radius: 8px;
+  text-align: center;
+  background: var(--color-panel);
+  color: var(--color-mut);
+  font-size: 12px;
+}
+.network-map-shell .network-map-cluster {
+  display: grid;
+  place-items: center;
+  border: 2px solid #e2e8f0;
+  border-radius: 50%;
+  background: #334155;
+  color: white;
+  box-shadow: 0 0 0 5px #64748b44;
+  font:
+    700 13px/1 ui-sans-serif,
+    sans-serif;
+}
+.network-map-shell .network-map-marker {
+  filter: drop-shadow(0 2px 3px #0008);
+}
+.network-map-shell .network-map-selected {
+  filter: drop-shadow(0 0 6px #fff) drop-shadow(0 0 9px #38bdf8);
+}
+.network-map-shell .leaflet-popup-content-wrapper,
+.network-map-shell .leaflet-popup-tip {
+  background: var(--color-panel);
+  color: var(--color-ink);
+}
+.network-map-shell .leaflet-popup-content {
+  max-height: 240px;
+  overflow: auto;
+  overflow-wrap: anywhere;
+}
+.network-map-popup {
+  font:
+    12px/1.5 ui-sans-serif,
+    sans-serif;
+}
+.network-map-popup p {
+  margin: 6px 0;
+  white-space: pre-wrap;
+}
+.network-map-popup ul {
+  padding-left: 14px;
+  list-style: disc;
+}
+.network-map-popup li {
+  margin: 5px 0;
+}
+.network-map-shell .leaflet-bar a {
+  background-color: var(--color-panel);
+  color: var(--color-ink);
+  border-color: var(--color-line);
+}
+.network-map-shell .leaflet-bar a:hover {
+  background-color: var(--color-panel-hi);
+}
+.network-map-shell .leaflet-control-attribution,
+.network-map-shell .leaflet-control-scale-line {
+  background: var(--color-panel);
+  color: var(--color-mut);
+}
+.network-map-shell .leaflet-control-attribution a {
+  color: var(--color-ink);
+}
+.network-map-shell :focus-visible {
+  outline: 3px solid #38bdf8;
+  outline-offset: 2px;
+}

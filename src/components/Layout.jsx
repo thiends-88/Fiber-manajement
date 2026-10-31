@@ -7,6 +7,7 @@ import {
   Link2,
   LogOut,
   Menu,
+  MapPinned,
   Network,
   PanelLeftClose,
   PanelLeftOpen,
@@ -27,6 +28,7 @@ const NAV = [
   { to: "/mapping", label: "Mapping Core", icon: Link2 },
   // Alur Core diletakkan tepat setelah Mapping Core sebagai alur visualnya.
   { to: "/", label: "Alur Core", icon: Workflow, end: true },
+  { to: "/peta", label: "Peta Jaringan / KMZ", icon: MapPinned },
   { to: "/laporan", label: "Laporan", icon: FileText },
 ];
 
