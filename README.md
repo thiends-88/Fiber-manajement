@@ -102,6 +102,14 @@ lapangan.
     fixed-port ditampilkan sebagai port bawaan, bukan card fisik fiktif. Lihat
     [cara membaca angkanya](PANDUAN-INTERFACE.md#ringkasan-perangkat-olt-di-dashboard).
 
+11. **Peta Jaringan / KMZ** — satu peta geografis untuk seluruh OLT, ODC, dan ODP
+    yang memiliki GPS valid, termasuk titik yang belum dipetakan sumbernya. Ikon
+    dibedakan, titik bertumpuk dikelompokkan, tersedia detail/filter, **Tampilkan
+    Semua Titik**, dan **Unduh KMZ Lengkap** untuk Google Earth. Kolom Lokasi lama
+    tetap disimpan; GPS dapat diisi terpisah atau dinonaktifkan tanpa menghapus
+    alamat. Garis hanya dari sambungan tercatat dan selalu **skematis, bukan rute
+    kabel fisik**. Lihat [panduan peta/GPS/KMZ](PANDUAN-PETA-KMZ.md).
+
 **Database lokal:** SQLite bawaan Node (`node:sqlite`), data utama di
 `data/fiberops.db` dengan jurnal WAL/SHM. Tidak memakai Supabase/database eksternal.
 Backup aktif harus melalui SQLite; **jangan menyalin `.db` saja atau menghapus DB
@@ -203,6 +211,15 @@ node server.mjs            # server harus jalan (data demo)
 npm run test:render        # hasil: SEMUA HALAMAN TAMPIL NORMAL
 ```
 
+Kanvas geografis pada smoke test jsdom diganti renderer sederhana (jsdom tidak
+memiliki layout/SVG peta nyata). Pengujian Leaflet, clustering, tile gagal, dan
+unduhan KMZ sebenarnya berada di `npm run test:map:browser`.
+Uji render menunggu data/cascade yang belum selesai (batas 5 detik), bukan
+hanya jeda tetap setelah klik. Untuk menguji respons lambat tanpa mengubah server:
+`UJI_RENDER_SPLITTER_DELAY_MS=750 npm run test:render`.
+Hasil, batas verifikasi, dan bukti preservasi migrasi dicatat di
+[validasi Peta/KMZ 31 Oktober 2026](AUDIT-PETA-KMZ-2026-10-31.md).
+
 Kalau ada halaman yang kosong/error (mis. `X is not defined`), uji ini GAGAL
 dan menyebutkan rutenya. Port server bisa diganti: `ARENA_API_PORT=3000 npm run test:render`.
 
@@ -220,8 +237,10 @@ npm run test:dashboard # 31 skenario API/UI: per OLT/card, hitungan, port bawaan
 npm run test:layout   # server tetap jalan hanya dengan file yang disalin Dockerfile
 npm run test:predeploy # 57 pemeriksaan keamanan, restart, bootstrap, backup WAL, preflight
 npm run test:regression # 34 regresi: otorisasi tertunda, simpan atomik, dependency
+npm run test:map      # 104 skenario: koordinat/KMZ, migrasi/API GPS, UI peta
 # Opt-in: Chromium lokal terpasang; tidak mengunduh browser otomatis:
 CHROMIUM_EXECUTABLE=/usr/bin/chromium npm run test:browser # 18 skenario browser produksi
+CHROMIUM_EXECUTABLE=/usr/bin/chromium npm run test:map:browser # 24 skenario Leaflet/KMZ/GPS nyata
 npm run test:render   # semua halaman ter-render (butuh server demo jalan)
 # Opt-in, hanya lingkungan uji Linux dengan sudo -n; Git/npm/systemctl dimock:
 npm run test:update-native # 15 skenario updater dengan SQLite/API nyata
@@ -280,7 +299,7 @@ Jangan mengekspos dev server/data demo ke internet sebagai deployment produksi.
 | `src/components/SplitterManager.jsx` | Kelola splitter (rasio, input core) & arah tiap output (ODP / cascade / ODC anak) |
 | `src/lib/api.js` | Klien fetch + sesi token |
 | `src/components/CoreManager.jsx` | Grid core interaktif (dipakai ODC & ODP) |
-| `src/pages/*` | Alur Core (halaman utama), Dashboard, OLT, ODC, ODP, Mapping Core, Laporan, Users |
+| `src/pages/*` | Alur Core (halaman utama), Dashboard, OLT, ODC, ODP, Mapping Core, Peta/KMZ, Laporan, Users |
 | `data/fiberops.db` | DB utama; WAL/SHM dan backup privat diabaikan Git; seed demo hanya pengembangan |
 | `server/security.mjs` | Hash/password, origin, cookie, redaksi URL dan pembatas login |
 | `scripts/create-admin.mjs` / `set-password.mjs` | Provisioning/rotasi lokal via stdin, tanpa menimpa identitas inventaris |

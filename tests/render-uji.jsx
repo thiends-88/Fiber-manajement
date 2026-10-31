@@ -15,10 +15,11 @@ const ROUTES = [
   ["/odc", ["ODC-001", "ODC anak", "Splitter di ODC-001", "Tahap 2", "SPL-2"]], // buka ODC dan cek cascade bertingkat
   ["/odp", "ODP-001"],
   ["/mapping", "Sambungan Kabel Langsung"],
+  ["/peta", ["Peta Jaringan / KMZ", "Unduh KMZ Lengkap", "Belum ada koordinat", "OLT-PST-01"]],
   ["/laporan", "OLT-PST-01"],
   ["/users", "admin@arena.test"],
   ["/topologi", ["Alur Core", "SPL-1"]], // bookmark lama → halaman utama
-  ["/login", "Alur Core"], // sudah login → dialihkan ke halaman utama
+  ["/login", ["Alur Core", "SPL-1"]], // sudah login → dialihkan ke halaman utama
 ];
 
 // Jejak error yang TIDAK boleh muncul di halaman
@@ -31,6 +32,22 @@ const TERLARANG = [
   "Cannot access",
   "undefined is not",
 ];
+
+// jsdom tidak punya layout/SVG geografis. Leaflet nyata punya suite Chromium terpisah.
+function SmokeMapCanvas({ points }) { return <div role="region" aria-label="Kanvas peta uji DOM">{points.length} titik valid</div>; }
+
+// Konten API/cascade bisa selesai setelah 300 ms saat suite berjalan serentak.
+// Tunggu perubahan DOM yang diharapkan dengan batas waktu, bukan memperbesar sleep.
+function waitForDom(div, ready, timeout) {
+  if (ready()) return Promise.resolve();
+  return new Promise((resolve) => {
+    let timer;
+    const finish = () => { observer.disconnect(); clearTimeout(timer); resolve(); };
+    const observer = new window.MutationObserver(() => { if (ready()) finish(); });
+    observer.observe(div, { childList: true, subtree: true, characterData: true });
+    timer = setTimeout(finish, timeout);
+  });
+}
 
 export async function run(tunggu = 1200) {
   const results = [];
@@ -48,16 +65,19 @@ export async function run(tunggu = 1200) {
       root.render(
         <MemoryRouter initialEntries={[route]}>
           <AuthProvider>
-            <App />
+            <App MapCanvasComponent={SmokeMapCanvas} />
           </AuthProvider>
         </MemoryRouter>,
       );
-      await new Promise((r) => setTimeout(r, tunggu));
+      // Pertahankan waktu observasi baseline untuk error dari efek lanjutan.
+      await new Promise((resolve) => setTimeout(resolve, tunggu));
       if (route === "/odc") {
-        const odcRow = [...div.querySelectorAll("tbody tr")].find((row) => row.textContent.includes("ODC-001"));
-        odcRow?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-        await new Promise((r) => setTimeout(r, 300));
+        const findOdc = () => [...div.querySelectorAll("tbody tr")].find((row) => row.textContent.includes("ODC-001"));
+        await waitForDom(div, () => Boolean(findOdc()), 5000);
+        findOdc()?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       }
+      const expected = Array.isArray(wajib) ? wajib : [wajib];
+      await waitForDom(div, () => expected.every((value) => (div.querySelector("main") || div).textContent.replace(/\s+/g, " ").includes(value)), 5000);
     } catch (e) {
       thrown = e;
     }
@@ -68,7 +88,8 @@ export async function run(tunggu = 1200) {
     const navOrderOk = mappingIndex >= 0 && alurIndex === mappingIndex + 1;
     const bad = errors.filter((e) => /is not defined|Cannot read|not a function|Minified React error|Objects are not valid|Cannot access/.test(e));
     const wajibArr = Array.isArray(wajib) ? wajib : [wajib];
-    const kurang = wajibArr.filter((w) => !text.includes(w));
+    const mainText = ((div.querySelector("main") || div).textContent || "").replace(/\s+/g, " ").trim();
+    const kurang = wajibArr.filter((w) => !mainText.includes(w));
     const adaData = kurang.length === 0;
     const terlarang = TERLARANG.find((t) => text.includes(t));
     results.push({
@@ -115,7 +136,7 @@ export async function renderOne(route, tunggu = 1500) {
     root.render(
       <MemoryRouter initialEntries={[route]}>
         <AuthProvider>
-          <App />
+          <App MapCanvasComponent={SmokeMapCanvas} />
         </AuthProvider>
       </MemoryRouter>,
     );

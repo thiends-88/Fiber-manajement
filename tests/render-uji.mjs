@@ -9,6 +9,7 @@ import { JSDOM } from "jsdom";
 
 const PORT = process.env.ARENA_API_PORT || "8080";
 const API = `http://127.0.0.1:${PORT}`;
+const SPLITTER_DELAY = Math.max(0, Math.min(3000, Number(process.env.UJI_RENDER_SPLITTER_DELAY_MS) || 0));
 const nodeFetch = globalThis.fetch; // simpan fetch asli SEBELUM global ditimpa (cegah rekursi)
 
 async function login() {
@@ -35,7 +36,14 @@ function siapkanDom(token, user) {
   window.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
   window.IntersectionObserver = class { observe() {} unobserve() {} disconnect() {} };
   window.scrollTo = () => {};
-  window.fetch = (u, o) => nodeFetch(String(u).startsWith("http") ? u : API + u, o);
+  window.fetch = async (u, o) => {
+    const url = String(u).startsWith("http") ? String(u) : API + u;
+    const response = await nodeFetch(url, o);
+    if (SPLITTER_DELAY && new URL(url).pathname.startsWith("/api/splitters")) {
+      await new Promise((resolve) => setTimeout(resolve, SPLITTER_DELAY));
+    }
+    return response;
+  };
 
   const KEYS = [
     "window", "document", "localStorage", "location", "HTMLElement", "Element", "Node", "Event",
@@ -63,6 +71,7 @@ async function main() {
     process.exit(2);
   }
 
+  if (SPLITTER_DELAY) console.log(`SMOKE: respons splitter ditunda ${SPLITTER_DELAY} ms pada harness saja.`);
   const { token, user } = await login();
   const dom = siapkanDom(token, user);
   const { run, renderOne } = await import("../.uji-out/render-uji.js");

@@ -1,3 +1,5 @@
+import CoordinateFields from "../components/CoordinateFields.jsx";
+import { coordinateForm } from "../lib/coordinates.js";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { INTERFACE_MODES, defaultInterfaceMode, interfaceDetails, interfaceLabel, interfaceLink, interfaceMode } from "../lib/interfaces.js";
@@ -7,7 +9,7 @@ import { useAuth } from "../lib/auth.jsx";
 import { Badge, Card, Empty, Field, Modal, PageHeader, SearchBox, Toast, matchesQuery, useToast } from "../components/ui.jsx";
 import { CARD_TYPES, OLT_TYPES, PORT_STATUS } from "../lib/fiber.js";
 
-const emptyOlt = { interface_mode: "shelf_slot_port", fixed_port_count: 8, name: "", olt_type: OLT_TYPES[0], location: "", ip: "", notes: "" };
+const emptyOlt = { ...coordinateForm(), interface_mode: "shelf_slot_port", fixed_port_count: 8, name: "", olt_type: OLT_TYPES[0], location: "", ip: "", notes: "" };
 const emptyCard = { shelf: 1, slot: "", card_type: "GTGO", label: "", port_count: 8, notes: "" };
 const emptyPort = { interface_name: "", port: "", sfp: "", serial: "", status: "inactive", notes: "" };
 
@@ -240,7 +242,7 @@ export default function Olts() {
                         className="btn px-2 py-1"
                         title={`Edit OLT ${o.name}`}
                         onClick={() => {
-                          setForm({ interface_mode: interfaceMode(o), fixed_port_count: o.fixed_port_count || 8, name: o.name, olt_type: o.olt_type ?? "", location: o.location || "", ip: o.ip || "", notes: o.notes || "" });
+                          setForm({ ...coordinateForm(o), interface_mode: interfaceMode(o), fixed_port_count: o.fixed_port_count || 8, name: o.name, olt_type: o.olt_type ?? "", location: o.location || "", ip: o.ip || "", notes: o.notes || "" });
                           setOltModal({ mode: "edit", olt: o });
                         }}
                       >
@@ -412,6 +414,7 @@ export default function Olts() {
           <Field label="Lokasi">
             <input className="input" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} />
           </Field>
+          <CoordinateFields form={form} onChange={setForm} />
           <Field label="Alamat IP">
             <input className="input" value={form.ip} onChange={(e) => setForm({ ...form, ip: e.target.value })} />
           </Field>

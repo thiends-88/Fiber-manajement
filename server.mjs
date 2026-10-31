@@ -14,6 +14,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { CABLE_TYPES, SPLITTER_RATIOS } from "./src/lib/fiber.js";
+import { coordinateUpdate } from "./src/lib/coordinates.js";
 import { INTERFACE_MODES, defaultInterfaceMode, interfaceDetails } from "./src/lib/interfaces.js";
 import { PASSWORD_HASH_PREFIX, FACTORY_PASSWORD, MAX_PASSWORD_LENGTH, hashPassword, verifyPassword, validNewPassword, requestUrl, sameOriginWrite, sessionCookie, redactedUrl, PRIVATE_HEADERS, createLoginLimiter, trustedProxySet, loginClientIp, canonicalPublicOrigin } from "./server/security.mjs";
 
@@ -338,6 +339,27 @@ db.exec(`
   );
 `);
 
+// Koordinat terpisah, tanpa menulis ulang alamat/GPS lama atau mengganti ID.
+// Mode none mencegah koordinat lokasi lama muncul lagi setelah titik sengaja dihapus.
+db.exec("BEGIN IMMEDIATE");
+try {
+  for (const table of ["olts", "odcs", "odps"]) {
+    const columns = new Set(db.prepare("SELECT name FROM pragma_table_info(?)").all(table).map(c => c.name));
+    for (const [column, definition] of [
+      ["latitude", "REAL"], ["longitude", "REAL"],
+      ["coordinate_mode", "TEXT NOT NULL DEFAULT 'location' CHECK(coordinate_mode IN ('location','manual','none'))"],
+    ]) if (!columns.has(column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    // Jika instalasi pernah mempunyai kolom GPS eksplisit, nilainya tidak diabaikan.
+    if (!columns.has("coordinate_mode") && (columns.has("latitude") || columns.has("longitude"))) {
+      db.exec(`UPDATE ${table} SET coordinate_mode='manual' WHERE latitude IS NOT NULL OR longitude IS NOT NULL`);
+    }
+  }
+  db.exec("COMMIT");
+} catch (error) {
+  db.exec("ROLLBACK");
+  throw new Error(`Migrasi koordinat gagal; data lama tidak direset: ${error.message}`);
+}
+
 // Rotasi satu kali untuk sesi lama yang mungkin pernah bocor lewat URL/log.
 // Metadata autentikasi ini tidak mengubah ID atau tabel inventaris jaringan.
 db.exec("CREATE TABLE IF NOT EXISTS security_migrations (id TEXT PRIMARY KEY, applied_at TEXT NOT NULL)");
@@ -581,6 +603,11 @@ function syncFeederPorts(odcId, ids) {
 
 // Simpan nilai legacy di DB/backup, tetapi jangan menyajikannya sebagai fitur optik aktif.
 const OMIT_LEGACY_MEASUREMENTS = new Set(["tx_power","rx_power","power_dbm","feeder_loss_db","loss_db"]);
+function isCoordinateOnly(body) {
+  const keys = Object.keys(body);
+  return keys.length > 0 && keys.every(key => ["latitude", "longitude", "coordinate_mode"].includes(key));
+}
+
 function send(req, res, status, body, extraHeaders = {}) {
   if (res.headersSent || res.destroyed) return;
   const headers = { ...PRIVATE_HEADERS, "Content-Type": "application/json", ...extraHeaders };
@@ -897,6 +924,28 @@ const server = http.createServer(async (req, res) => {
       return send(req, res, 403, { error: "Hanya admin/operator yang dapat mengubah data" });
     }
 
+    // Snapshot baca konsisten: titik dan bukti koneksi tidak dicampur dari beberapa request.
+    if (p === "/api/map-data" && method === "GET") {
+      db.exec("BEGIN");
+      let data;
+      try {
+        const output = db.prepare(SPLITTER_OUT_SQL);
+        data = {
+          version: 1,
+          olts: sortByNameNatural(db.prepare("SELECT * FROM olts").all()),
+          odcs: sortByNameNatural(db.prepare("SELECT d.*, o.name AS olt_name FROM odcs d LEFT JOIN olts o ON o.id=d.olt_id").all()),
+          odps: sortByNameNatural(db.prepare("SELECT p.*, d.name AS odc_name FROM odps p LEFT JOIN odcs d ON d.id=p.odc_id").all()),
+          ports: db.prepare(PORT_SQL).all().map(withInterface),
+          feederPorts: db.prepare("SELECT * FROM odc_feeder_ports ORDER BY id").all(),
+          interfaceMappings: db.prepare(MAPPING_SQL).all().map(withMappingInterface),
+          links: db.prepare("SELECT * FROM core_links ORDER BY id").all(),
+          splitters: db.prepare(SPLITTER_SQL + " ORDER BY s.id").all().map(row => ({ ...row, outputs: output.all(row.id) })),
+        };
+        db.exec("COMMIT");
+      } catch (error) { db.exec("ROLLBACK"); throw error; }
+      return send(req, res, 200, data);
+    }
+
     // ---------------- Dashboard ----------------
     if (p === "/api/dashboard" && method === "GET") {
       const c = (sql) => db.prepare(sql).get().n;
@@ -936,6 +985,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === "/api/olts" && method === "POST") {
       const b = requestBody;
+      const gps = coordinateUpdate(b);
       if (!isText(b.name)) return send(req, res, 400, { error: "Nama OLT wajib diisi" });
       if ([b.olt_type, b.location, b.ip, b.notes].some((v) => !isOptionalText(v))) {
         return send(req, res, 400, { error: "Tipe, lokasi, IP, dan catatan harus berupa teks" });
@@ -947,8 +997,8 @@ const server = http.createServer(async (req, res) => {
         return send(req, res, 400, { error: "Jumlah port bawaan harus antara 1 dan 128" });
       }
       const id = atomicWrite(() => {
-        const r = db.prepare("INSERT INTO olts (name, olt_type, location, ip, notes, interface_mode) VALUES (?,?,?,?,?,?)")
-          .run(b.name.trim(), b.olt_type || null, b.location || null, b.ip || null, b.notes || null, mode);
+        const r = db.prepare("INSERT INTO olts (name, olt_type, location, ip, notes, interface_mode, latitude, longitude, coordinate_mode) VALUES (?,?,?,?,?,?,?,?,?)")
+          .run(b.name.trim(), b.olt_type || null, b.location || null, b.ip || null, b.notes || null, mode, gps.latitude, gps.longitude, gps.coordinate_mode);
         if (mode !== "shelf_slot_port") ensureBuiltinCard(r.lastInsertRowid, count);
         return r.lastInsertRowid;
       });
@@ -962,6 +1012,13 @@ const server = http.createServer(async (req, res) => {
         const current = db.prepare("SELECT * FROM olts WHERE id=?").get(id);
         if (!current) return send(req, res, 404, { error: "OLT tidak ditemukan" });
         const b = { ...current, ...body };
+        const gps = coordinateUpdate(body, current);
+        if (isCoordinateOnly(body)) {
+          // GPS tidak boleh merapikan nama/alamat, card, feeder atau data kabel lama.
+          db.prepare("UPDATE olts SET latitude=?, longitude=?, coordinate_mode=?, updated_at=? WHERE id=?")
+            .run(gps.latitude, gps.longitude, gps.coordinate_mode, now(), id);
+          return send(req, res, 200, db.prepare("SELECT * FROM olts WHERE id=?").get(id));
+        }
         if (!isText(b.name)) return send(req, res, 400, { error: "Nama OLT wajib diisi" });
         if ([b.olt_type, b.location, b.ip, b.notes].some((v) => !isOptionalText(v))) {
           return send(req, res, 400, { error: "Tipe, lokasi, IP, dan catatan harus berupa teks" });
@@ -985,8 +1042,8 @@ const server = http.createServer(async (req, res) => {
           if (max > Number(count)) return send(req, res, 400, { error: `Port ${max} masih tercatat; jumlah port tidak boleh lebih kecil` });
         }
         atomicWrite(() => {
-          db.prepare("UPDATE olts SET name=?, olt_type=?, location=?, ip=?, notes=?, interface_mode=?, updated_at=? WHERE id=?")
-            .run(b.name.trim(), b.olt_type || null, b.location || null, b.ip || null, b.notes || null, b.interface_mode, now(), id);
+          db.prepare("UPDATE olts SET name=?, olt_type=?, location=?, ip=?, notes=?, interface_mode=?, latitude=?, longitude=?, coordinate_mode=?, updated_at=? WHERE id=?")
+            .run(b.name.trim(), b.olt_type || null, b.location || null, b.ip || null, b.notes || null, b.interface_mode, gps.latitude, gps.longitude, gps.coordinate_mode, now(), id);
           if (b.interface_mode === "shelf_slot_port") {
             if (builtin) db.prepare("DELETE FROM olt_cards WHERE id=?").run(builtin.id);
           } else {
@@ -1132,6 +1189,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === "/api/odcs" && method === "POST") {
       const b = requestBody;
+      const gps = coordinateUpdate(b);
       if (!isText(b.name) || !validPositiveInt(b.olt_id) || !cableInfo(b.cable_type)) {
         return send(req, res, 400, { error: "Nama, OLT, dan tipe kabel yang valid wajib diisi" });
       }
@@ -1142,8 +1200,8 @@ const server = http.createServer(async (req, res) => {
       const badFeeder = checkFeederPorts(b.olt_id, feederIds);
       if (badFeeder) return send(req, res, 400, { error: badFeeder });
       const id = atomicWrite(() => {
-        const r = db.prepare("INSERT INTO odcs (olt_id, name, location, cable_type, notes) VALUES (?,?,?,?,?)")
-          .run(Number(b.olt_id), b.name.trim(), b.location || null, b.cable_type, b.notes || null);
+        const r = db.prepare("INSERT INTO odcs (olt_id, name, location, cable_type, notes, latitude, longitude, coordinate_mode) VALUES (?,?,?,?,?,?,?,?)")
+          .run(Number(b.olt_id), b.name.trim(), b.location || null, b.cable_type, b.notes || null, gps.latitude, gps.longitude, gps.coordinate_mode);
         syncFeederPorts(r.lastInsertRowid, feederIds);
         return r.lastInsertRowid;
       });
@@ -1157,6 +1215,13 @@ const server = http.createServer(async (req, res) => {
         const current = db.prepare("SELECT * FROM odcs WHERE id=?").get(id);
         if (!current) return send(req, res, 404, { error: "ODC tidak ditemukan" });
         const b = { ...current, ...body };
+        const gps = coordinateUpdate(body, current);
+        if (isCoordinateOnly(body)) {
+          // GPS tidak boleh merapikan nama/alamat, card, feeder atau data kabel lama.
+          db.prepare("UPDATE odcs SET latitude=?, longitude=?, coordinate_mode=?, updated_at=? WHERE id=?")
+            .run(gps.latitude, gps.longitude, gps.coordinate_mode, now(), id);
+          return send(req, res, 200, db.prepare("SELECT * FROM odcs WHERE id=?").get(id));
+        }
         if (!isText(b.name) || !validPositiveInt(b.olt_id) || !cableInfo(b.cable_type)) {
           return send(req, res, 400, { error: "Nama, OLT, dan tipe kabel yang valid wajib diisi" });
         }
@@ -1182,8 +1247,8 @@ const server = http.createServer(async (req, res) => {
           return send(req, res, 400, { error: `Tipe kabel baru memiliki ${capacity} core; hapus atau sesuaikan assignment, mapping, dan input splitter di atasnya lebih dahulu` });
         }
         atomicWrite(() => {
-          db.prepare("UPDATE odcs SET olt_id=?, name=?, location=?, cable_type=?, notes=?, updated_at=? WHERE id=?")
-            .run(Number(b.olt_id), b.name.trim(), b.location || null, b.cable_type, b.notes || null, now(), id);
+          db.prepare("UPDATE odcs SET olt_id=?, name=?, location=?, cable_type=?, notes=?, latitude=?, longitude=?, coordinate_mode=?, updated_at=? WHERE id=?")
+            .run(Number(b.olt_id), b.name.trim(), b.location || null, b.cable_type, b.notes || null, gps.latitude, gps.longitude, gps.coordinate_mode, now(), id);
           if (hasOwn(body, "feeder_port_ids") || Number(b.olt_id) !== current.olt_id) syncFeederPorts(id, feederIds);
         });
         return send(req, res, 200, db.prepare("SELECT * FROM odcs WHERE id=?").get(id));
@@ -1205,6 +1270,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === "/api/odps" && method === "POST") {
       const b = requestBody;
+      const gps = coordinateUpdate(b);
       if (!isText(b.name) || !validPositiveInt(b.odc_id) || !cableInfo(b.cable_type)) {
         return send(req, res, 400, { error: "Nama, ODC, dan tipe kabel yang valid wajib diisi" });
       }
@@ -1215,8 +1281,8 @@ const server = http.createServer(async (req, res) => {
         return send(req, res, 400, { error: "ODC tidak ditemukan" });
       }
       const id = atomicWrite(() => {
-        const r = db.prepare("INSERT INTO odps (odc_id, name, location, cable_type, notes) VALUES (?,?,?,?,?)")
-          .run(Number(b.odc_id), b.name.trim(), b.location || null, b.cable_type, b.notes || null);
+        const r = db.prepare("INSERT INTO odps (odc_id, name, location, cable_type, notes, latitude, longitude, coordinate_mode) VALUES (?,?,?,?,?,?,?,?)")
+          .run(Number(b.odc_id), b.name.trim(), b.location || null, b.cable_type, b.notes || null, gps.latitude, gps.longitude, gps.coordinate_mode);
         // ODP selalu memakai splitter 1:8 — buat otomatis agar langsung siap dipakai
         ensureOdpSplitter(r.lastInsertRowid, b.name);
         return r.lastInsertRowid;
@@ -1231,6 +1297,13 @@ const server = http.createServer(async (req, res) => {
         const current = db.prepare("SELECT * FROM odps WHERE id=?").get(id);
         if (!current) return send(req, res, 404, { error: "ODP tidak ditemukan" });
         const b = { ...current, ...body };
+        const gps = coordinateUpdate(body, current);
+        if (isCoordinateOnly(body)) {
+          // GPS tidak boleh merapikan nama/alamat, card, feeder atau data kabel lama.
+          db.prepare("UPDATE odps SET latitude=?, longitude=?, coordinate_mode=?, updated_at=? WHERE id=?")
+            .run(gps.latitude, gps.longitude, gps.coordinate_mode, now(), id);
+          return send(req, res, 200, db.prepare("SELECT * FROM odps WHERE id=?").get(id));
+        }
         if (!isText(b.name) || !validPositiveInt(b.odc_id) || !cableInfo(b.cable_type)) {
           return send(req, res, 400, { error: "Nama, ODC, dan tipe kabel yang valid wajib diisi" });
         }
@@ -1251,8 +1324,8 @@ const server = http.createServer(async (req, res) => {
         if (hasOutOfRangeCore) {
           return send(req, res, 400, { error: `Tipe kabel baru memiliki ${capacity} core; hapus atau sesuaikan assignment, mapping, dan input splitter di atasnya lebih dahulu` });
         }
-        db.prepare("UPDATE odps SET odc_id=?, name=?, location=?, cable_type=?, notes=?, updated_at=? WHERE id=?")
-          .run(Number(b.odc_id), b.name.trim(), b.location || null, b.cable_type, b.notes || null, now(), id);
+        db.prepare("UPDATE odps SET odc_id=?, name=?, location=?, cable_type=?, notes=?, latitude=?, longitude=?, coordinate_mode=?, updated_at=? WHERE id=?")
+          .run(Number(b.odc_id), b.name.trim(), b.location || null, b.cable_type, b.notes || null, gps.latitude, gps.longitude, gps.coordinate_mode, now(), id);
         return send(req, res, 200, db.prepare("SELECT * FROM odps WHERE id=?").get(id));
       }
       if (method === "DELETE") {

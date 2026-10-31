@@ -10,6 +10,7 @@ import Topologi from "./pages/Topologi.jsx";
 import Mapping from "./pages/Mapping.jsx";
 import Laporan from "./pages/Laporan.jsx";
 import Users from "./pages/Users.jsx";
+import Peta from "./pages/Peta.jsx";
 
 function Protected({ children, requireAdmin = false }) {
   const { user, status } = useAuth();
@@ -19,7 +20,8 @@ function Protected({ children, requireAdmin = false }) {
   return <Layout>{children}</Layout>;
 }
 
-export default function App() {
+// Kanvas dapat diganti harness DOM; runtime memakai Leaflet lazy bawaan Peta.
+export default function App({ MapCanvasComponent } = {}) {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
@@ -72,6 +74,10 @@ export default function App() {
             <Mapping />
           </Protected>
         }
+      />
+      <Route
+        path="/peta"
+        element={<Protected><Peta MapCanvasComponent={MapCanvasComponent} /></Protected>}
       />
       <Route
         path="/laporan"
