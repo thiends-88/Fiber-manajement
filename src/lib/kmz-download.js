@@ -1,12 +1,15 @@
 import { MAP_ICONS } from "./map-icons.js";
-import { createKmz } from "./kmz.js";
+import { buildKmzArchive } from "./kmz-export-client.js";
 
 export async function downloadKmz(
   view,
   options,
-  { isCurrent = () => true } = {},
+  { isCurrent = () => true, signal } = {},
 ) {
   const controller = new AbortController();
+  if (signal?.aborted) return;
+  const cancel = () => controller.abort();
+  signal?.addEventListener("abort", cancel, { once: true });
   const timer = setTimeout(() => controller.abort(), 15000);
   let entries;
   try {
@@ -32,12 +35,19 @@ export async function downloadKmz(
   } finally {
     clearTimeout(timer);
     controller.abort();
+    signal?.removeEventListener("abort", cancel);
   }
-  if (!isCurrent()) return;
-  const blob = new Blob(
-    [createKmz(view, options, Object.fromEntries(entries))],
-    { type: "application/vnd.google-earth.kmz" },
+  if (!isCurrent() || signal?.aborted) return;
+  const archive = await buildKmzArchive(
+    view,
+    options,
+    Object.fromEntries(entries),
+    signal,
   );
+  if (!isCurrent() || signal?.aborted) return;
+  const blob = new Blob([archive], {
+    type: "application/vnd.google-earth.kmz",
+  });
   const url = URL.createObjectURL(blob),
     anchor = document.createElement("a");
   anchor.href = url;

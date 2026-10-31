@@ -20,6 +20,10 @@ import {
   SCHEMATIC_NOTICE,
 } from "../lib/network-map.js";
 import CoordinateFields from "../components/CoordinateFields.jsx";
+import CableRoutesPanel, {
+  ImportedRouteDetail,
+} from "../components/CableRoutesPanel.jsx";
+import { useCableRoutes } from "../lib/use-cable-routes.jsx";
 import {
   Card,
   Field,
@@ -314,8 +318,14 @@ export default function Peta({ MapCanvasComponent = Canvas }) {
     [error, setError] = useState(""),
     [loadedAt, setLoadedAt] = useState(null);
   const [filters, setFilters] = useState(EMPTY_FILTERS),
-    [showConnections, setShowConnections] = useState(true),
+    [showConnections, setShowConnections] = useState(false),
     [basemap, setBasemap] = useState(false);
+  const cable = useCableRoutes();
+  const [routeFocus, setRouteFocus] = useState(null),
+    [selectedRouteId, setSelectedRouteId] = useState(null);
+  const selectedRoute = cable.visibleRoutes.find(
+    (route) => route.id === selectedRouteId,
+  );
   const [selected, setSelected] = useState(null),
     [focus, setFocus] = useState(null),
     [fitRevision, setFitRevision] = useState(0);
@@ -329,7 +339,8 @@ export default function Peta({ MapCanvasComponent = Canvas }) {
   const mounted = useRef(true),
     generation = useRef(0),
     saveBusy = useRef(false),
-    exportBusy = useRef(false);
+    exportBusy = useRef(false),
+    exportAbort = useRef(null);
   const load = useCallback(async () => {
     if (!mounted.current) return false;
     const request = ++generation.current;
@@ -357,6 +368,7 @@ export default function Peta({ MapCanvasComponent = Canvas }) {
     return () => {
       mounted.current = false;
       generation.current++;
+      exportAbort.current?.abort();
     };
   }, [load]);
   const model = useMemo(() => buildNetworkMap(data || {}), [data]);
@@ -380,6 +392,7 @@ export default function Peta({ MapCanvasComponent = Canvas }) {
     }
   }, [view, selected, data, loading]);
   const select = useCallback((key, reveal = false) => {
+    setSelectedRouteId(null);
     setSelected(key);
     setFocus({ key, revision: Date.now() });
     if (reveal)
@@ -424,22 +437,41 @@ export default function Peta({ MapCanvasComponent = Canvas }) {
       if (mounted.current) setSaving(false);
     }
   }
+  function focusRoutes(bounds) {
+    setRouteFocus({ bounds, revision: Date.now() });
+    mapSection.current?.scrollIntoView?.({
+      behavior: "smooth",
+      block: "start",
+    });
+  }
+  function selectRoute(route) {
+    setSelected(null);
+    setFocus(null);
+    setSelectedRouteId(route.id);
+    focusRoutes(route.bounds);
+  }
   async function exportMap(filtered) {
     const snapshot = filtered ? view : full;
     if (
       !data ||
       loading ||
       error ||
-      !snapshot.points.length ||
+      (!snapshot.points.length &&
+        !(filtered ? cable.visibleImports.length : cable.imports?.length)) ||
+      cable.loading ||
+      cable.error ||
+      cable.mutating ||
       exportBusy.current ||
       saveBusy.current
     )
       return;
     exportBusy.current = true;
+    exportAbort.current = new AbortController();
     setExporting(true);
     const session = getSessionVersion(),
       isCurrent = () => mounted.current && session === getSessionVersion();
     try {
+      const importedRoutes = await cable.ensureExport(filtered);
       const { downloadKmz } = await import("../lib/kmz-download.js");
       if (!isCurrent()) return;
       const scope = filtered
@@ -447,12 +479,18 @@ export default function Peta({ MapCanvasComponent = Canvas }) {
         : "lengkap";
       await downloadKmz(
         snapshot,
-        { scope, includeConnections: showConnections, exportedAt: loadedAt },
-        { isCurrent },
+        {
+          scope,
+          includeConnections: showConnections,
+          exportedAt: loadedAt,
+          importedRoutes,
+          routesReadAt: cable.loadedAt,
+        },
+        { isCurrent, signal: exportAbort.current.signal },
       );
       if (isCurrent())
         toast(
-          `KMZ ${filtered ? "terfilter" : "lengkap"} dibuat: ${snapshot.points.length} titik. Buka berkas .kmz di Google Earth.`,
+          `KMZ ${filtered ? "terfilter" : "lengkap"} dibuat: ${snapshot.points.length} titik, ${importedRoutes.length} segmen jalur. Buka berkas .kmz di Google Earth.`,
         );
     } catch (e) {
       if (isCurrent()) toast(`Ekspor KMZ gagal: ${e.message}`, "error");
@@ -461,12 +499,21 @@ export default function Peta({ MapCanvasComponent = Canvas }) {
       if (mounted.current) setExporting(false);
     }
   }
-  const controlsBusy = loading || saving || exporting;
+  const controlsBusy = loading || saving || exporting || cable.mutating;
+  const routesReady = !cable.loading && !cable.error && !!cable.imports;
+  const canFullExport = full.points.length > 0 || cable.totalRoutes > 0;
+  const filteredRouteCount = cable.visibleImports.reduce(
+    (sum, batch) => sum + batch.route_count,
+    0,
+  );
+  const canFilteredExport =
+    (hasFilters || cable.hidden.size > 0) &&
+    (view.points.length > 0 || cable.visibleImports.length > 0);
   return (
     <>
       <PageHeader
         title="Peta Jaringan / KMZ"
-        desc="Semua OLT, ODC, dan ODP berkoordinat dalam satu peta."
+        desc="Lokasi perangkat dan jalur kabel dari berkas lapangan, dalam satu peta."
       >
         <button
           className="btn text-xs"
@@ -488,7 +535,7 @@ export default function Peta({ MapCanvasComponent = Canvas }) {
       <Toast toast={toastState} />
       {loading && (
         <Card>
-          <p role="status">Memuat snapshot titik dan bukti koneksi…</p>
+          <p role="status">Memuat titik perangkat…</p>
         </Card>
       )}
       {error && (
@@ -598,20 +645,29 @@ export default function Peta({ MapCanvasComponent = Canvas }) {
                 <label className="flex items-center gap-2">
                   <input
                     type="checkbox"
-                    checked={showConnections}
-                    onChange={(e) => setShowConnections(e.target.checked)}
-                  />{" "}
-                  Koneksi skematis pada peta dan KMZ
-                </label>
-                <label className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
                     checked={basemap}
                     onChange={(e) => setBasemap(e.target.checked)}
                   />{" "}
                   Aktifkan peta dasar OpenStreetMap (internet)
                 </label>
               </div>
+              <details className="text-xs text-mut">
+                <summary className="cursor-pointer">
+                  Opsi lanjutan: hubungan perangkat
+                </summary>
+                <label className="mt-3 flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={showConnections}
+                    onChange={(e) => setShowConnections(e.target.checked)}
+                  />
+                  Koneksi skematis pada peta dan KMZ
+                </label>
+                <p className="mt-2">
+                  Mati secara bawaan. Ini hubungan dari data mapping, bukan
+                  jalur kabel. Gunakan Alur Core untuk penelusuran sambungan.
+                </p>
+              </details>
               <p className="text-[11px] text-mut">
                 Peta dasar opsional; saat diaktifkan, penyedia OpenStreetMap
                 dapat melihat IP, asal situs, dan area tampilan. Titik/KMZ tidak
@@ -619,6 +675,14 @@ export default function Peta({ MapCanvasComponent = Canvas }) {
               </p>
             </fieldset>
           </Card>
+          <CableRoutesPanel
+            state={cable}
+            canWrite={canWrite}
+            disabled={loading || saving || exporting}
+            onFocus={focusRoutes}
+            onSelect={selectRoute}
+            toast={toast}
+          />
           <div
             ref={mapSection}
             className="grid scroll-mt-16 items-start gap-4 xl:grid-cols-[minmax(0,1fr)_300px]"
@@ -628,7 +692,8 @@ export default function Peta({ MapCanvasComponent = Canvas }) {
                 <span data-map-summary>
                   {view.points.length} titik valid · {view.missing.length} belum
                   ada koordinat · {showConnections ? view.lines.length : 0}{" "}
-                  garis terlihat
+                  garis skematis · {cable.visibleRoutes.length} segmen jalur
+                  impor
                 </span>
                 <span>
                   Data dibaca: {new Date(loadedAt).toLocaleString("id-ID")}
@@ -644,6 +709,10 @@ export default function Peta({ MapCanvasComponent = Canvas }) {
                 >
                   <MapCanvasComponent
                     points={view.points}
+                    routes={cable.visibleRoutes}
+                    routeFocus={routeFocus}
+                    selectedRouteId={selectedRouteId}
+                    onSelectRoute={selectRoute}
                     lines={view.lines}
                     focus={focus}
                     fitRevision={fitRevision}
@@ -663,69 +732,90 @@ export default function Peta({ MapCanvasComponent = Canvas }) {
                     {type.label}
                   </span>
                 ))}
+                <span className="flex items-center gap-2">
+                  <span className="h-0.5 w-7 rounded bg-emerald-400" /> Jalur
+                  impor = garis utuh berwarna
+                </span>
                 <span>
                   Angka pada grup = jumlah perangkat; klik/perbesar untuk
                   memisahkan ikon yang berdempet.
                 </span>
               </div>
-              <p className="text-xs text-amber-400">{SCHEMATIC_NOTICE}</p>
-              <p className="text-[11px] text-mut">
-                Satu garis merangkum pasangan perangkat; seluruh bukti port,
-                core, splitter/receiver, dan output tetap tersedia pada detail.
+              <p className="text-xs text-mut">
+                Jalur impor mengikuti bentuk berkas Anda. Titik perangkat tetap
+                dari inventaris; kedekatan/cabang garis tidak otomatis berarti
+                tersambung.
               </p>
-              {(view.unpositionedConnections > 0 ||
-                view.hiddenConnections > 0) && (
-                <p className="text-xs text-mut">
-                  {view.unpositionedConnections} koneksi belum dapat digambar
-                  karena GPS belum lengkap; {view.hiddenConnections} koneksi
-                  melewati batas filter.
-                </p>
+              {showConnections && (
+                <p className="text-xs text-amber-400">{SCHEMATIC_NOTICE}</p>
               )}
+              {showConnections &&
+                (view.unpositionedConnections > 0 ||
+                  view.hiddenConnections > 0) && (
+                  <p className="text-xs text-mut">
+                    {view.unpositionedConnections} koneksi belum dapat digambar
+                    karena GPS belum lengkap; {view.hiddenConnections} koneksi
+                    melewati batas filter.
+                  </p>
+                )}
             </div>
-            <Detail
-              node={model.byKey.get(selected)}
-              model={model}
-              canWrite={canWrite}
-              onEdit={editGps}
-              onSelect={select}
-            />
+            {selectedRoute ? (
+              <ImportedRouteDetail
+                route={selectedRoute}
+                onClose={() => setSelectedRouteId(null)}
+              />
+            ) : (
+              <Detail
+                node={model.byKey.get(selected)}
+                model={model}
+                canWrite={canWrite}
+                onEdit={editGps}
+                onSelect={select}
+              />
+            )}
           </div>
           <Card>
             <h2 className="mb-2 text-sm font-semibold">
               Unduh KMZ untuk Google Earth
             </h2>
             <p className="mb-3 text-xs text-mut">
-              KMZ lengkap selalu memuat seluruh {full.points.length} titik
-              valid, meskipun peta sedang difilter. Berkas berisi folder OLT,
-              ODC, ODP, ikon lokal, serta koneksi skematis bila dicentang.
-              Perangkat tanpa GPS dicatat tanpa geometri, bukan ditempatkan di
-              0,0.
+              KMZ lengkap selalu memuat seluruh {full.points.length} titik valid
+              dan seluruh {cable.totalRoutes} segmen jalur tersimpan, termasuk
+              kumpulan yang disembunyikan di peta. Berkas berisi folder OLT,
+              ODC, ODP dan Jalur kabel impor dengan ikon lokal. Hubungan
+              skematis hanya ikut bila opsi lanjutan dicentang. Perangkat tanpa
+              GPS dicatat tanpa geometri, bukan ditempatkan di 0,0.
             </p>
             <div className="flex flex-wrap gap-2">
               <button
                 className="btn btn-primary"
-                disabled={controlsBusy || !full.points.length}
+                disabled={controlsBusy || !routesReady || !canFullExport}
                 onClick={() => exportMap(false)}
               >
                 <Download size={14} />
                 {exporting
                   ? "Menyiapkan KMZ…"
-                  : `Unduh KMZ Lengkap (${full.points.length} titik)`}
+                  : `Unduh KMZ Lengkap (${full.points.length} titik${cable.totalRoutes ? ` + ${cable.totalRoutes} segmen` : ""})`}
               </button>
               <button
                 className="btn"
-                disabled={controlsBusy || !hasFilters || !view.points.length}
+                disabled={controlsBusy || !routesReady || !canFilteredExport}
                 onClick={() => exportMap(true)}
               >
-                <Download size={14} /> Unduh KMZ Terfilter ({view.points.length}{" "}
-                titik)
+                <Download size={14} />{" "}
+                {`Unduh KMZ Terfilter (${view.points.length} titik${filteredRouteCount ? ` + ${filteredRouteCount} segmen` : ""})`}
               </button>
             </div>
-            {!full.points.length && (
+            <p className="mt-3 text-[11px] text-mut">
+              KMZ terfilter: titik yang cocok dengan filter + seluruh jalur pada
+              kumpulan yang dicentang (bukan dipotong menurut induk inventaris).
+              Jalur belum dimuat/bermasalah tidak diekspor setengah lengkap.
+            </p>
+            {!full.points.length && !cable.totalRoutes && (
               <p className="mt-2 text-xs text-amber-400">
-                Belum ada GPS valid untuk diekspor. Isi koordinat perangkat yang
-                sebenarnya terlebih dahulu; aplikasi tidak menambahkan contoh
-                GPS ke inventaris.
+                Belum ada titik atau jalur untuk diekspor. Isi GPS perangkat
+                yang sebenarnya atau impor jalur kabel. Aplikasi tidak
+                menambahkan contoh GPS ke inventaris.
               </p>
             )}
             <p className="mt-3 text-[11px] text-mut">

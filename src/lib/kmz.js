@@ -1,6 +1,7 @@
 import { zipSync, strToU8 } from "fflate";
 import { MAP_TYPES, SCHEMATIC_NOTICE } from "./network-map.js";
 import { coordinateText } from "./coordinates.js";
+import { ROUTE_NOTICE, validateRouteImport } from "./cable-routes.js";
 
 // XML 1.0 tidak menerima control characters/lone surrogates dari catatan bebas.
 export function xmlEscape(value) {
@@ -33,6 +34,8 @@ export function buildKml(
   {
     scope = "lengkap",
     includeConnections = true,
+    importedRoutes = [],
+    routesReadAt = null,
     exportedAt = new Date(),
   } = {},
 ) {
@@ -98,9 +101,59 @@ export function buildKml(
                 : "Lihat bukti sambungan tercatat",
             ],
           ],
-        )}</description><styleUrl>#${edge.review ? "review" : "connection"}</styleUrl><LineString><tessellate>1</tessellate><altitudeMode>clampToGround</altitudeMode><coordinates>${coords(edge.from.coordinates)} ${coords(edge.to.coordinates)}</coordinates></LineString></Placemark>`,
+        )}</description><styleUrl>#${edge.review ? "review" : "connection"}</styleUrl><ExtendedData>${data("fiber_geometry_kind", "schematic")}</ExtendedData><LineString><tessellate>1</tessellate><altitudeMode>clampToGround</altitudeMode><coordinates>${coords(edge.from.coordinates)} ${coords(edge.to.coordinates)}</coordinates></LineString></Placemark>`,
     )
     .join("")}</Folder>`;
+  // Kelompok immutable tersimpan: tidak menggabungkan segmen berdasarkan nama kabel.
+  const groups = new Map();
+  for (const route of importedRoutes) {
+    const key = route.import_id ?? "preview";
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(route);
+  }
+  let importedStyles = "",
+    routeIndex = 0;
+  const routeFolders = [...groups.values()]
+    .map((group) => {
+      const first = group[0];
+      const checked = validateRouteImport({
+        name: first.batch_name || "Jalur kabel",
+        source_name: first.source_name || "jalur.kml",
+        source_format: first.source_format || "KML",
+        warnings: first.import_warnings || [],
+        routes: group,
+      });
+      const marks = checked.routes
+        .map((route, i) => {
+          const index = ++routeIndex,
+            original = group[i],
+            style = `route-style-${index}`;
+          const rgb = route.color.slice(1);
+          importedStyles += lineStyle(
+            style,
+            `ff${rgb.slice(4, 6)}${rgb.slice(2, 4)}${rgb.slice(0, 2)}`,
+          );
+          return `<Placemark id="imported-route-${index}"><name>${xmlEscape(route.name)}</name><description>${description(
+            [
+              ["Kumpulan jalur", checked.name],
+              ["Berkas sumber", checked.source_name],
+              ["Folder sumber", route.folder || "—"],
+              ["Waktu impor (UTC)", original.imported_at || "—"],
+              ["Catatan impor", checked.warnings.join("; ") || "—"],
+              ["Catatan", route.description || "—"],
+              [
+                "Bentuk jalur",
+                `${route.coordinates.length} titik berurutan; bukan jumlah perangkat`,
+              ],
+              ["Batas interpretasi", ROUTE_NOTICE],
+            ],
+          )}</description><styleUrl>#${style}</styleUrl><ExtendedData>${data("route_id", original.id ?? "")}${data("import_id", original.import_id ?? "")}${data("source_format", checked.source_format)}${data("source_file", checked.source_name)}${data("source_folder", route.folder)}${data("fiber_geometry_kind", "imported_route")}${data("fiber_route_note", route.description)}${data("fiber_route_folder", route.folder)}</ExtendedData><LineString><tessellate>1</tessellate><altitudeMode>clampToGround</altitudeMode><coordinates>${route.coordinates.map((point) => `${point[0]},${point[1]},${point[2] ?? 0}`).join(" ")}</coordinates></LineString></Placemark>`;
+        })
+        .join("");
+      return `<Folder><name>${xmlEscape(checked.name)}</name><description>${xmlEscape(ROUTE_NOTICE)}</description>${marks}</Folder>`;
+    })
+    .join("");
+  const importedFolder = `<Folder><name>Jalur kabel impor (${routeIndex})</name><description>${xmlEscape(ROUTE_NOTICE)}</description>${routeFolders}</Folder>`;
   const missing = view.missing || [];
   const missingFolder = `<Folder><name>Belum ada koordinat (${missing.length})</name><description>${description(missing.map((n) => [`${MAP_TYPES[n.kind].label} #${n.id} · ${n.name}`, n.coordinates.reason]))}</description></Folder>`;
   return `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>Peta Jaringan — ${xmlEscape(scope)}</name><description>${description(
@@ -108,12 +161,14 @@ export function buildKml(
       ["Cakupan", scope],
       ["Waktu data dibaca (UTC)", date],
       ["Titik valid", points.length],
+      ["Segmen jalur impor", routeIndex],
+      ["Waktu daftar jalur dibaca (UTC)", routesReadAt || "—"],
       ["Tanpa koordinat (tidak diberi geometri)", missing.length],
       ["Koneksi tanpa kedua koordinat", view.unpositionedConnections || 0],
       ["Koneksi di luar filter", view.hiddenConnections || 0],
       ["Peringatan", SCHEMATIC_NOTICE],
     ],
-  )}</description>${styles}${lineStyle("connection", "ffeb9938")}${lineStyle("review", "ff0b9ef5")}${folders}${lineFolder}${missingFolder}</Document></kml>`;
+  )}</description>${styles}${lineStyle("connection", "ffeb9938")}${lineStyle("review", "ff0b9ef5")}${importedStyles}${folders}${importedFolder}${lineFolder}${missingFolder}</Document></kml>`;
 }
 
 export function createKmz(view, options, icons) {

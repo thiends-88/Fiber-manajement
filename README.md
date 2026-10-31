@@ -107,8 +107,14 @@ lapangan.
     dibedakan, titik bertumpuk dikelompokkan, tersedia detail/filter, **Tampilkan
     Semua Titik**, dan **Unduh KMZ Lengkap** untuk Google Earth. Kolom Lokasi lama
     tetap disimpan; GPS dapat diisi terpisah atau dinonaktifkan tanpa menghapus
-    alamat. Garis hanya dari sambungan tercatat dan selalu **skematis, bukan rute
-    kabel fisik**. Lihat [panduan peta/GPS/KMZ](PANDUAN-PETA-KMZ.md).
+    alamat. **Impor jalur KMZ/KML/XML/CSV** dengan pratinjau dan konfirmasi,
+    warna/belokan sumber, tampil/sembunyi/fokus/hapus per kumpulan, serta detail
+    segmen. Garis skematis **mati secara bawaan**; mapping tetap utuh. Jalur
+    impor **tidak membuktikan sambungan port/core**. KMZ lengkap menyertakan
+    semua titik dan semua jalur tersimpan, meski layer disembunyikan. Peta/worker
+    dimuat sesuai kebutuhan, geometri terpisah dari dashboard, jalur memakai
+    Canvas dan batas ukuran untuk menjaga akses ringan. Lihat
+    [panduan peta/GPS/KMZ dan impor jalur](PANDUAN-PETA-KMZ.md).
 
 **Database lokal:** SQLite bawaan Node (`node:sqlite`), data utama di
 `data/fiberops.db` dengan jurnal WAL/SHM. Tidak memakai Supabase/database eksternal.
@@ -213,7 +219,8 @@ npm run test:render        # hasil: SEMUA HALAMAN TAMPIL NORMAL
 
 Kanvas geografis pada smoke test jsdom diganti renderer sederhana (jsdom tidak
 memiliki layout/SVG peta nyata). Pengujian Leaflet, clustering, tile gagal, dan
-unduhan KMZ sebenarnya berada di `npm run test:map:browser`.
+unduhan KMZ sebenarnya berada di `npm run test:map:browser` dan
+`npm run test:routes:browser` (impor/ekspor worker dan Canvas jalur).
 Uji render menunggu data/cascade yang belum selesai (batas 5 detik), bukan
 hanya jeda tetap setelah klik. Untuk menguji respons lambat tanpa mengubah server:
 `UJI_RENDER_SPLITTER_DELAY_MS=750 npm run test:render`.
@@ -237,10 +244,12 @@ npm run test:dashboard # 31 skenario API/UI: per OLT/card, hitungan, port bawaan
 npm run test:layout   # server tetap jalan hanya dengan file yang disalin Dockerfile
 npm run test:predeploy # 57 pemeriksaan keamanan, restart, bootstrap, backup WAL, preflight
 npm run test:regression # 34 regresi: otorisasi tertunda, simpan atomik, dependency
-npm run test:map      # 104 skenario: koordinat/KMZ, migrasi/API GPS, UI peta
+npm run test:map      # 181 pemeriksaan: peta/GPS/KMZ + impor/store/API/worker/cache jalur
+npm run test:routes   # 77 pemeriksaan jalur saja (bagian dari test:map/npm test)
 # Opt-in: Chromium lokal terpasang; tidak mengunduh browser otomatis:
 CHROMIUM_EXECUTABLE=/usr/bin/chromium npm run test:browser # 18 skenario browser produksi
 CHROMIUM_EXECUTABLE=/usr/bin/chromium npm run test:map:browser # 24 skenario Leaflet/KMZ/GPS nyata
+CHROMIUM_EXECUTABLE=/usr/bin/chromium npm run test:routes:browser # 21 skenario impor/Canvas/worker/mobile
 npm run test:render   # semua halaman ter-render (butuh server demo jalan)
 # Opt-in, hanya lingkungan uji Linux dengan sudo -n; Git/npm/systemctl dimock:
 npm run test:update-native # 15 skenario updater dengan SQLite/API nyata

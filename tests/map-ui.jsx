@@ -121,6 +121,8 @@ export async function run() {
           role,
         },
       });
+    if (route === "/api/route-imports")
+      return response({ version: 1, imports: [] });
     if (route === "/api/map-data")
       return mapError
         ? response({ error: "Snapshot fixture gagal" }, 503)
@@ -173,7 +175,8 @@ export async function run() {
     );
     await wait(
       () =>
-        host.querySelector("h1") && !text().includes("Memuat snapshot titik"),
+        host.querySelector("[data-canvas-points]") ||
+        host.querySelector('[role="alert"]'),
       "Peta belum selesai dimuat",
     );
   }
@@ -193,6 +196,16 @@ export async function run() {
         for (const key of ["olt-1", "odc-1", "odp-1"])
           assert.ok(host.querySelector(`[data-marker="${key}"]`));
         assert.ok(text().includes("Belum ada koordinat (4)"));
+        assert.equal(
+          host.querySelector("[data-canvas-lines]").dataset.canvasLines,
+          "0",
+        );
+        [...host.querySelectorAll("label")]
+          .find((el) =>
+            el.textContent.includes("Koneksi skematis pada peta dan KMZ"),
+          )
+          .querySelector("input")
+          .click();
       },
     );
     await check(
@@ -202,7 +215,11 @@ export async function run() {
           host.querySelector("[data-basemap]").dataset.basemap,
           "false",
         );
-        click([...host.querySelectorAll('input[type="checkbox"]')][1]);
+        click(
+          [...host.querySelectorAll("label")]
+            .find((el) => el.textContent.includes("Aktifkan peta dasar"))
+            .querySelector("input"),
+        );
         await wait(
           () => host.querySelector("[data-basemap]").dataset.basemap === "true",
           "Opt-in basemap tidak diterapkan",
@@ -278,15 +295,27 @@ export async function run() {
     await check(
       "toggle skematis berlaku pada peta dan label ekspor, bukan rute GPS",
       async () => {
-        click([...host.querySelectorAll('input[type="checkbox"]')][0]);
+        click(
+          [...host.querySelectorAll("label")]
+            .find((el) =>
+              el.textContent.includes("Koneksi skematis pada peta dan KMZ"),
+            )
+            .querySelector("input"),
+        );
         await wait(
           () =>
             host.querySelector("[data-canvas-lines]").dataset.canvasLines ===
             "0",
           "Toggle garis gagal",
         );
-        assert.ok(text().includes("bukan rute kabel fisik/GPS"));
-        click([...host.querySelectorAll('input[type="checkbox"]')][0]);
+        assert.ok(text().includes("Mati secara bawaan"));
+        click(
+          [...host.querySelectorAll("label")]
+            .find((el) =>
+              el.textContent.includes("Koneksi skematis pada peta dan KMZ"),
+            )
+            .querySelector("input"),
+        );
       },
     );
     await check(

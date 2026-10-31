@@ -31,3 +31,6 @@ data/
 
 # Artefak uji UI peta (koordinat fixture, bukan inventaris)
 .uji-map/
+
+# Artefak uji cache/race jalur impor
+.uji-routes/

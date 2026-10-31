@@ -3,6 +3,8 @@ import "leaflet/dist/leaflet.css";
 import { MAP_ICONS } from "../lib/map-icons.js";
 import { MAP_TYPES, SCHEMATIC_NOTICE } from "../lib/network-map.js";
 import { coordinateText } from "../lib/coordinates.js";
+import { ROUTE_NOTICE } from "../lib/cable-routes.js";
+const NO_ROUTES = [];
 
 let enginePromise;
 function loadEngine() {
@@ -62,8 +64,27 @@ function connectionPopup(edge) {
   return content;
 }
 
+function routePopup(route, onSelect) {
+  const content = textElement("div", "", "network-map-popup");
+  content.append(
+    textElement("strong", route.name),
+    textElement("p", `Jalur impor #${route.id} · ${route.batch_name}`),
+    textElement("p", route.description || "Tidak ada catatan sumber."),
+    textElement("p", ROUTE_NOTICE),
+  );
+  const button = textElement("button", "Detail jalur", "btn text-xs");
+  button.type = "button";
+  button.addEventListener("click", () => onSelect?.(route));
+  content.append(button);
+  return content;
+}
+
 export default function NetworkMapCanvas({
   points,
+  routes = NO_ROUTES,
+  routeFocus,
+  selectedRouteId,
+  onSelectRoute,
   lines,
   focus,
   fitRevision,
@@ -73,8 +94,11 @@ export default function NetworkMapCanvas({
 }) {
   const container = useRef(null),
     markers = useRef(new Map()),
-    callback = useRef(onSelect);
+    callback = useRef(onSelect),
+    routeCallback = useRef(onSelectRoute),
+    routeLayers = useRef(new Map());
   callback.current = onSelect;
+  routeCallback.current = onSelectRoute;
   const [engine, setEngine] = useState(null),
     [error, setError] = useState(""),
     [tileError, setTileError] = useState(false),
@@ -120,6 +144,14 @@ export default function NetworkMapCanvas({
           });
           clusters.addTo(map);
           const lineLayer = L.layerGroup().addTo(map);
+          map.createPane("cableRoutes");
+          map.getPane("cableRoutes").style.zIndex = "390";
+          const routeRenderer = L.canvas({
+            pane: "cableRoutes",
+            padding: 0.3,
+            tolerance: 6,
+          });
+          const routeLayer = L.layerGroup().addTo(map);
           const resize = () => map.invalidateSize({ pan: false });
           if (typeof ResizeObserver !== "undefined") {
             observer = new ResizeObserver(resize);
@@ -127,7 +159,7 @@ export default function NetworkMapCanvas({
           }
           map._fiberResize = resize;
           window.addEventListener("resize", resize);
-          setEngine({ L, map, clusters, lineLayer });
+          setEngine({ L, map, clusters, lineLayer, routeRenderer, routeLayer });
         } catch (e) {
           if (active) setError(e.message);
           map?.remove();
@@ -145,6 +177,7 @@ export default function NetworkMapCanvas({
         map.remove();
       }
       markers.current.clear();
+      routeLayers.current.clear();
     };
   }, [retry]);
 
@@ -188,15 +221,71 @@ export default function NetworkMapCanvas({
     if (!engine) return;
     const { map, L } = engine;
     map.invalidateSize({ pan: false });
-    if (points.length)
-      map.fitBounds(
-        L.latLngBounds(
-          points.map((n) => [n.coordinates.latitude, n.coordinates.longitude]),
-        ),
-        { padding: [35, 35], maxZoom: 16, animate: false },
-      );
+    const bounds = L.latLngBounds(
+      points.map((n) => [n.coordinates.latitude, n.coordinates.longitude]),
+    );
+    for (const route of routes) {
+      const [w, s, e, n] = route.bounds;
+      bounds.extend([s, w]);
+      bounds.extend([n, e]);
+    }
+    if (bounds.isValid())
+      map.fitBounds(bounds, { padding: [35, 35], maxZoom: 16, animate: false });
     else map.setView([0, 115], 4, { animate: false }); // Ikhtisar, bukan koordinat perangkat.
-  }, [engine, points, fitRevision]);
+  }, [engine, points, routes, fitRevision]);
+
+  useEffect(() => {
+    if (!engine) return;
+    const { L, routeLayer, routeRenderer } = engine;
+    routeLayer.clearLayers();
+    routeLayers.current.clear();
+    for (const route of routes) {
+      const layer = L.polyline(
+        route.coordinates.map(([lon, lat]) => [lat, lon]),
+        {
+          renderer: routeRenderer,
+          color: route.color,
+          weight: 3.5,
+          opacity: 0.92,
+          smoothFactor: 1.5,
+          lineCap: "round",
+          lineJoin: "round",
+        },
+      );
+      layer.bindPopup(
+        () => routePopup(route, (item) => routeCallback.current?.(item)),
+        { maxWidth: 330 },
+      );
+      layer.bindTooltip(() => textElement("span", route.name), {
+        sticky: true,
+      });
+      layer.on("click", () => routeCallback.current?.(route));
+      layer.addTo(routeLayer);
+      routeLayers.current.set(route.id, layer);
+    }
+    return () => {
+      routeLayer.clearLayers();
+      routeLayers.current.clear();
+    };
+  }, [engine, routes]);
+  useEffect(() => {
+    if (!engine || !routeFocus?.bounds) return;
+    const [w, s, e, n] = routeFocus.bounds;
+    engine.map.fitBounds(
+      [
+        [s, w],
+        [n, e],
+      ],
+      { padding: [35, 35], maxZoom: 17, animate: false },
+    );
+  }, [engine, routeFocus]);
+  useEffect(() => {
+    for (const [id, layer] of routeLayers.current)
+      layer.setStyle({
+        weight: id === selectedRouteId ? 6 : 3.5,
+        opacity: id === selectedRouteId ? 1 : 0.92,
+      });
+  }, [engine, routes, selectedRouteId]);
 
   useEffect(() => {
     if (!engine || !focus) return;
@@ -285,6 +374,7 @@ export default function NetworkMapCanvas({
         aria-busy={!engine && !error}
         data-marker-count={engine ? points.length : 0}
         data-connection-count={engine && showConnections ? lines.length : 0}
+        data-route-count={engine ? routes.length : 0}
       />
       {!engine && !error && (
         <div className="network-map-notice" role="status">
@@ -313,9 +403,9 @@ export default function NetworkMapCanvas({
             : "Peta dasar nonaktif · titik sesuai koordinat, tanpa detail jalan."}
         </div>
       )}
-      {engine && !points.length && (
+      {engine && !points.length && !routes.length && (
         <div className="network-map-empty pointer-events-none">
-          Tidak ada koordinat valid pada tampilan ini.
+          Belum ada titik perangkat atau jalur impor pada tampilan ini.
         </div>
       )}
     </div>

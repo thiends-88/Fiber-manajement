@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { CABLE_TYPES, SPLITTER_RATIOS } from "./src/lib/fiber.js";
 import { coordinateUpdate } from "./src/lib/coordinates.js";
+import { createCableRouteStore } from "./server/cable-routes.mjs";
 import { INTERFACE_MODES, defaultInterfaceMode, interfaceDetails } from "./src/lib/interfaces.js";
 import { PASSWORD_HASH_PREFIX, FACTORY_PASSWORD, MAX_PASSWORD_LENGTH, hashPassword, verifyPassword, validNewPassword, requestUrl, sameOriginWrite, sessionCookie, redactedUrl, PRIVATE_HEADERS, createLoginLimiter, trustedProxySet, loginClientIp, canonicalPublicOrigin } from "./server/security.mjs";
 
@@ -359,6 +360,9 @@ try {
   db.exec("ROLLBACK");
   throw new Error(`Migrasi koordinat gagal; data lama tidak direset: ${error.message}`);
 }
+
+// Tabel jalur geografis terpisah; tidak mengubah inventaris/mapping atau akun.
+const cableRouteStore = createCableRouteStore(db, atomicWrite);
 
 // Rotasi satu kali untuk sesi lama yang mungkin pernah bocor lewat URL/log.
 // Metadata autentikasi ini tidak mengubah ID atau tabel inventaris jaringan.
@@ -922,6 +926,18 @@ const server = http.createServer(async (req, res) => {
     const isAdmin = user.role === "admin";
     if (method !== "GET" && !canWrite) {
       return send(req, res, 403, { error: "Hanya admin/operator yang dapat mengubah data" });
+    }
+
+    // Metadata ringan terpisah dari geometri. Tidak ikut dashboard / snapshot inventaris.
+    if (p === "/api/route-imports") {
+      if (method === "GET") return send(req, res, 200, cableRouteStore.index());
+      if (method === "POST") return send(req, res, 201, cableRouteStore.create(requestBody));
+    }
+    const routeImportMatch = p.match(/^\/api\/route-imports\/([1-9]\d*)$/);
+    if (routeImportMatch && Number.isSafeInteger(Number(routeImportMatch[1]))) {
+      const id = Number(routeImportMatch[1]);
+      if (method === "GET") return send(req, res, 200, cableRouteStore.geometry(id));
+      if (method === "DELETE") return send(req, res, 200, cableRouteStore.remove(id));
     }
 
     // Snapshot baca konsisten: titik dan bukti koneksi tidak dicampur dari beberapa request.

@@ -26,8 +26,11 @@
     "test:regression": "node tests/audit-regression-api.mjs && node tests/dependency-security.mjs",
     "test:update-native": "node tests/update-native-uji.mjs",
     "test:map:ui": "vite build --ssr tests/map-ui.jsx --outDir .uji-map --logLevel error && node tests/map-ui.mjs",
-    "test:map": "node tests/map-logic.mjs && node tests/map-api.mjs && npm run test:map:ui",
-    "test:map:browser": "node tests/browser-map.mjs"
+    "test:map": "node tests/map-logic.mjs && node tests/map-api.mjs && npm run test:map:ui && npm run test:routes",
+    "test:map:browser": "node tests/browser-map.mjs",
+    "test:routes:ui": "vite build --ssr tests/route-cache.jsx --outDir .uji-routes --logLevel error && node tests/route-cache.mjs",
+    "test:routes": "node tests/cable-routes.mjs && node tests/route-api.mjs && node tests/route-workers.mjs && npm run test:routes:ui",
+    "test:routes:browser": "node tests/browser-routes.mjs"
   },
   "dependencies": {
     "fflate": "^0.8.3",
@@ -39,7 +42,8 @@
     "pdfjs-dist": "^6.4.299",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-    "react-router-dom": "^7.13.0"
+    "react-router-dom": "^7.13.0",
+    "saxes": "^6.0.0"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.2.1",

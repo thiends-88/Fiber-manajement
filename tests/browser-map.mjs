@@ -357,6 +357,27 @@ try {
       assert.equal(tileRequests, 0);
       assert.match(
         await page.locator("[data-map-summary]").innerText(),
+        /11 titik valid · 3 belum ada koordinat · 0 garis/,
+      );
+      await page
+        .getByText("Opsi lanjutan: hubungan perangkat", { exact: true })
+        .click();
+      assert.equal(
+        await page
+          .getByRole("checkbox", { name: "Koneksi skematis pada peta dan KMZ" })
+          .isChecked(),
+        false,
+      );
+      await page
+        .getByRole("checkbox", { name: "Koneksi skematis pada peta dan KMZ" })
+        .check();
+      await page.waitForFunction(
+        () =>
+          document.querySelector(".network-map-canvas")?.dataset
+            .connectionCount === "10",
+      );
+      assert.match(
+        await page.locator("[data-map-summary]").innerText(),
         /11 titik valid · 3 belum ada koordinat · 10 garis/,
       );
       assert.equal(
@@ -449,9 +470,12 @@ try {
       await mapReady(page, 0);
       assert.ok(
         await page
-          .getByText("Tidak ada koordinat valid pada tampilan ini.", {
-            exact: true,
-          })
+          .getByText(
+            "Belum ada titik perangkat atau jalur impor pada tampilan ini.",
+            {
+              exact: true,
+            },
+          )
           .isVisible(),
       );
       assert.ok(

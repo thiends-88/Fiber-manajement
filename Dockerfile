@@ -23,6 +23,7 @@ COPY --from=build /app/server.mjs ./
 COPY --from=build /app/src/lib/fiber.js ./src/lib/fiber.js
 COPY --from=build /app/src/lib/interfaces.js ./src/lib/interfaces.js
 COPY --from=build /app/src/lib/coordinates.js ./src/lib/coordinates.js
+COPY --from=build /app/src/lib/cable-routes.js ./src/lib/cable-routes.js
 COPY --from=build /app/src/lib/interface-routes.js ./src/lib/interface-routes.js
 COPY --from=build /app/server ./server
 COPY --from=build /app/scripts ./scripts
