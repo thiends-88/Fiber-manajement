@@ -47,7 +47,7 @@ export async function api(path, { method = "GET", body, timeoutMs = 30000 } = {}
     throw error;
   } finally { clearTimeout(timer); }
   if (!res.ok) {
-    if (res.status === 401 && !path.startsWith("/api/login") && version === sessionVersion && token === getToken()) {
+    if (res.status === 401 && !path.startsWith("/api/login") && path !== "/api/logout" && version === sessionVersion && token === getToken()) {
       clearSession(version);
       try { window.dispatchEvent(new CustomEvent("arena:unauthorized")); } catch { /* tanpa DOM */ }
     }
@@ -71,6 +71,17 @@ export async function login(email, password) {
 }
 export async function logout() {
   const version = sessionVersion;
-  try { await api("/api/logout", { method: "POST" }); } catch { /* tetap keluar jika jaringan terputus */ }
-  clearSession(version);
+  try {
+    const data = await api("/api/logout", { method: "POST" });
+    if (data?.ok !== true) throw new ApiError("Respons keluar tidak valid", 502);
+  } catch (error) {
+    if (version !== sessionVersion) return false;
+    // JavaScript tidak dapat menghapus cookie HttpOnly. Jangan berpura-pura
+    // keluar atau membuang token untuk retry ketika pencabutan belum pasti.
+    throw new ApiError(
+      "Keluar belum dapat dikonfirmasi. Periksa koneksi lalu coba lagi. Jangan tinggalkan perangkat sebelum selesai.",
+      error.status >= 400 ? error.status : 502,
+    );
+  }
+  return clearSession(version);
 }

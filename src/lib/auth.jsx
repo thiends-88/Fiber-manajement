@@ -47,8 +47,10 @@ export function AuthProvider({ children }) {
   }
   async function signOut() {
     const request = ++generation.current;
-    await apiLogout();
-    if (request === generation.current) { setUser(null); setError(null); setStatus("ready"); }
+    const confirmed = await apiLogout();
+    if (confirmed === false || request !== generation.current) return false;
+    setUser(null); setError(null); setStatus("ready");
+    return true;
   }
   return <AuthCtx.Provider value={{ user, status, error, retry: recover, signIn, signOut }}>{children}</AuthCtx.Provider>;
 }

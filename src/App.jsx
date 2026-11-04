@@ -1,3 +1,4 @@
+import { Component, lazy, Suspense } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { AuthStatus, useAuth } from "./lib/auth.jsx";
 import Layout from "./components/Layout.jsx";
@@ -10,6 +11,29 @@ import Topologi from "./pages/Topologi.jsx";
 import Mapping from "./pages/Mapping.jsx";
 import Laporan from "./pages/Laporan.jsx";
 import Users from "./pages/Users.jsx";
+// GIS, panel dan CSS peta tidak membebani halaman inventaris/dashboard.
+const Peta = lazy(() => import("./pages/Peta.jsx"));
+class PetaPageBoundary extends Component {
+  state = { error: false };
+  static getDerivedStateFromError() {
+    return { error: true };
+  }
+  render() {
+    return this.state.error ? (
+      <div className="card p-4" role="alert">
+        <p>
+          Halaman peta belum dapat dimuat. Muat ulang untuk mengambil versi
+          aplikasi terbaru.
+        </p>
+        <button className="btn mt-3" onClick={() => window.location.reload()}>
+          Muat ulang halaman
+        </button>
+      </div>
+    ) : (
+      this.props.children
+    );
+  }
+}
 
 function Protected({ children, requireAdmin = false }) {
   const { user, status } = useAuth();
@@ -19,7 +43,8 @@ function Protected({ children, requireAdmin = false }) {
   return <Layout>{children}</Layout>;
 }
 
-export default function App() {
+// Kanvas dapat diganti harness DOM; runtime memakai Leaflet lazy bawaan Peta.
+export default function App({ MapCanvasComponent } = {}) {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
@@ -70,6 +95,18 @@ export default function App() {
         element={
           <Protected>
             <Mapping />
+          </Protected>
+        }
+      />
+      <Route
+        path="/peta"
+        element={
+          <Protected>
+            <PetaPageBoundary>
+              <Suspense fallback={<p role="status">Memuat halaman peta…</p>}>
+                <Peta MapCanvasComponent={MapCanvasComponent} />
+              </Suspense>
+            </PetaPageBoundary>
           </Protected>
         }
       />

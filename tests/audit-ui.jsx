@@ -255,6 +255,32 @@ export async function run({ request, admin, reader, fixtures: [A, B], hardware: 
         assert.ok(path?.textContent.includes(own.odp.name)); assert.ok(!path.textContent.includes(other.odp.name));
       }
     });
+    await check("pemilih tujuan ODP tidak menawarkan dirinya sendiri atau arah ODC yang dilarang API", async () => {
+      await mount(`/odp?odp=${A.p.id}`);
+      await waitFor(() => host.querySelector('button[title^="Output 1"]') && !host.querySelector('button[title^="Output 1"]').disabled);
+      click(host.querySelector('button[title^="Output 1"]'));
+      await waitFor(() => field("Arahkan output ini ke"));
+      const direction = field("Arahkan output ini ke");
+      assert.ok(![...direction.options].some(o => o.value === "odc"));
+      await change(direction, "odp");
+      const targets = [...field("Pilih ODP tujuan").options].map(o => o.value);
+      assert.ok(!targets.includes(String(A.p.id)));
+      assert.ok(targets.includes(String(B.p.id)), "ODP lain tetap tersedia");
+    });
+    await check("gagal logout memberi peringatan, mempertahankan sesi untuk retry, lalu benar-benar keluar", async () => {
+      const fresh = await request("POST", "/api/login", {email: admin.user.email, password: "Arena123!"});
+      session(fresh);
+      fetchWith((u, o) => urlOf(u).pathname === "/api/logout" ? Promise.resolve(new Response(JSON.stringify({error: "Simulasi jaringan gagal"}), {status: 503})) : originalFetch(u, o));
+      await mount("/dashboard"); await waitFor(() => button("Keluar")); click(button("Keluar"));
+      await waitFor(() => text().includes("Keluar belum dapat dikonfirmasi"));
+      assert.ok(!host.querySelector("#login-email"));
+      assert.equal(localStorage.getItem("fiberops_arena_token"), fresh.token);
+      assert.ok(!button("Keluar").disabled);
+      fetchWith(originalFetch); click(button("Keluar"));
+      await waitFor(() => host.querySelector("#login-email"));
+      assert.equal(localStorage.getItem("fiberops_arena_token"), null);
+      await mount("/dashboard"); await waitFor(() => host.querySelector("#login-email"));
+    });
     await check("dua notifikasi dari komponen berbeda memiliki timer independen", async () => {
       await mount("/", <ToastHarness />); await waitFor(() => button("Toast A")); click(button("Toast A")); await delay(50); click(button("Toast B"));
       await waitFor(() => text().includes("Pesan-A") && text().includes("Pesan-B")); await delay(3100);

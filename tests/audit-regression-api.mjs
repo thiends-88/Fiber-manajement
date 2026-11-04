@@ -697,6 +697,335 @@ try {
       }
     },
   );
+  await check(
+    "email akun di atas batas login ditolak tanpa membuat akun terkunci",
+    async () => {
+      const before = sql((db) =>
+        db
+          .prepare(
+            "SELECT id,email,password_hash,full_name,role FROM users ORDER BY id",
+          )
+          .all(),
+      );
+      const email = "a".repeat(245) + "@audit.test";
+      assert.ok(email.length > 254);
+      await call(
+        "POST",
+        "/api/users",
+        {
+          email,
+          password: "AuditPrivatePassword123!",
+          full_name: "Tidak boleh dibuat",
+          role: "user",
+        },
+        400,
+      );
+      assert.deepEqual(
+        sql((db) =>
+          db
+            .prepare(
+              "SELECT id,email,password_hash,full_name,role FROM users ORDER BY id",
+            )
+            .all(),
+        ),
+        before,
+      );
+    },
+  );
+  await check(
+    "batas 254 email konsisten setelah trim/huruf kecil pada pembuatan dan login",
+    async () => {
+      const email = "a".repeat(243) + "@audit.test",
+        password = "AuditPrivatePassword123!";
+      assert.equal(email.length, 254);
+      const input = `  ${email.toUpperCase()}  `;
+      const created = await call("POST", "/api/users", {
+        email: input,
+        password,
+        full_name: "Batas valid",
+        role: "user",
+      });
+      assert.equal(created.email, email);
+      const logged = await call(
+        "POST",
+        "/api/login",
+        { email: input, password },
+        200,
+        null,
+      );
+      assert.equal(logged.user.id, created.id);
+      assert.equal(logged.user.role, "user");
+      await call("POST", "/api/logout", undefined, 200, logged.token);
+    },
+  );
+  await check(
+    "email yang memanjang setelah huruf kecil juga ditolak sebelum insert",
+    async () => {
+      const email = "İ".repeat(125) + "@audit.test";
+      assert.ok(email.length < 254 && email.toLowerCase().length > 254);
+      const before = sql(
+        (db) => db.prepare("SELECT COUNT(*) AS n FROM users").get().n,
+      );
+      await call(
+        "POST",
+        "/api/users",
+        {
+          email,
+          password: "AuditPrivatePassword123!",
+          full_name: "Tidak boleh dibuat",
+          role: "user",
+        },
+        400,
+      );
+      assert.equal(
+        sql((db) => db.prepare("SELECT COUNT(*) AS n FROM users").get().n),
+        before,
+      );
+    },
+  );
+  async function odpNetwork(count = 3) {
+    const { olt } = await hardware();
+    const odc = await call("POST", "/api/odcs", {
+      name: `Audit ODC loop ${++serial}`,
+      olt_id: olt.id,
+      cable_type: "48_core_8_tube",
+    });
+    const points = [];
+    for (let i = 0; i < count; i++)
+      points.push(
+        await call("POST", "/api/odps", {
+          name: `Audit ODP loop ${++serial}`,
+          odc_id: odc.id,
+          cable_type: "12_core_2_tube",
+        }),
+      );
+    const all = await call("GET", "/api/splitters");
+    return {
+      odc,
+      points,
+      splitters: points.map((p) => all.find((s) => s.odp_id === p.id)),
+    };
+  }
+  const output = (s, port = 1) => s.outputs.find((o) => o.port === port).id;
+  const targetOdp = (o, p, status = 200) =>
+    call(
+      "PATCH",
+      `/api/splitter-outputs/${o}`,
+      { target_type: "odp", target_id: p.id },
+      status,
+    );
+  const savedOutput = (id) =>
+    sql((db) =>
+      db.prepare("SELECT * FROM splitter_outputs WHERE id=?").get(id),
+    );
+  await check(
+    "output splitter ODP tidak boleh kembali ke ODP miliknya sendiri; penolakan atomik",
+    async () => {
+      const {
+          points: [a],
+          splitters: [sa],
+        } = await odpNetwork(1),
+        id = output(sa);
+      const before = savedOutput(id);
+      const result = await targetOdp(id, a, 400);
+      assert.match(result.error, /lingkaran|dirinya sendiri/i);
+      assert.deepEqual(savedOutput(id), before);
+    },
+  );
+  await check(
+    "lingkaran dua ODP ditolak tanpa menghilangkan sambungan yang sudah benar",
+    async () => {
+      const {
+        points: [a, b],
+        splitters: [sa, sb],
+      } = await odpNetwork(2);
+      await targetOdp(output(sa), b);
+      const before = savedOutput(output(sb));
+      await targetOdp(output(sb), a, 400);
+      assert.deepEqual(savedOutput(output(sb)), before);
+      assert.equal(savedOutput(output(sa)).target_odp_id, b.id);
+    },
+  );
+  await check(
+    "lingkaran ODP multihop/cabang ditolak, jalur lanjutan sah dan pelepasan tetap diizinkan",
+    async () => {
+      const {
+        points: [a, b, c, d],
+        splitters: [sa, sb, sc, sd],
+      } = await odpNetwork(4);
+      await targetOdp(output(sa), b);
+      await targetOdp(output(sb), c);
+      await targetOdp(output(sc), d);
+      await targetOdp(output(sd), a, 400);
+      await targetOdp(output(sc, 2), a, 400);
+      // Menyimpan target yang sama bukan lingkaran baru; catatan tidak mengubah rute.
+      await targetOdp(output(sa), b);
+      await call("PATCH", `/api/splitter-outputs/${output(sb)}`, {
+        notes: "Catatan tetap tersimpan",
+      });
+      assert.equal(savedOutput(output(sb)).target_odp_id, c.id);
+      await call("PATCH", `/api/splitter-outputs/${output(sb)}`, {
+        target_type: "",
+      });
+      await targetOdp(output(sd), a);
+      assert.equal(savedOutput(output(sb)).target_odp_id, null);
+    },
+  );
+  await check(
+    "ODC menuju ODP tetap sah dan bukan salah dianggap lingkaran berdasarkan induk administratif",
+    async () => {
+      const {
+        odc,
+        points: [a],
+      } = await odpNetwork(1);
+      const root = await call("POST", "/api/splitters", {
+        odc_id: odc.id,
+        name: "Audit akar ODC",
+        ratio: "1:8",
+        input_core: 1,
+      });
+      await targetOdp(output(root), a);
+      assert.equal(savedOutput(output(root)).target_odp_id, a.id);
+    },
+  );
+  await check(
+    "logout tanpa sesi/diulang tetap menghapus cookie dan tidak mencabut sesi browser lain",
+    async () => {
+      const a = await actor("user");
+      for (let i = 0; i < 2; i++) {
+        const res = await fetch(BASE + "/api/logout", {
+          method: "POST",
+          headers: { origin: BASE },
+        });
+        assert.equal(res.status, 200);
+        assert.deepEqual(await res.json(), { ok: true });
+        assert.match(
+          res.headers.get("set-cookie") || "",
+          /fiberops_token=;.*Max-Age=0/,
+        );
+      }
+      assert.equal(
+        (await request("GET", "/api/me", undefined, a.token)).status,
+        200,
+      );
+    },
+  );
+  await check(
+    "logout mencabut hanya token header/cookie yang dikirim, bukan seluruh sesi pengguna",
+    async () => {
+      const a = await actor("user"),
+        sessions = [a];
+      for (let i = 0; i < 3; i++)
+        sessions.push(
+          await call(
+            "POST",
+            "/api/login",
+            { email: a.email, password: "ActorPrivatePassword123!" },
+            200,
+            null,
+          ),
+        );
+      const res = await fetch(BASE + "/api/logout", {
+        method: "POST",
+        headers: {
+          origin: BASE,
+          authorization: `Bearer ${sessions[0].token}`,
+          "x-fiberops-token": sessions[1].token,
+          cookie: `fiberops_token=${sessions[2].token}`,
+        },
+      });
+      assert.equal(res.status, 200);
+      for (const session of sessions.slice(0, 3))
+        assert.equal(
+          (await request("GET", "/api/me", undefined, session.token)).status,
+          401,
+        );
+      assert.equal(
+        (await request("GET", "/api/me", undefined, sessions[3].token)).status,
+        200,
+      );
+    },
+  );
+  await check(
+    "header invalid tidak menghalangi pembersihan cookie sah saat logout; GET tetap tidak fallback akun",
+    async () => {
+      const a = await actor("user"),
+        headers = {
+          authorization: "Bearer invalid",
+          cookie: `fiberops_token=${a.token}`,
+          origin: BASE,
+        };
+      assert.equal((await fetch(BASE + "/api/me", { headers })).status, 401);
+      const res = await fetch(BASE + "/api/logout", {
+        method: "POST",
+        headers,
+      });
+      assert.equal(res.status, 200);
+      assert.match(res.headers.get("set-cookie") || "", /Max-Age=0/);
+      assert.equal(
+        (await request("GET", "/api/me", undefined, a.token)).status,
+        401,
+      );
+    },
+  );
+  await check(
+    "kegagalan pencabutan token kedua me-rollback logout dan tidak mengirim cookie sukses",
+    async () => {
+      const a = await actor("user");
+      const b = await call(
+        "POST",
+        "/api/login",
+        { email: a.email, password: "ActorPrivatePassword123!" },
+        200,
+        null,
+      );
+      assert.match(b.token, /^[A-Za-z0-9_-]+$/);
+      sql((db) =>
+        db.exec(
+          `CREATE TRIGGER audit_fail_logout BEFORE DELETE ON sessions WHEN OLD.token='${b.token}' BEGIN SELECT RAISE(ABORT, 'Synthetic logout failure'); END`,
+        ),
+      );
+      try {
+        const res = await fetch(BASE + "/api/logout", {
+          method: "POST",
+          headers: {
+            origin: BASE,
+            authorization: `Bearer ${a.token}`,
+            cookie: `fiberops_token=${b.token}`,
+          },
+        });
+        assert.equal(res.status, 500);
+        assert.equal(res.headers.get("set-cookie"), null);
+        for (const session of [a, b])
+          assert.equal(
+            (await request("GET", "/api/me", undefined, session.token)).status,
+            200,
+          );
+      } finally {
+        sql((db) => db.exec("DROP TRIGGER audit_fail_logout"));
+      }
+    },
+  );
+  await check(
+    "logout lintas-origin tidak menghapus cookie atau sesi pemilik",
+    async () => {
+      const a = await actor("user");
+      const res = await fetch(BASE + "/api/logout", {
+        method: "POST",
+        headers: {
+          origin: "https://foreign.test",
+          authorization: `Bearer ${a.token}`,
+          cookie: `fiberops_token=${a.token}`,
+        },
+      });
+      assert.equal(res.status, 403);
+      assert.equal(res.headers.get("set-cookie"), null);
+      assert.equal(
+        (await request("GET", "/api/me", undefined, a.token)).status,
+        200,
+      );
+    },
+  );
   console.log(`\nAUDIT REGRESI API: ${passed} lulus, ${failed} gagal.`);
   if (failed) process.exitCode = 1;
 } finally {

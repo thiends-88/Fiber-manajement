@@ -1,5 +1,8 @@
+import CoordinateFields from "../components/CoordinateFields.jsx";
+import { coordinateForm } from "../lib/coordinates.js";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Network, Pencil, Plus, Trash2 } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
 import { api } from "../lib/api.js";
 import { useAuth } from "../lib/auth.jsx";
 import { Card, Field, Modal, PageHeader, SearchBox, Toast, matchesQuery, useToast } from "../components/ui.jsx";
@@ -8,7 +11,7 @@ import SplitterManager from "../components/SplitterManager.jsx";
 import OdpInterfaceOrigins from "../components/OdpInterfaceOrigins.jsx";
 import { CABLE_TYPES, getCableInfo } from "../lib/fiber.js";
 
-const empty = { name: "", odc_id: "", location: "", cable_type: CABLE_TYPES[4].value, notes: "" };
+const empty = { ...coordinateForm(), name: "", odc_id: "", location: "", cable_type: CABLE_TYPES[4].value, notes: "" };
 
 export default function Odps() {
   const { user } = useAuth();
@@ -17,7 +20,9 @@ export default function Odps() {
   const [odps, setOdps] = useState([]);
   const [query, setQuery] = useState("");
   const [odcs, setOdcs] = useState([]);
-  const [selectedId, setSelectedId] = useState(null);
+  const [params, setParams] = useSearchParams();
+  const selectedId = Number(params.get("odp")) || null;
+  const setSelectedId = id => setParams(id ? { odp: String(id) } : {});
   const submitBusy = useRef(false);
   const [saving, setSaving] = useState(false);
   const [modal, setModal] = useState(null);
@@ -136,7 +141,7 @@ export default function Odps() {
                         className="btn px-2 py-1"
                         title={`Edit ODP ${d.name}`}
                         onClick={() => {
-                          setForm({ name: d.name, odc_id: d.odc_id, location: d.location || "", cable_type: d.cable_type, notes: d.notes || "" });
+                          setForm({ ...coordinateForm(d), name: d.name, odc_id: d.odc_id, location: d.location || "", cable_type: d.cable_type, notes: d.notes || "" });
                           setModal({ mode: "edit", odp: d });
                         }}
                       >
@@ -207,6 +212,7 @@ export default function Odps() {
               placeholder="mis. Tiang depan pasar atau -0.7912, 100.6488"
             />
           </Field>
+          <CoordinateFields form={form} onChange={setForm} />
           <Field label="Catatan">
             <textarea className="input" rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
           </Field>

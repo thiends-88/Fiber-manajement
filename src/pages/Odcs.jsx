@@ -1,3 +1,5 @@
+import CoordinateFields from "../components/CoordinateFields.jsx";
+import { coordinateForm } from "../lib/coordinates.js";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { interfaceLabel } from "../lib/interfaces.js";
@@ -10,7 +12,7 @@ import CoreManager from "../components/CoreManager.jsx";
 import SplitterManager from "../components/SplitterManager.jsx";
 import { CABLE_TYPES, getCableInfo } from "../lib/fiber.js";
 
-const empty = { name: "", olt_id: "", location: "", cable_type: CABLE_TYPES[0].value, feeder_port_ids: [], notes: "" };
+const empty = { ...coordinateForm(), name: "", olt_id: "", location: "", cable_type: CABLE_TYPES[0].value, feeder_port_ids: [], notes: "" };
 
 export default function Odcs() {
   const { user } = useAuth();
@@ -89,7 +91,7 @@ export default function Odcs() {
   const selected = odcs.find((d) => d.id === selectedId);
   useEffect(() => {
     if (params.get("edit") !== "1" || !selected || !canWrite) return;
-    setForm({ name: selected.name, olt_id: selected.olt_id, location: selected.location || "",
+    setForm({ ...coordinateForm(selected), name: selected.name, olt_id: selected.olt_id, location: selected.location || "",
       cable_type: selected.cable_type, notes: selected.notes || "",
       feeder_port_ids: feederPorts.filter((f) => f.odc_id === selected.id).map((f) => f.port_id) });
     setModal({ mode: "edit", odc: selected });
@@ -206,7 +208,7 @@ export default function Odcs() {
                         title={`Edit ODC ${d.name}`}
                         onClick={() => {
                           setForm({
-                            name: d.name, olt_id: d.olt_id, location: d.location || "",
+                            ...coordinateForm(d), name: d.name, olt_id: d.olt_id, location: d.location || "",
                             cable_type: d.cable_type, notes: d.notes || "",
                             feeder_port_ids: feederOf(d.id).map((f) => f.port_id),
                           });
@@ -308,6 +310,7 @@ export default function Odcs() {
               placeholder="mis. Perempatan Kota atau -0.7893, 100.6512"
             />
           </Field>
+          <CoordinateFields form={form} onChange={setForm} />
           <Field label="Catatan">
             <textarea className="input" rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
           </Field>

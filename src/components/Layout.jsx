@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import {
   Boxes,
@@ -7,6 +7,7 @@ import {
   Link2,
   LogOut,
   Menu,
+  MapPinned,
   Network,
   PanelLeftClose,
   PanelLeftOpen,
@@ -27,6 +28,7 @@ const NAV = [
   { to: "/mapping", label: "Mapping Core", icon: Link2 },
   // Alur Core diletakkan tepat setelah Mapping Core sebagai alur visualnya.
   { to: "/", label: "Alur Core", icon: Workflow, end: true },
+  { to: "/peta", label: "Peta Jaringan / KMZ", icon: MapPinned },
   { to: "/laporan", label: "Laporan", icon: FileText },
 ];
 
@@ -50,6 +52,20 @@ export default function Layout({ children }) {
   const navigate = useNavigate();
   const location = useLocation();
   const nav = user?.role === "admin" ? [...NAV, { to: "/users", label: "User", icon: UsersIcon }] : NAV;
+  const logoutPending = useRef(false);
+  const [signingOut, setSigningOut] = useState(false);
+  const [logoutError, setLogoutError] = useState("");
+  async function handleSignOut() {
+    if (logoutPending.current) return;
+    logoutPending.current = true; setSigningOut(true); setLogoutError("");
+    try {
+      if (await signOut() !== false) navigate("/login");
+    } catch (error) {
+      setLogoutError(error.message);
+    } finally {
+      logoutPending.current = false; setSigningOut(false);
+    }
+  }
 
   // Desktop: bilah samping diciutkan (ikon saja). Diingat antar kunjungan.
   const [collapsed, setCollapsed] = useState(() => {
@@ -163,12 +179,11 @@ export default function Layout({ children }) {
           <button
             className="btn w-full"
             title="Keluar"
-            onClick={async () => {
-              await signOut();
-              navigate("/login");
-            }}
+            aria-busy={signingOut}
+            disabled={signingOut}
+            onClick={handleSignOut}
           >
-            <LogOut size={14} className="shrink-0" /> <span className="btn-label">Keluar</span>
+            <LogOut size={14} className="shrink-0" /> <span className="btn-label">{signingOut ? "Keluar…" : "Keluar"}</span>
           </button>
         </div>
       </aside>
@@ -203,6 +218,12 @@ export default function Layout({ children }) {
           </div>
           <ThemeMenu />
         </header>
+        {logoutError && (
+          <div role="alert" className="mx-4 mt-4 rounded-lg border border-amber-400/40 bg-panel p-3 text-sm sm:mx-6">
+            <p>{logoutError}</p>
+            <button type="button" className="btn mt-2" onClick={handleSignOut} disabled={signingOut}>Coba keluar lagi</button>
+          </div>
+        )}
         <div className="p-4 sm:p-6">{children}</div>
       </main>
     </div>

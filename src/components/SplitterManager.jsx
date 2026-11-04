@@ -426,7 +426,7 @@ export default function SplitterManager({ parentType, parentId, title, onChanged
                 <option value="">Kosong (belum dipakai)</option>
                 <option value="odp">ODP (tujuan output)</option>
                 <option value="splitter">Splitter lain (cascade)</option>
-                <option value="odc">ODC lain (ke splitter penerima)</option>
+                {!isOdp && <option value="odc">ODC lain (ke splitter penerima)</option>}
               </select>
             </Field>
             {outForm.target_type === "odp" && (
@@ -438,7 +438,7 @@ export default function SplitterManager({ parentType, parentId, title, onChanged
                     onChange={(e) => setOutForm({ ...outForm, target_id: e.target.value })}
                   >
                     <option value="" disabled>Pilih ODP…</option>
-                    {odps.map((p) => (
+                    {odps.filter((p) => !isOdp || Number(p.id) !== Number(parentId)).map((p) => (
                       <option key={p.id} value={p.id}>{p.name} — berada di {p.odc_name}</option>
                     ))}
                   </select>

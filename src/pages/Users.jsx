@@ -130,6 +130,7 @@ export default function Users() {
             <input
               className="input"
               type="email"
+              maxLength={254}
               value={form.email}
               onChange={(e) => setForm({ ...form, email: e.target.value })}
               required

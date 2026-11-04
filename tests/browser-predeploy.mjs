@@ -109,6 +109,7 @@ try{
     await page.goto(BASE + "/users");
     await page.getByRole("button", { name: "Tambah User", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "Tambah User", exact: true });
+    assert.equal(await dialog.getByLabel("Email", { exact: true }).getAttribute("maxlength"), "254");
     await dialog.getByLabel("Email", { exact: true }).fill("pending@browser.test");
     await dialog.getByLabel("Password (min. 8 karakter)", { exact: true }).fill("PendingPrivatePassword123!");
     await dialog.getByLabel("Nama Lengkap", { exact: true }).fill("Pengguna pending audit");
@@ -135,6 +136,27 @@ try{
     await page.getByLabel("OLT laporan interface",{exact:true}).selectOption(String(f.A.id));const worker=page.waitForResponse(r=>r.url().includes("pdf.worker")&&r.url().endsWith(".mjs"));await page.getByRole("button",{name:"Lihat PDF",exact:true}).click();const response=await worker;assert.match(response.headers()["content-type"],/javascript/);await page.locator('canvas').first().waitFor({timeout:20000});assert.ok(await page.locator('canvas').first().evaluate(c=>c.width>0&&c.height>0));assert.equal(await page.getByText(/Pratinjau gagal/).count(),0);
     const downloading=page.waitForEvent("download");await page.getByRole("link",{name:"Unduh",exact:true}).click();const downloaded=await downloading;assert.equal(fs.readFileSync(await downloaded.path()).subarray(0,5).toString(),"%PDF-");await page.screenshot({path:path.join(artifacts,"pdf-production.png"),fullPage:true});await page.getByRole("button",{name:"Tutup pratinjau",exact:true}).click();
   });
+  await check("form ODP menolak loop dengan pesan jelas, data tetap utuh, dan koreksi dapat disimpan", async () => {
+    const create = name => request("POST", "/api/odps", {name, odc_id: f.da.id, cable_type: "12_core_2_tube"});
+    const a = await create("ODP-LOOP-AUDIT-A"), b = await create("ODP-LOOP-AUDIT-B");
+    const splitters = await request("GET", "/api/splitters"), sa = splitters.find(s => s.odp_id === a.id), sb = splitters.find(s => s.odp_id === b.id);
+    await request("PATCH", `/api/splitter-outputs/${sa.outputs[0].id}`, {target_type: "odp", target_id: b.id});
+    await page.goto(BASE + `/odp?odp=${b.id}`);
+    await page.getByTitle("Output 1 (belum diarahkan)", {exact: true}).click();
+    const dialog = page.getByRole("dialog"), direction = dialog.getByLabel("Arahkan output ini ke", {exact: true});
+    assert.equal(await direction.locator('option[value="odc"]').count(), 0);
+    await direction.selectOption("odp");
+    const target = dialog.getByLabel("Pilih ODP tujuan", {exact: true});
+    assert.equal(await target.locator(`option[value="${b.id}"]`).count(), 0);
+    await target.selectOption(String(a.id));
+    await dialog.getByRole("button", {name: "Simpan Arah Output", exact: true}).click();
+    await page.getByRole("alert").filter({hasText: "lingkaran antar-ODP"}).waitFor();
+    assert.ok(await dialog.isVisible()); assert.equal(await target.inputValue(), String(a.id));
+    const saved = (await request("GET", `/api/splitters?odp_id=${b.id}`)).find(s => s.id === sb.id);
+    assert.equal(saved.outputs[0].target_odp_id, null);
+    await direction.selectOption(""); await dialog.getByRole("button", {name: "Simpan Arah Output", exact: true}).click();
+    await dialog.waitFor({state: "hidden"});
+  });
   await check("menu, accordion dan dashboard mobile dapat dipakai tanpa overflow halaman",async()=>{await page.setViewportSize({width:390,height:844});await page.goto(BASE+"/dashboard");const device=page.locator(`[data-olt-device="${f.A.id}"]`);await device.waitFor();assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));await device.locator("summary").click();assert.equal(await device.getAttribute("open"),null);await device.locator("summary").click();await page.getByRole("button",{name:"Buka menu",exact:true}).click();await page.getByRole("button",{name:"Tutup menu",exact:true}).click();await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:path.join(artifacts,"dashboard-mobile.png"),fullPage:true});});
   await check("browser Origin asing dengan cookie valid mendapat 403 tanpa menambah inventaris",async()=>{
     attacker=http.createServer((req,res)=>{res.writeHead(200,{"content-type":"text/html"});res.end("<!doctype html><title>Uji Origin asing</title>");});await new Promise(resolve=>attacker.listen(PORT+3,"127.0.0.1",resolve));const foreign=await desktop.newPage();await foreign.goto(ATTACKER);const before=await request("GET","/api/olts");const incoming=foreign.waitForResponse(BASE+"/api/olts");await foreign.evaluate(base=>fetch(base+"/api/olts",{method:"POST",mode:"no-cors",credentials:"include",headers:{"content-type":"text/plain"},body:JSON.stringify({name:"Tidak boleh dibuat oleh CSRF"})}),BASE);const response=await incoming;assert.equal(response.status(),403);assert.ok((await response.request().allHeaders()).cookie);assert.equal((await request("GET","/api/olts")).length,before.length);await foreign.close();
@@ -147,6 +169,35 @@ try{
     // Header khusus dikirim SDK; fetch tanpa SDK/header di proxy yang sama memang 401.
     assert.equal(await p.evaluate(async()=> (await fetch("/api/me")).status),401);
     await p.goto(BASE+"/dashboard");await p.locator(`[data-olt-device="${f.A.id}"]`).waitFor();await filtered.close();debugPage=page;
+  });
+  await check("logout gagal tidak pura-pura keluar; retry membersihkan cookie HttpOnly dan tidak memutus browser lain", async () => {
+    const ctx = await context({viewport: {width: 1280, height: 900}}), p = await ctx.newPage(); debugPage = p;
+    await loginPage(p);
+    const tokenBefore = await p.evaluate(() => localStorage.getItem("fiberops_arena_token"));
+    let arrived, calls = 0;
+    const seen = new Promise(resolve => {arrived = resolve;});
+    const gate = new Promise(resolve => {releasePatch = resolve;});
+    await p.route(BASE + "/api/logout", async route => {
+      calls++; arrived(); await gate;
+      await route.fulfill({status: 503, contentType: "application/json", body: JSON.stringify({error: "Jaringan uji gagal"})});
+    });
+    await p.getByRole("button", {name: "Keluar", exact: true}).click(); await seen;
+    assert.ok(await p.getByTitle("Keluar", {exact: true}).isDisabled());
+    await p.getByTitle("Keluar", {exact: true}).dispatchEvent("click"); assert.equal(calls, 1);
+    releasePatch(); releasePatch = null;
+    await p.getByRole("alert").filter({hasText: "Keluar belum dapat dikonfirmasi"}).waitFor();
+    assert.equal(await p.evaluate(() => localStorage.getItem("fiberops_arena_token")), tokenBefore);
+    assert.ok((await ctx.cookies()).find(c => c.name === "fiberops_token")?.httpOnly);
+    assert.equal((await p.request.get(BASE + "/api/me")).status(), 200);
+    await p.unroute(BASE + "/api/logout");
+    await p.getByRole("button", {name: "Coba keluar lagi", exact: true}).click();
+    await p.getByLabel("Email", {exact: true}).waitFor();
+    assert.equal(await p.evaluate(() => localStorage.getItem("fiberops_arena_token")), null);
+    assert.equal((await ctx.cookies()).find(c => c.name === "fiberops_token"), undefined);
+    assert.equal((await p.request.get(BASE + "/api/me")).status(), 401);
+    await p.reload(); await p.getByLabel("Email", {exact: true}).waitFor();
+    await request("GET", "/api/me"); // sesi terpisah yang tidak dikirim saat logout tetap hidup.
+    await ctx.close(); debugPage = page;
   });
   await check("request UI tidak menaruh token pada URL dan tidak ada exception JavaScript",()=>{assert.ok(requests.length>20);assert.ok(requests.every(r=>![...new URL(r.url()).searchParams.keys()].some(k=>k.toLowerCase()==="token")));assert.deepEqual(exceptions,[]);});
   console.log(`\nBROWSER: ${passed} pemeriksaan lulus.\n`);
