@@ -102,6 +102,23 @@ lapangan.
     fixed-port ditampilkan sebagai port bawaan, bukan card fisik fiktif. Lihat
     [cara membaca angkanya](PANDUAN-INTERFACE.md#ringkasan-perangkat-olt-di-dashboard).
 
+11. **Peta Jaringan / KMZ** — peta **citra satelit Esri** untuk seluruh OLT, ODC, dan ODP
+    yang memiliki GPS valid, termasuk titik yang belum dipetakan sumbernya. Ikon
+    dibedakan, titik bertumpuk dikelompokkan, tersedia detail/filter, **Tampilkan
+    Semua Titik**, **Peta layar penuh** (keluar dengan tombol/Esc), dan
+    **Unduh KMZ Lengkap** untuk Google Earth. Kolom Lokasi lama
+    tetap disimpan; GPS dapat diisi terpisah atau dinonaktifkan tanpa menghapus
+    alamat. **Impor jalur KMZ/KML/XML/CSV** dengan pratinjau dan konfirmasi,
+    warna/belokan sumber, tampil/sembunyi/fokus/hapus per kumpulan, serta detail
+    segmen. Koneksi skematis **dihapus dari peta dan KMZ**; mapping tetap utuh. Jalur
+    impor **tidak membuktikan sambungan port/core**. KMZ lengkap menyertakan
+    semua titik dan semua jalur tersimpan, meski layer disembunyikan. Peta/worker
+    dimuat sesuai kebutuhan, geometri terpisah dari dashboard, jalur memakai
+    Canvas dan batas ukuran untuk menjaga akses ringan. Zoom hingga **level 22**
+    memakai pembesaran citra sumber, dengan fallback tile induk yang terbatas
+    bila detail tidak tersedia. Citra dapat dimatikan untuk menghemat kuota. Lihat
+    [panduan peta/GPS/KMZ dan impor jalur](PANDUAN-PETA-KMZ.md).
+
 **Database lokal:** SQLite bawaan Node (`node:sqlite`), data utama di
 `data/fiberops.db` dengan jurnal WAL/SHM. Tidak memakai Supabase/database eksternal.
 Backup aktif harus melalui SQLite; **jangan menyalin `.db` saja atau menghapus DB
@@ -203,6 +220,16 @@ node server.mjs            # server harus jalan (data demo)
 npm run test:render        # hasil: SEMUA HALAMAN TAMPIL NORMAL
 ```
 
+Kanvas geografis pada smoke test jsdom diganti renderer sederhana (jsdom tidak
+memiliki layout/SVG peta nyata). Pengujian Leaflet, clustering, tile gagal, dan
+unduhan KMZ sebenarnya berada di `npm run test:map:browser` dan
+`npm run test:routes:browser` (impor/ekspor worker dan Canvas jalur).
+Uji render menunggu data/cascade yang belum selesai (batas 5 detik), bukan
+hanya jeda tetap setelah klik. Untuk menguji respons lambat tanpa mengubah server:
+`UJI_RENDER_SPLITTER_DELAY_MS=750 npm run test:render`.
+Hasil, batas verifikasi, dan bukti preservasi migrasi dicatat di
+[validasi Peta/KMZ 31 Oktober 2026](AUDIT-PETA-KMZ-2026-10-31.md).
+
 Kalau ada halaman yang kosong/error (mis. `X is not defined`), uji ini GAGAL
 dan menyebutkan rutenya. Port server bisa diganti: `ARENA_API_PORT=3000 npm run test:render`.
 
@@ -215,13 +242,17 @@ npm run test:logic    # topologi, alur core, data kabel, peta jalur core (murni,
 npm run test:api      # login, hak akses, CRUD semua entitas, penjaga validasi
 npm run test:interfaces # penamaan, sumber jalur, API baru, persistensi, migrasi
 npm run test:interfaces:ui # alur pencatatan interface → ODC → mapping → ODP
-npm run test:audit    # 43 skenario: sesi, pengamanan sambungan, race UI
+npm run test:audit    # 47 skenario: sesi, pengamanan sambungan, race UI
 npm run test:dashboard # 31 skenario API/UI: per OLT/card, hitungan, port bawaan, refresh
 npm run test:layout   # server tetap jalan hanya dengan file yang disalin Dockerfile
 npm run test:predeploy # 57 pemeriksaan keamanan, restart, bootstrap, backup WAL, preflight
-npm run test:regression # 34 regresi: otorisasi tertunda, simpan atomik, dependency
+npm run test:regression # 46 regresi: otorisasi tertunda, simpan atomik, dependency
+npm run test:map      # 193 pemeriksaan: peta/GPS/KMZ + impor/store/API/worker/cache jalur
+npm run test:routes   # 77 pemeriksaan jalur saja (bagian dari test:map/npm test)
 # Opt-in: Chromium lokal terpasang; tidak mengunduh browser otomatis:
-CHROMIUM_EXECUTABLE=/usr/bin/chromium npm run test:browser # 18 skenario browser produksi
+CHROMIUM_EXECUTABLE=/usr/bin/chromium npm run test:browser # 20 skenario browser produksi
+CHROMIUM_EXECUTABLE=/usr/bin/chromium npm run test:map:browser # 29 skenario Leaflet/KMZ/GPS/layar penuh
+CHROMIUM_EXECUTABLE=/usr/bin/chromium npm run test:routes:browser # 22 skenario impor/Canvas/worker/mobile
 npm run test:render   # semua halaman ter-render (butuh server demo jalan)
 # Opt-in, hanya lingkungan uji Linux dengan sudo -n; Git/npm/systemctl dimock:
 npm run test:update-native # 15 skenario updater dengan SQLite/API nyata
@@ -242,9 +273,14 @@ Sesi diverifikasi ke server saat membuka aplikasi dan berlaku maksimal tujuh har
 Audit pra-deploy lanjutan, reproduksi masalah, hasil browser production dan batas
 jaminan ada di **[AUDIT-PRA-DEPLOY.md](AUDIT-PRA-DEPLOY.md)**. Pengujian aplikasi
 bukan pengganti pemeriksaan host Proxmox, firewall/TLS dan sambungan fisik.
-Hasil pemeriksaan terbaru **29 Oktober 2026**, perbaikan request tertunda/transaksi/
+Hasil pemeriksaan **29 Oktober 2026**, perbaikan request tertunda/transaksi/
 form, pembaruan DOMPurify, dan bukti pelestarian data ada di
 **[AUDIT-LANJUTAN-2026-10-29.md](AUDIT-LANJUTAN-2026-10-29.md)**.
+Audit menyeluruh terbaru **4 November 2026** mencakup perbaikan logout yang belum
+terkonfirmasi, loop antar-ODP, dan validasi email akun; seluruh suite, 71 skenario
+browser, 12 pemeriksaan render, dan 15 skenario updater lulus. Reproduksi,
+hasil, dan batas verifikasi ada di
+**[AUDIT-MENYELURUH-2026-11-04.md](AUDIT-MENYELURUH-2026-11-04.md)**.
 Panduan operasional: **[DEPLOY-PROXMOX.md](DEPLOY-PROXMOX.md)**.
 
 ## Login demo (hanya pengembangan, bukan produksi)
@@ -280,7 +316,7 @@ Jangan mengekspos dev server/data demo ke internet sebagai deployment produksi.
 | `src/components/SplitterManager.jsx` | Kelola splitter (rasio, input core) & arah tiap output (ODP / cascade / ODC anak) |
 | `src/lib/api.js` | Klien fetch + sesi token |
 | `src/components/CoreManager.jsx` | Grid core interaktif (dipakai ODC & ODP) |
-| `src/pages/*` | Alur Core (halaman utama), Dashboard, OLT, ODC, ODP, Mapping Core, Laporan, Users |
+| `src/pages/*` | Alur Core (halaman utama), Dashboard, OLT, ODC, ODP, Mapping Core, Peta/KMZ, Laporan, Users |
 | `data/fiberops.db` | DB utama; WAL/SHM dan backup privat diabaikan Git; seed demo hanya pengembangan |
 | `server/security.mjs` | Hash/password, origin, cookie, redaksi URL dan pembatas login |
 | `scripts/create-admin.mjs` / `set-password.mjs` | Provisioning/rotasi lokal via stdin, tanpa menimpa identitas inventaris |

@@ -14,6 +14,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { CABLE_TYPES, SPLITTER_RATIOS } from "./src/lib/fiber.js";
+import { coordinateUpdate } from "./src/lib/coordinates.js";
+import { createCableRouteStore } from "./server/cable-routes.mjs";
 import { INTERFACE_MODES, defaultInterfaceMode, interfaceDetails } from "./src/lib/interfaces.js";
 import { PASSWORD_HASH_PREFIX, FACTORY_PASSWORD, MAX_PASSWORD_LENGTH, hashPassword, verifyPassword, validNewPassword, requestUrl, sameOriginWrite, sessionCookie, redactedUrl, PRIVATE_HEADERS, createLoginLimiter, trustedProxySet, loginClientIp, canonicalPublicOrigin } from "./server/security.mjs";
 
@@ -338,6 +340,30 @@ db.exec(`
   );
 `);
 
+// Koordinat terpisah, tanpa menulis ulang alamat/GPS lama atau mengganti ID.
+// Mode none mencegah koordinat lokasi lama muncul lagi setelah titik sengaja dihapus.
+db.exec("BEGIN IMMEDIATE");
+try {
+  for (const table of ["olts", "odcs", "odps"]) {
+    const columns = new Set(db.prepare("SELECT name FROM pragma_table_info(?)").all(table).map(c => c.name));
+    for (const [column, definition] of [
+      ["latitude", "REAL"], ["longitude", "REAL"],
+      ["coordinate_mode", "TEXT NOT NULL DEFAULT 'location' CHECK(coordinate_mode IN ('location','manual','none'))"],
+    ]) if (!columns.has(column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    // Jika instalasi pernah mempunyai kolom GPS eksplisit, nilainya tidak diabaikan.
+    if (!columns.has("coordinate_mode") && (columns.has("latitude") || columns.has("longitude"))) {
+      db.exec(`UPDATE ${table} SET coordinate_mode='manual' WHERE latitude IS NOT NULL OR longitude IS NOT NULL`);
+    }
+  }
+  db.exec("COMMIT");
+} catch (error) {
+  db.exec("ROLLBACK");
+  throw new Error(`Migrasi koordinat gagal; data lama tidak direset: ${error.message}`);
+}
+
+// Tabel jalur geografis terpisah; tidak mengubah inventaris/mapping atau akun.
+const cableRouteStore = createCableRouteStore(db, atomicWrite);
+
 // Rotasi satu kali untuk sesi lama yang mungkin pernah bocor lewat URL/log.
 // Metadata autentikasi ini tidak mengubah ID atau tabel inventaris jaringan.
 db.exec("CREATE TABLE IF NOT EXISTS security_migrations (id TEXT PRIMARY KEY, applied_at TEXT NOT NULL)");
@@ -554,6 +580,25 @@ function odcReaches(startId, targetId) {
   return false;
 }
 
+// Sambungan antar-ODP juga tidak boleh kembali ke sumbernya. Induk odc_id
+// hanyalah keanggotaan inventaris, bukan bukti sambungan; telusuri output nyata.
+function odpReaches(startId, targetId) {
+  const target = Number(targetId), stack = [Number(startId)], visited = new Set();
+  const children = db.prepare(`
+    SELECT o.target_odp_id AS id FROM splitter_outputs o
+    JOIN splitters s ON s.id=o.splitter_id
+    WHERE s.odp_id=? AND o.target_type='odp' AND o.target_odp_id IS NOT NULL
+  `);
+  while (stack.length) {
+    const current = stack.pop();
+    if (current === target) return true;
+    if (visited.has(current)) continue;
+    visited.add(current);
+    children.all(current).forEach(row => stack.push(Number(row.id)));
+  }
+  return false;
+}
+
 // Cascade splitter harus tetap berupa pohon: menautkan A → B ditolak bila
 // B sudah dapat mencapai A melalui salah satu output cascade.
 function splitterReaches(startId, targetId) {
@@ -581,6 +626,11 @@ function syncFeederPorts(odcId, ids) {
 
 // Simpan nilai legacy di DB/backup, tetapi jangan menyajikannya sebagai fitur optik aktif.
 const OMIT_LEGACY_MEASUREMENTS = new Set(["tx_power","rx_power","power_dbm","feeder_loss_db","loss_db"]);
+function isCoordinateOnly(body) {
+  const keys = Object.keys(body);
+  return keys.length > 0 && keys.every(key => ["latitude", "longitude", "coordinate_mode"].includes(key));
+}
+
 function send(req, res, status, body, extraHeaders = {}) {
   if (res.headersSent || res.destroyed) return;
   const headers = { ...PRIVATE_HEADERS, "Content-Type": "application/json", ...extraHeaders };
@@ -838,10 +888,12 @@ const server = http.createServer(async (req, res) => {
       const retry = limitLogin(loginClientIp(req, TRUSTED_PROXIES));
       if (retry) return send(req, res, 429, { error: "Terlalu banyak percobaan login. Coba lagi beberapa menit kemudian." }, { "Retry-After": String(retry) });
       const body = await readBody(req);
-      if (typeof body.email !== "string" || body.email.length > 254 || !validNewPassword(body.password, 1)) {
-        return send(req, res, 400, { error: `Email dan password harus berupa teks (password maksimal ${MAX_PASSWORD_LENGTH} karakter)` });
+      // Batas berlaku setelah normalisasi, sama seperti email yang disimpan.
+      const email = typeof body.email === "string" ? body.email.toLowerCase().trim() : null;
+      if (email === null || email.length > 254 || !validNewPassword(body.password, 1)) {
+        return send(req, res, 400, { error: `Email dan password harus berupa teks (email maksimal 254, password maksimal ${MAX_PASSWORD_LENGTH} karakter)` });
       }
-      const user = db.prepare("SELECT * FROM users WHERE email = ?").get(body.email.toLowerCase().trim());
+      const user = db.prepare("SELECT * FROM users WHERE email = ?").get(email);
       const password = body.password;
       if (!user || (PRODUCTION && password === FACTORY_PASSWORD) || !verifyPassword(password, user.password_hash)) {
         return send(req, res, 401, { error: "Email atau password salah" });
@@ -862,6 +914,22 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (!p.startsWith("/api/")) return serveStatic(req, res, p);
+
+    // Logout idempotent: selalu kedaluwarsakan cookie, termasuk ketika header
+    // sudah invalid. Cabut hanya rahasia sesi yang benar-benar dikirim browser,
+    // bukan seluruh sesi akun. Guard same-origin di atas tetap wajib.
+    if (p === "/api/logout" && method === "POST") {
+      const tokens = new Set([
+        typeof req.headers.authorization === "string" ? /^Bearer[ \t]+([^\s]+)$/i.exec(req.headers.authorization)?.[1] : null,
+        req.headers["x-fiberops-token"],
+        parseCookies(req).fiberops_token,
+      ].filter(token => typeof token === "string" && token.length > 0 && token.length <= 512));
+      if (tokens.size) atomicWrite(() => {
+        const remove = db.prepare("DELETE FROM sessions WHERE token=?");
+        for (const token of tokens) remove.run(token);
+      });
+      return send(req, res, 200, { ok: true }, { "Set-Cookie": sessionCookie("", SECURE_COOKIES) });
+    }
 
     // Tolak sesi/hak yang tidak sah sebelum menunggu body. Setelah body lengkap,
     // periksa ulang sesi dan role: logout/pencabutan hak bisa terjadi selama upload.
@@ -884,17 +952,46 @@ const server = http.createServer(async (req, res) => {
     const user = authUser(req);
     if (!user) return send(req, res, 401, { error: "Silakan login terlebih dahulu" });
 
-    if (p === "/api/logout" && method === "POST") {
-      db.prepare("DELETE FROM sessions WHERE token=?").run(req.authToken);
-      return send(req, res, 200, { ok: true }, { "Set-Cookie": sessionCookie("", SECURE_COOKIES) });
-    }
-
     if (p === "/api/me" && method === "GET") return send(req, res, 200, { user });
 
     const canWrite = user.role === "admin" || user.role === "operator";
     const isAdmin = user.role === "admin";
     if (method !== "GET" && !canWrite) {
       return send(req, res, 403, { error: "Hanya admin/operator yang dapat mengubah data" });
+    }
+
+    // Metadata ringan terpisah dari geometri. Tidak ikut dashboard / snapshot inventaris.
+    if (p === "/api/route-imports") {
+      if (method === "GET") return send(req, res, 200, cableRouteStore.index());
+      if (method === "POST") return send(req, res, 201, cableRouteStore.create(requestBody));
+    }
+    const routeImportMatch = p.match(/^\/api\/route-imports\/([1-9]\d*)$/);
+    if (routeImportMatch && Number.isSafeInteger(Number(routeImportMatch[1]))) {
+      const id = Number(routeImportMatch[1]);
+      if (method === "GET") return send(req, res, 200, cableRouteStore.geometry(id));
+      if (method === "DELETE") return send(req, res, 200, cableRouteStore.remove(id));
+    }
+
+    // Snapshot baca konsisten: titik dan bukti koneksi tidak dicampur dari beberapa request.
+    if (p === "/api/map-data" && method === "GET") {
+      db.exec("BEGIN");
+      let data;
+      try {
+        const output = db.prepare(SPLITTER_OUT_SQL);
+        data = {
+          version: 1,
+          olts: sortByNameNatural(db.prepare("SELECT * FROM olts").all()),
+          odcs: sortByNameNatural(db.prepare("SELECT d.*, o.name AS olt_name FROM odcs d LEFT JOIN olts o ON o.id=d.olt_id").all()),
+          odps: sortByNameNatural(db.prepare("SELECT p.*, d.name AS odc_name FROM odps p LEFT JOIN odcs d ON d.id=p.odc_id").all()),
+          ports: db.prepare(PORT_SQL).all().map(withInterface),
+          feederPorts: db.prepare("SELECT * FROM odc_feeder_ports ORDER BY id").all(),
+          interfaceMappings: db.prepare(MAPPING_SQL).all().map(withMappingInterface),
+          links: db.prepare("SELECT * FROM core_links ORDER BY id").all(),
+          splitters: db.prepare(SPLITTER_SQL + " ORDER BY s.id").all().map(row => ({ ...row, outputs: output.all(row.id) })),
+        };
+        db.exec("COMMIT");
+      } catch (error) { db.exec("ROLLBACK"); throw error; }
+      return send(req, res, 200, data);
     }
 
     // ---------------- Dashboard ----------------
@@ -936,6 +1033,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === "/api/olts" && method === "POST") {
       const b = requestBody;
+      const gps = coordinateUpdate(b);
       if (!isText(b.name)) return send(req, res, 400, { error: "Nama OLT wajib diisi" });
       if ([b.olt_type, b.location, b.ip, b.notes].some((v) => !isOptionalText(v))) {
         return send(req, res, 400, { error: "Tipe, lokasi, IP, dan catatan harus berupa teks" });
@@ -947,8 +1045,8 @@ const server = http.createServer(async (req, res) => {
         return send(req, res, 400, { error: "Jumlah port bawaan harus antara 1 dan 128" });
       }
       const id = atomicWrite(() => {
-        const r = db.prepare("INSERT INTO olts (name, olt_type, location, ip, notes, interface_mode) VALUES (?,?,?,?,?,?)")
-          .run(b.name.trim(), b.olt_type || null, b.location || null, b.ip || null, b.notes || null, mode);
+        const r = db.prepare("INSERT INTO olts (name, olt_type, location, ip, notes, interface_mode, latitude, longitude, coordinate_mode) VALUES (?,?,?,?,?,?,?,?,?)")
+          .run(b.name.trim(), b.olt_type || null, b.location || null, b.ip || null, b.notes || null, mode, gps.latitude, gps.longitude, gps.coordinate_mode);
         if (mode !== "shelf_slot_port") ensureBuiltinCard(r.lastInsertRowid, count);
         return r.lastInsertRowid;
       });
@@ -962,6 +1060,13 @@ const server = http.createServer(async (req, res) => {
         const current = db.prepare("SELECT * FROM olts WHERE id=?").get(id);
         if (!current) return send(req, res, 404, { error: "OLT tidak ditemukan" });
         const b = { ...current, ...body };
+        const gps = coordinateUpdate(body, current);
+        if (isCoordinateOnly(body)) {
+          // GPS tidak boleh merapikan nama/alamat, card, feeder atau data kabel lama.
+          db.prepare("UPDATE olts SET latitude=?, longitude=?, coordinate_mode=?, updated_at=? WHERE id=?")
+            .run(gps.latitude, gps.longitude, gps.coordinate_mode, now(), id);
+          return send(req, res, 200, db.prepare("SELECT * FROM olts WHERE id=?").get(id));
+        }
         if (!isText(b.name)) return send(req, res, 400, { error: "Nama OLT wajib diisi" });
         if ([b.olt_type, b.location, b.ip, b.notes].some((v) => !isOptionalText(v))) {
           return send(req, res, 400, { error: "Tipe, lokasi, IP, dan catatan harus berupa teks" });
@@ -985,8 +1090,8 @@ const server = http.createServer(async (req, res) => {
           if (max > Number(count)) return send(req, res, 400, { error: `Port ${max} masih tercatat; jumlah port tidak boleh lebih kecil` });
         }
         atomicWrite(() => {
-          db.prepare("UPDATE olts SET name=?, olt_type=?, location=?, ip=?, notes=?, interface_mode=?, updated_at=? WHERE id=?")
-            .run(b.name.trim(), b.olt_type || null, b.location || null, b.ip || null, b.notes || null, b.interface_mode, now(), id);
+          db.prepare("UPDATE olts SET name=?, olt_type=?, location=?, ip=?, notes=?, interface_mode=?, latitude=?, longitude=?, coordinate_mode=?, updated_at=? WHERE id=?")
+            .run(b.name.trim(), b.olt_type || null, b.location || null, b.ip || null, b.notes || null, b.interface_mode, gps.latitude, gps.longitude, gps.coordinate_mode, now(), id);
           if (b.interface_mode === "shelf_slot_port") {
             if (builtin) db.prepare("DELETE FROM olt_cards WHERE id=?").run(builtin.id);
           } else {
@@ -1132,6 +1237,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === "/api/odcs" && method === "POST") {
       const b = requestBody;
+      const gps = coordinateUpdate(b);
       if (!isText(b.name) || !validPositiveInt(b.olt_id) || !cableInfo(b.cable_type)) {
         return send(req, res, 400, { error: "Nama, OLT, dan tipe kabel yang valid wajib diisi" });
       }
@@ -1142,8 +1248,8 @@ const server = http.createServer(async (req, res) => {
       const badFeeder = checkFeederPorts(b.olt_id, feederIds);
       if (badFeeder) return send(req, res, 400, { error: badFeeder });
       const id = atomicWrite(() => {
-        const r = db.prepare("INSERT INTO odcs (olt_id, name, location, cable_type, notes) VALUES (?,?,?,?,?)")
-          .run(Number(b.olt_id), b.name.trim(), b.location || null, b.cable_type, b.notes || null);
+        const r = db.prepare("INSERT INTO odcs (olt_id, name, location, cable_type, notes, latitude, longitude, coordinate_mode) VALUES (?,?,?,?,?,?,?,?)")
+          .run(Number(b.olt_id), b.name.trim(), b.location || null, b.cable_type, b.notes || null, gps.latitude, gps.longitude, gps.coordinate_mode);
         syncFeederPorts(r.lastInsertRowid, feederIds);
         return r.lastInsertRowid;
       });
@@ -1157,6 +1263,13 @@ const server = http.createServer(async (req, res) => {
         const current = db.prepare("SELECT * FROM odcs WHERE id=?").get(id);
         if (!current) return send(req, res, 404, { error: "ODC tidak ditemukan" });
         const b = { ...current, ...body };
+        const gps = coordinateUpdate(body, current);
+        if (isCoordinateOnly(body)) {
+          // GPS tidak boleh merapikan nama/alamat, card, feeder atau data kabel lama.
+          db.prepare("UPDATE odcs SET latitude=?, longitude=?, coordinate_mode=?, updated_at=? WHERE id=?")
+            .run(gps.latitude, gps.longitude, gps.coordinate_mode, now(), id);
+          return send(req, res, 200, db.prepare("SELECT * FROM odcs WHERE id=?").get(id));
+        }
         if (!isText(b.name) || !validPositiveInt(b.olt_id) || !cableInfo(b.cable_type)) {
           return send(req, res, 400, { error: "Nama, OLT, dan tipe kabel yang valid wajib diisi" });
         }
@@ -1182,8 +1295,8 @@ const server = http.createServer(async (req, res) => {
           return send(req, res, 400, { error: `Tipe kabel baru memiliki ${capacity} core; hapus atau sesuaikan assignment, mapping, dan input splitter di atasnya lebih dahulu` });
         }
         atomicWrite(() => {
-          db.prepare("UPDATE odcs SET olt_id=?, name=?, location=?, cable_type=?, notes=?, updated_at=? WHERE id=?")
-            .run(Number(b.olt_id), b.name.trim(), b.location || null, b.cable_type, b.notes || null, now(), id);
+          db.prepare("UPDATE odcs SET olt_id=?, name=?, location=?, cable_type=?, notes=?, latitude=?, longitude=?, coordinate_mode=?, updated_at=? WHERE id=?")
+            .run(Number(b.olt_id), b.name.trim(), b.location || null, b.cable_type, b.notes || null, gps.latitude, gps.longitude, gps.coordinate_mode, now(), id);
           if (hasOwn(body, "feeder_port_ids") || Number(b.olt_id) !== current.olt_id) syncFeederPorts(id, feederIds);
         });
         return send(req, res, 200, db.prepare("SELECT * FROM odcs WHERE id=?").get(id));
@@ -1205,6 +1318,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === "/api/odps" && method === "POST") {
       const b = requestBody;
+      const gps = coordinateUpdate(b);
       if (!isText(b.name) || !validPositiveInt(b.odc_id) || !cableInfo(b.cable_type)) {
         return send(req, res, 400, { error: "Nama, ODC, dan tipe kabel yang valid wajib diisi" });
       }
@@ -1215,8 +1329,8 @@ const server = http.createServer(async (req, res) => {
         return send(req, res, 400, { error: "ODC tidak ditemukan" });
       }
       const id = atomicWrite(() => {
-        const r = db.prepare("INSERT INTO odps (odc_id, name, location, cable_type, notes) VALUES (?,?,?,?,?)")
-          .run(Number(b.odc_id), b.name.trim(), b.location || null, b.cable_type, b.notes || null);
+        const r = db.prepare("INSERT INTO odps (odc_id, name, location, cable_type, notes, latitude, longitude, coordinate_mode) VALUES (?,?,?,?,?,?,?,?)")
+          .run(Number(b.odc_id), b.name.trim(), b.location || null, b.cable_type, b.notes || null, gps.latitude, gps.longitude, gps.coordinate_mode);
         // ODP selalu memakai splitter 1:8 — buat otomatis agar langsung siap dipakai
         ensureOdpSplitter(r.lastInsertRowid, b.name);
         return r.lastInsertRowid;
@@ -1231,6 +1345,13 @@ const server = http.createServer(async (req, res) => {
         const current = db.prepare("SELECT * FROM odps WHERE id=?").get(id);
         if (!current) return send(req, res, 404, { error: "ODP tidak ditemukan" });
         const b = { ...current, ...body };
+        const gps = coordinateUpdate(body, current);
+        if (isCoordinateOnly(body)) {
+          // GPS tidak boleh merapikan nama/alamat, card, feeder atau data kabel lama.
+          db.prepare("UPDATE odps SET latitude=?, longitude=?, coordinate_mode=?, updated_at=? WHERE id=?")
+            .run(gps.latitude, gps.longitude, gps.coordinate_mode, now(), id);
+          return send(req, res, 200, db.prepare("SELECT * FROM odps WHERE id=?").get(id));
+        }
         if (!isText(b.name) || !validPositiveInt(b.odc_id) || !cableInfo(b.cable_type)) {
           return send(req, res, 400, { error: "Nama, ODC, dan tipe kabel yang valid wajib diisi" });
         }
@@ -1251,8 +1372,8 @@ const server = http.createServer(async (req, res) => {
         if (hasOutOfRangeCore) {
           return send(req, res, 400, { error: `Tipe kabel baru memiliki ${capacity} core; hapus atau sesuaikan assignment, mapping, dan input splitter di atasnya lebih dahulu` });
         }
-        db.prepare("UPDATE odps SET odc_id=?, name=?, location=?, cable_type=?, notes=?, updated_at=? WHERE id=?")
-          .run(Number(b.odc_id), b.name.trim(), b.location || null, b.cable_type, b.notes || null, now(), id);
+        db.prepare("UPDATE odps SET odc_id=?, name=?, location=?, cable_type=?, notes=?, latitude=?, longitude=?, coordinate_mode=?, updated_at=? WHERE id=?")
+          .run(Number(b.odc_id), b.name.trim(), b.location || null, b.cable_type, b.notes || null, gps.latitude, gps.longitude, gps.coordinate_mode, now(), id);
         return send(req, res, 200, db.prepare("SELECT * FROM odps WHERE id=?").get(id));
       }
       if (method === "DELETE") {
@@ -1681,6 +1802,10 @@ const server = http.createServer(async (req, res) => {
           if (!db.prepare("SELECT id FROM odps WHERE id=?").get(odpId)) {
             return send(req, res, 400, { error: "ODP tujuan tidak ditemukan" });
           }
+          const owner = db.prepare("SELECT odp_id FROM splitters WHERE id=?").get(out.splitter_id)?.odp_id;
+          if (owner != null && odpReaches(odpId, owner)) {
+            return send(req, res, 400, { error: "Sambungan akan membentuk lingkaran antar-ODP. Pilih ODP lain atau lepaskan sambungan yang kembali ke sumber." });
+          }
         } else if (targetType === "splitter") {
           if (!validPositiveInt(b.target_id)) return send(req, res, 400, { error: "Splitter tujuan tidak valid" });
           splId = Number(b.target_id);
@@ -1776,15 +1901,15 @@ const server = http.createServer(async (req, res) => {
       }
       if (p === "/api/users" && method === "POST") {
         const b = requestBody;
-        if (typeof b.email !== "string" || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(b.email.trim())) {
-          return send(req, res, 400, { error: "Email tidak valid" });
+        const email = typeof b.email === "string" ? b.email.toLowerCase().trim() : null;
+        if (email === null || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+          return send(req, res, 400, { error: "Email tidak valid (maksimal 254 karakter)" });
         }
         if (!isText(b.full_name)) return send(req, res, 400, { error: "Nama wajib diisi" });
         if (!validNewPassword(b.password) || (PRODUCTION && b.password === FACTORY_PASSWORD)) {
           return send(req, res, 400, { error: `Password harus 8–${MAX_PASSWORD_LENGTH} karakter dan bukan password pabrik` });
         }
         if (!USER_ROLES.has(b.role)) return send(req, res, 400, { error: "Peran tidak valid" });
-        const email = b.email.toLowerCase().trim();
         if (db.prepare("SELECT id FROM users WHERE email=?").get(email)) {
           return send(req, res, 409, { error: "Email sudah terdaftar" });
         }

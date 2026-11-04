@@ -32,6 +32,27 @@ await check("login gagal tidak menghapus sesi yang sedang berlaku", async () => 
   globalThis.fetch = async () => json({ error: "Password salah" }, 401);
   await assert.rejects(login("a", "b"), e => e.status === 401); assert.equal(getToken(), "baru");
 });
+await check("logout gagal tidak berpura-pura sukses atau membuang token untuk retry", async () => {
+  for (const failure of [
+    () => Promise.reject(new TypeError("Jaringan offline")),
+    () => Promise.resolve(json({error: "Proxy gagal"}, 503)),
+    () => Promise.resolve(json({error: "Sesi belum dibersihkan"}, 401)),
+    () => Promise.resolve(json({ok: false})),
+    () => Promise.resolve(new Response("<html>proxy error</html>")),
+  ]) {
+    setMemToken("logout-tetap-aktif"); globalThis.fetch = failure;
+    await assert.rejects(logout(), error => /keluar belum dapat dikonfirmasi/i.test(error.message));
+    assert.equal(getToken(), "logout-tetap-aktif");
+  }
+  globalThis.fetch = async () => json({ok: true});
+  await logout(); assert.equal(getToken(), null);
+});
+await check("kegagalan logout lama tidak mengganggu sesi baru yang sudah login", async () => {
+  setMemToken("lama"); let reject;
+  globalThis.fetch = () => new Promise((_, fail) => {reject = fail;});
+  const pending = logout(); setMemToken("baru"); reject(new TypeError("Offline"));
+  await pending; assert.equal(getToken(), "baru");
+});
 await check("HTML/JSON rusak tidak dianggap sukses dengan data null", async () => {
   globalThis.fetch = async () => new Response("<html>proxy error</html>");
   await assert.rejects(api("/api/odcs"), e => e instanceof ApiError && /JSON/.test(e.message));
