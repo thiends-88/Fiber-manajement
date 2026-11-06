@@ -200,10 +200,19 @@ npm run build
 node scripts/preflight.mjs /path/database-anda/fiberops.db
 ```
 
-Ikuti **[DEPLOY-PROXMOX.md](DEPLOY-PROXMOX.md)** untuk bootstrap/rotasi password
-melalui stdin, systemd, HTTPS/origin, migrasi ownership volume Docker, backup
-konsisten, update dan rollback. **Jangan update hanya dengan `git pull` lalu
-restart**, jangan menghapus DB agar login berhasil, dan jangan mengganti volume.
+**Update instalasi existing tanpa mengganti akun/password atau mereset input:**
+ikuti **[PERINTAH-UPDATE-PROXMOX.md](PERINTAH-UPDATE-PROXMOX.md)**. Jalur ini
+mempertahankan unit/mode/path DB, mencadangkan data, menguji migrasi pada salinan,
+dan memeriksa seluruh nilai/ID lama. Helper baru harus sudah masuk `main` terlebih
+dahulu. Bukti sampel dan batas jaminan:
+**[UJI-UPDATE-EXISTING-2026-11-06.md](UJI-UPDATE-EXISTING-2026-11-06.md)**.
+
+Untuk **instalasi baru atau hardening produksi**, ikuti
+**[DEPLOY-PROXMOX.md](DEPLOY-PROXMOX.md)**: bootstrap/rotasi password melalui stdin,
+systemd, HTTPS/origin, ownership Docker, backup dan rollback. Hardening ini
+terpisah dari pembaruan kode existing, bukan syarat mengubah akun secara otomatis.
+**Jangan update hanya dengan `git pull` lalu restart**, jangan menghapus DB agar
+login berhasil, dan jangan mengganti volume.
 Setelah upgrade keamanan, hard-refresh sebelum login ulang; sesi lama dicabut
 sekali untuk menutup risiko token yang pernah masuk URL/log. Tunggu PR/release
 perubahan disetujui dan di-merge; panduan ini tidak menyatakan semua perubahan
@@ -256,6 +265,9 @@ CHROMIUM_EXECUTABLE=/usr/bin/chromium npm run test:routes:browser # 22 skenario 
 npm run test:render   # semua halaman ter-render (butuh server demo jalan)
 # Opt-in, hanya lingkungan uji Linux dengan sudo -n; Git/npm/systemctl dimock:
 npm run test:update-native # 15 skenario updater dengan SQLite/API nyata
+npm run test:preservation  # 13 unit manifest read-only, termasuk hash/BigInt/sequence
+# Opt-in, Linux + sudo -n/root; Git/SQLite/API/UID nyata, systemctl dimock:
+npm run test:update-existing # 27 skenario upgrade, 35 cek integrasi + 13 unit; npm nyata pada legacy
 ```
 
 Yang diperiksa `npm run test:api`: login/logout & token, hak akses per peran

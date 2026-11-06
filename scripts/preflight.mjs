@@ -7,13 +7,22 @@ import { FACTORY_PASSWORD, verifyPassword, validStoredPasswordHash } from "../se
 import { CABLE_TYPES } from "../src/lib/fiber.js";
 import { feederInputUsage } from "../src/lib/interface-routes.js";
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const file = path.resolve(process.argv[2] || process.env.ARENA_DB_PATH || path.join(ROOT, "data", "fiberops.db"));
+const args = process.argv.slice(2);
+const preserveAccounts = args.includes("--preserve-accounts");
+const files = args.filter(arg => !arg.startsWith("--"));
+const invalidArgs = files.length > 1 || args.some(arg => arg.startsWith("--") && arg !== "--preserve-accounts");
+// Hanya pemeriksaan untuk instalasi existing nonproduksi. Tidak mengubah akun,
+// mode service, atau pengaman login produksi; default tetap ketat.
+const allowExistingFactory = preserveAccounts && process.env.NODE_ENV !== "production";
+const file = path.resolve(files[0] || process.env.ARENA_DB_PATH || path.join(ROOT, "data", "fiberops.db"));
 let db, errors = 0, warnings = 0;
 const ok = text => console.log(`OK    ${text}`);
 const fail = text => { errors++; console.log(`GAGAL ${text}`); };
 const warn = text => { warnings++; console.log(`CEK   ${text}`); };
 try {
   console.log(`PRA-DEPLOY READ-ONLY — Node ${process.versions.node}\nDatabase: ${file}`);
+  if (invalidArgs) throw Error("Gunakan: node scripts/preflight.mjs [DATABASE] [--preserve-accounts]");
+  if (preserveAccounts) console.log("PELESTARIAN DATA EXISTING: tidak mengganti akun/password dan bukan sertifikasi keamanan produksi.");
   if (!fs.existsSync(file)) throw Error("Database tidak ditemukan. Periksa path/volume; tidak ada file atau demo baru yang dibuat.");
   db = new DatabaseSync(file, {readOnly:true});
   const check = db.prepare("PRAGMA quick_check").all();
@@ -30,9 +39,12 @@ try {
   const users = rows("users");
   const badHashes = users.filter(u=>!validStoredPasswordHash(u.password_hash));
   if (badHashes.length) fail(`${badHashes.length} hash password tidak didukung/rusak. Rotasi akun terkait lewat scripts/set-password.mjs.`);
-  if (!users.some(u=>u.role==="admin" && validStoredPasswordHash(u.password_hash) && !verifyPassword(FACTORY_PASSWORD,u.password_hash))) fail("Belum ada admin dengan hash valid dan password nonpabrik. Buat/rotasi admin lewat script lokal."); else ok("Admin dengan hash valid dan password nonpabrik tersedia (kekuatan/keunikan password tetap tanggung jawab pemilik)");
+  if (!users.some(u=>u.role==="admin" && validStoredPasswordHash(u.password_hash) && (allowExistingFactory || !verifyPassword(FACTORY_PASSWORD,u.password_hash)))) fail("Belum ada admin dengan hash valid dan password nonpabrik. Buat/rotasi admin lewat script lokal."); else ok(allowExistingFactory ? "Admin existing dengan hash valid tersedia; identitas/password dipertahankan" : "Admin dengan hash valid dan password nonpabrik tersedia (kekuatan/keunikan password tetap tanggung jawab pemilik)");
   const factory = users.filter(u=>verifyPassword(FACTORY_PASSWORD,u.password_hash));
-  if (factory.length) fail(`${factory.length} akun masih memakai password pabrik. Login dengan admin pribadi lalu hapus/ganti akun demo.`); else ok("Tidak ada akun dengan password pabrik");
+  if (factory.length) {
+    if (allowExistingFactory) warn(`${factory.length} akun existing berpassword pabrik dipertahankan atas pilihan operator. Masih berisiko di LAN; bukan izin membuka aplikasi ke internet. Mode produksi tetap memblokir password pabrik.`);
+    else fail(`${factory.length} akun masih memakai password pabrik. Login dengan admin pribadi lalu hapus/ganti akun demo.`);
+  } else ok("Tidak ada akun dengan password pabrik");
   if (users.some(u=>!String(u.password_hash).startsWith("scrypt$"))) warn("Ada hash lama; otomatis dimigrasikan setelah login valid. Jangan mereset data pengguna.");
   const olts=rows("olts"), cards=rows("olt_cards"), ports=rows("olt_ports"), odcs=rows("odcs"), odps=rows("odps");
   const duplicates=(items,key)=>{const seen=new Set();let n=0;for(const item of items){const value=key(item);if(seen.has(value))n++;seen.add(value);}return n;};
@@ -51,7 +63,11 @@ try {
   if(badCores.length)fail(`${badCores.length} assignment melampaui kapasitas kabel atau kehilangan induk.`);else ok("Assignment core sesuai kapasitas");
   const outputs=rows("splitter_outputs"), splitters=rows("splitters").map(s=>({...s,outputs:outputs.filter(o=>o.splitter_id===s.id)}));
   const missingOdpSplitters = odps.filter(d=>!splitters.some(s=>s.odp_id===d.id)).length;
-  if (missingOdpSplitters) warn(`${missingOdpSplitters} ODP belum punya splitter. Aturan aplikasi existing akan menambah 1:8 bawaan saat startup; cocokkan dahulu dengan fisik, jangan menganggapnya penemuan otomatis.`);
+  if (missingOdpSplitters) {
+    const message = `${missingOdpSplitters} ODP belum punya splitter. Aturan aplikasi existing akan menambah 1:8 bawaan saat startup; cocokkan dahulu dengan fisik, jangan menganggapnya penemuan otomatis.`;
+    if (preserveAccounts) fail(`${message} Jalur pelestarian tidak menjalankan startup yang akan menambah inventaris tanpa peninjauan.`);
+    else warn(message);
+  }
   const inputUsage=feederInputUsage({splitters,links:rows("core_links")});
   const portById=new Map(ports.map(p=>[p.id,p])),feeder=new Set(rows("odc_feeder_ports").map(f=>`${f.odc_id}:${f.port_id}`));
   const badMappings=rows("interface_mappings").filter(m=>{
@@ -65,7 +81,9 @@ try {
   if((dirStat.mode&0o077)!==0&&(fileStat.mode&0o077)!==0)warn("Database dan direktori masih dapat dibaca pengguna OS lain. Batasi data/ ke 0700 dan DB ke 0600 sesuai user service.");else ok("Akses file database dibatasi");
   if(!fs.existsSync(path.join(ROOT,"dist","index.html")))warn("dist/index.html belum ada. Jalankan npm ci dan npm run build sebelum production.");
   console.log(`Inventaris: ${olts.length} OLT, ${cards.filter(c=>!c.is_builtin).length} card fisik, ${ports.length} port, ${odcs.length} ODC, ${odps.length} ODP.`);
-  console.log("CEK OPERASIONAL: mode NODE_ENV=production, volume/path DB, backup & restore, HTTPS/VPN, firewall, kapasitas disk/RAM, dan akses user service harus diverifikasi di Proxmox.");
+  console.log(preserveAccounts
+    ? "CEK OPERASIONAL: pertahankan unit/mode/path DB existing; verifikasi backup & restore, LAN/VPN/HTTPS, firewall, kapasitas disk/RAM, dan akses user service. Lolos pelestarian bukan berarti akun pabrik aman."
+    : "CEK OPERASIONAL: mode NODE_ENV=production, volume/path DB, backup & restore, HTTPS/VPN, firewall, kapasitas disk/RAM, dan akses user service harus diverifikasi di Proxmox.");
 } catch(error){fail(error.message);}finally{db?.close();}
 console.log(`\nHASIL: ${errors} penghalang, ${warnings} peringatan. ${errors?"TUNDA UPDATE sampai penghalang diperbaiki.":"Pemeriksaan DB lulus; tetap penuhi checklist operasional dan peringatan di atas."}`);
 if(errors)process.exitCode=1;

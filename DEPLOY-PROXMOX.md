@@ -145,7 +145,14 @@ sudo -u fiberops node /opt/fiberops/scripts/preflight.mjs /opt/fiberops/data/fib
 
 ## B. Update native yang sudah berjalan
 
-**Versi sekali salin untuk Node langsung + systemd:** [PERINTAH-UPDATE-PROXMOX.md](PERINTAH-UPDATE-PROXMOX.md). Skrip memeriksa proses/DB efektif, backup sebelum perubahan kode, preflight dan ID lama; setup yang tidak didukung ditolak, bukan ditebak. Baca syarat dan batasannya dahulu.
+**Pilih satu jalur, jangan dicampur:**
+
+- **Existing, akun/password/input dan mode service tetap:** [PERINTAH-UPDATE-PROXMOX.md](PERINTAH-UPDATE-PROXMOX.md). Updater baru memeriksa runtime/DB efektif, backup sebelum perubahan kode, probe migrasi pada salinan dan seluruh nilai/ID lama. Helper harus sudah di-merge ke `main`; tidak mengubah unit atau menjalankan rotasi akun. [Bukti uji sampel](UJI-UPDATE-EXISTING-2026-11-06.md).
+- **Produksi ketat / hardening yang memang dipilih operator:** `scripts/update-native.sh` atau langkah B1–B3 di bawah. Langkah tersebut mencakup kebijakan akun nonpabrik dan pengaturan produksi; **bukan** kewajiban mengganti akun/mode hanya untuk memperbarui kode aplikasi internal existing.
+
+Preflight default dan pengaman login produksi tetap ketat. Opsi `--preserve-accounts` hanya untuk jalur pelestarian existing: akun pabrik valid pada mode nonproduksi menjadi peringatan eksplisit, bukan dianggap aman atau dibolehkan pada produksi. Setup yang tidak didukung ditolak, bukan ditebak. Kedua updater berbagi lock.
+
+### Jalur produksi ketat B1–B3
 
 **Kerjakan pada maintenance window. Jangan izinkan pencatatan lapangan selama backup/update/rollback.** Catat DB/path, unit, environment dan port sebenarnya. Simpan konfigurasi lama di lokasi privat. Pastikan tracked code bersih; jangan menimpa perubahan lokal.
 

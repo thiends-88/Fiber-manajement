@@ -1,232 +1,93 @@
-# Perintah lengkap update FiberOps di Proxmox
+# Update FiberOps existing di Proxmox — akun dan input tetap
 
-**Jalankan di terminal VM/LXC tempat `/opt/fiberops` berada, sebagai root.** Jika aplikasi berada dalam LXC, bukan di shell host Proxmox yang di luar LXC. Bila belum root, jalankan `sudo -i` lebih dahulu jika tersedia.
+Jalur ini khusus **aplikasi yang sudah berjalan**, Node langsung + systemd. Tujuannya memperbarui kode dari `origin/main`, **bukan** instal ulang atau hardening akun.
 
-## Sebelum menyalin
+- Tidak mengganti akun, password, role, unit systemd, `NODE_ENV`, port, atau path DB.
+- Tidak menghapus/mereset DB, menjalankan seed demo, menebak receiver, atau mengisi inventaris fisik.
+- Mengambil backup konsisten, mencoba startup/migrasi pada **salinan privat**, kemudian membandingkan nilai/ID lama pada DB existing.
+- Schema tambahan dan pencabutan sesi oleh migrasi keamanan tetap dapat terjadi. Login ulang bukan reset akun. Login valid dapat memperkuat hash lama tanpa mengganti password yang diketik.
 
-1. **Merge PR #9/perbaikan pra-deploy ke `main` dahulu.** Fetch saja tidak membuat PR terbuka menjadi versi produksi. Script memeriksa helper pada `origin/main` sebelum menghentikan layanan.
-2. Ini untuk instalasi **native Node + systemd `fiberops.service`**, bukan Docker/PM2. Service harus aktif, memakai Node **22.13+**, `NODE_ENV=production`, akun OS tetap (bukan DynamicUser), serta checkout `/opt/fiberops` pada **main yang bersih**. Konfigurasi yang berbeda ditolak sebelum update, bukan ditebak/diganti diam-diam.
-3. Kerjakan pada **maintenance window**: jangan ada input lapangan, cron impor, atau penulis DB lain selama proses. Ada downtime saat backup, install/build, dan pemeriksaan.
-4. Akun/password pribadi tetap digunakan. **Script tidak membuat user, merotasi password, menghapus akun demo, atau mereset DB.** Akun yang masih berpassword pabrik, termasuk akun demo sisa, akan membuat pemeriksaan awal berhenti; akun pribadi saja tidak berarti semua akun lain sudah aman.
-5. Backup lokal dibuat otomatis, tetapi **backup VM/LXC/off-host yang benar tetap disarankan**. Backup dalam disk yang sama tidak melindungi dari kerusakan disk.
+**Status publikasi:** panduan dan `scripts/update-existing.sh` merupakan tambahan setelah PR #10 (`22f1dfe`). Keduanya harus sudah masuk `main` lewat PR pendukung yang ditinjau sebelum perintah ini dapat digunakan. `main` yang hanya berisi PR #10 belum punya helper ini; launcher akan berhenti tanpa stop service atau perubahan kode/DB. Jangan menggantinya dengan `git pull` lalu restart.
 
-## Salin seluruh satu blok berikut, lalu paste sekaligus
+Bukti uji, konfigurasi sampel, batas jaminan dan skenario gagal ada di **[UJI-UPDATE-EXISTING-2026-11-06.md](UJI-UPDATE-EXISTING-2026-11-06.md)**. Sampel bukan jaminan semua modifikasi database lokal kompatibel.
 
-Tidak perlu mengisi email/password di dalam perintah. Lokasi DB, port health, executable Node, user/group service dan pemilik kode dibaca dari proses aktif. Git/npm dijalankan sebagai pemilik checkout, sedangkan pembacaan DB dijalankan sebagai user service.
+## 1. Sebelum menyalin perintah
 
-Jika muncul peringatan `CEK`, baca dahulu. **Ketik `LANJUT` hanya jika sudah memahami dan menerima peringatannya.** Jalur/receiver yang perlu verifikasi fisik atau ODP yang berbeda dari aturan 1:8 jangan dilanjutkan tanpa pemeriksaan.
+1. Jalankan di **konsol VM/LXC tempat aplikasi berada**, sebagai root; bukan di host Proxmox lain. Contoh existing: `/opt/fiberops`, `fiberops.service`, user `fiberops`, DB `/opt/fiberops/data/fiberops.db`, port 8080. Updater membaca ulang PID, executable Node, environment dan inode DB yang benar-benar dibuka service; tidak memakai PID lama.
+2. Siapkan maintenance window. Minta semua operator berhenti input **dan login** sampai verifikasi selesai. Jangan jalankan updater/hardening lain atau ubah unit/environment bersamaan.
+3. Buat **backup Proxmox/VM/LXC yang dapat dipulihkan** sebelum update, serta salinan konfigurasi/env/secrets secara lokal dan privat. Idealnya coba pada clone terisolasi/dengan IP berbeda terlebih dahulu. Jangan unggah DB atau password ke chat/Git.
+4. Pastikan Node service **22.13+**, checkout server di `main` dan bersih, target fast-forward, internet untuk Git/npm, dan ruang disk/RAM cukup untuk build + backup + salinan DB. Jangan menjalankan reset/stash otomatis atau menghapus DB bila pengecekan gagal.
+5. Akun berpassword pabrik tetap berisiko walau aplikasi internal. Pada mode existing **nonproduksi**, peringatan boleh diakui tanpa mengubah akun. **Mode produksi dan preflight default tetap ketat**: password pabrik menghalangi, tidak dibypass dengan menurunkan mode. Tidak ada perubahan mode otomatis.
 
+PM2, npm-wrapper, Docker, `DynamicUser`, loader/env-file melalui argumen Node, DB yang tidak cocok dengan PID, dan Git yang divergen perlu pemeriksaan lain; prosedur ini menolak, bukan menebak.
+
+## 2. Satu perintah untuk instalasi existing standar
+
+Salin **seluruh blok**. `git fetch` hanya mengambil objek/ref; working tree dan DB belum berubah. Launcher mengambil dua helper dari commit `origin/main` yang sama ke direktori sementara, **bukan** mengubah checkout sebelum backup. Jika target bergerak selama persiapan, updater menunda.
+
+<!-- existing-update-launcher:start -->
 ```bash
 (
-set -e
-_update_file=$(mktemp /tmp/fiberops-update-run.XXXXXXXX.sh)
-trap 'rm -f "$_update_file"' EXIT
-cat >"$_update_file" <<'FIBEROPS_UPDATE'
-#!/usr/bin/env bash
-# Jalankan di VM/LXC aplikasi, sebagai root; bukan di host Proxmox yang lain.
-# Tidak mereset DB/user, mengubah unit/environment, atau melakukan rollback otomatis.
-set -Eeuo pipefail
-umask 077
-
-APP=${FIBEROPS_APP_DIR:-/opt/fiberops}
-SERVICE=${FIBEROPS_SERVICE:-fiberops.service}
-BACKUP_BASE=${FIBEROPS_BACKUP_DIR:-/var/backups/fiberops}
-STOPPED=0
-BACKUP=''
-TMP=''
-SNAP=''
-fail() { printf '\nTUNDA: %s\n' "$*" >&2; exit 1; }
-finish() {
-  local rc=$?
-  if (( rc != 0 )); then
-    printf '\nUPDATE TIDAK SELESAI (kode %s).\n' "$rc" >&2
-    if (( STOPPED )); then
-      systemctl stop "$SERVICE" || true
-      printf 'Layanan dibiarkan berhenti agar kode/data yang belum lolos pemeriksaan tidak dipakai.\n' >&2
-    else
-      printf 'Skrip belum meminta penghentian layanan.\n' >&2
-    fi
-    [[ -z "$BACKUP" ]] || printf 'Direktori pemulihan privat: %s\n' "$BACKUP" >&2
-    printf 'Jangan hapus/reset DB atau menjalankan git reset --hard. Baca error di atas.\n' >&2
+  set -Eeuo pipefail
+  umask 077
+  if (( EUID != 0 )); then
+    echo 'TUNDA: jalankan sebagai root di konsol VM/LXC aplikasi.' >&2
+    exit 1
   fi
-  [[ -z "$TMP" ]] || rm -rf -- "$TMP"
-  [[ -z "$SNAP" ]] || rm -rf -- "$SNAP"
-}
-trap finish EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
-
-(( EUID == 0 )) || fail 'Masuk sebagai root terlebih dahulu (sudo -i bila tersedia).'
-for cmd in git node npm systemctl getent stat readlink mktemp install tar gzip curl flock tee cut chmod chown grep rm; do
-  command -v "$cmd" >/dev/null || fail "Perintah $cmd belum tersedia; belum ada update aplikasi."
-done
-RUNUSER=$(command -v runuser || true)
-[[ -n "$RUNUSER" ]] || RUNUSER=/usr/sbin/runuser
-[[ -x "$RUNUSER" ]] || fail 'runuser tidak tersedia (paket util-linux); jangan lanjut dulu.'
-exec 9>/run/lock/fiberops-update.lock
-flock -n 9 || fail 'Ada proses update FiberOps lain.'
-[[ -d "$APP/.git" ]] || fail "Checkout Git tidak ditemukan di $APP. Pastikan ini terminal VM/LXC aplikasi."
-cd "$APP"
-APP=$(pwd -P)
-systemctl is-active --quiet "$SERVICE" || fail 'Service harus aktif agar konfigurasi DB/runtime yang benar dapat diperiksa. Jangan menebak path DB.'
-[[ "$(systemctl show "$SERVICE" -p DynamicUser --value)" != yes ]] || fail 'Service DynamicUser perlu prosedur khusus; akun OS tidak boleh ditebak setelah stop.'
-PID=$(systemctl show "$SERVICE" -p MainPID --value)
-[[ "$PID" =~ ^[1-9][0-9]*$ ]] || fail 'PID service tidak ditemukan.'
-TMP=$(mktemp -d /tmp/fiberops-update.XXXXXXXX)
-chmod 755 "$TMP"
-
-# Baca hanya field yang diperlukan. Isi environment/kredensial tidak dicetak.
-node --input-type=module - "$PID" "$APP" >"$TMP/context" <<'NODE_CONTEXT'
-import fs from 'node:fs';
-import path from 'node:path';
-const [pid,app]=process.argv.slice(2),base=`/proc/${pid}`;
-const env=Object.fromEntries(fs.readFileSync(`${base}/environ`,'utf8').split('\0').filter(Boolean).map(s=>{const n=s.indexOf('=');return[s.slice(0,n),s.slice(n+1)];}));
-const args=fs.readFileSync(`${base}/cmdline`,'utf8').split('\0').filter(Boolean),cwd=fs.realpathSync(`${base}/cwd`);
-const node=fs.readlinkSync(`${base}/exe`),status=fs.readFileSync(`${base}/status`,'utf8');
-if(!/^node(?:js)?$/.test(path.basename(node))||path.resolve(cwd,args[1]||'')!==path.join(app,'server.mjs'))throw Error('Service bukan Node server.mjs langsung; perlu panduan khusus (npm/PM2/Docker/wrapper tidak ditebak).');
-if(args.some(a=>/^--(?:env-file|env-file-if-exists|require|import|loader|experimental-loader|eval)(?:=|$)|^-(?:r|e)$/.test(a))||/(?:--env-file|--require|--import|--loader|--experimental-loader|(?:^|\s)-r(?:\s|$))/.test(env.NODE_OPTIONS||''))throw Error('Ada pemuat environment/module tambahan; path DB efektif perlu diperiksa manual.');
-if(env.NODE_ENV!=='production')throw Error('Service belum memakai NODE_ENV=production. Skrip tidak mengubah konfigurasi otomatis; periksa unit/environment dahulu.');
-if(!fs.existsSync(node))throw Error('Executable Node service sudah dipindah/dihapus.');
-const db=fs.realpathSync(path.resolve(cwd,env.ARENA_DB_PATH||path.join(app,'data/fiberops.db'))),st=fs.statSync(db);
-if(!st.isFile())throw Error('DB bukan file biasa.');
-const holdsDb=fs.readdirSync(`${base}/fd`).some(fd=>{try{const x=fs.statSync(`${base}/fd/${fd}`);return x.dev===st.dev&&x.ino===st.ino;}catch{return false;}});
-if(!holdsDb)throw Error('DB pada konfigurasi tidak cocok dengan file yang dibuka PID service. Jangan lanjut.');
-let host=env.ARENA_API_HOST||'0.0.0.0';if(host==='0.0.0.0')host='127.0.0.1';if(host==='::')host='::1';if(host.includes(':')&&!host.startsWith('['))host=`[${host}]`;
-const port=Number(env.ARENA_API_PORT||4500);if(!Number.isInteger(port)||port<1||port>65535)throw Error('Port service tidak valid.');
-const uid=status.match(/^Uid:\s+\d+\s+(\d+)/m)?.[1],gid=status.match(/^Gid:\s+\d+\s+(\d+)/m)?.[1];if(!uid||!gid)throw Error('UID/GID service tidak terbaca.');
-for(const value of [node,db,uid,gid,`http://${host}:${port}/healthz`])process.stdout.write(value+'\0');
-NODE_CONTEXT
-mapfile -d '' -t CTX <"$TMP/context"
-(( ${#CTX[@]} == 5 )) || fail 'Konteks service tidak lengkap.'
-NODE=${CTX[0]}; DB=${CTX[1]}; UID_SERVICE=${CTX[2]}; GID_SERVICE=${CTX[3]}; HEALTH=${CTX[4]}
-SERVICE_USER=$(getent passwd "$UID_SERVICE" | cut -d: -f1)
-SERVICE_GROUP=$(getent group "$GID_SERVICE" | cut -d: -f1)
-CODE_USER=$(getent passwd "$(stat -c %u "$APP/.git")" | cut -d: -f1)
-[[ -n "$SERVICE_USER" && -n "$SERVICE_GROUP" && -n "$CODE_USER" ]] || fail 'Akun OS service/pemilik Git tidak dapat ditemukan.'
-export PATH="$(dirname "$NODE"):$PATH"
-run_code() { "$RUNUSER" -u "$CODE_USER" -- env PATH="$PATH" "$@"; }
-run_service() { "$RUNUSER" -u "$SERVICE_USER" -g "$SERVICE_GROUP" -- env PATH="$PATH" "$@"; }
-"$NODE" -e 'const [a,b]=process.versions.node.split(".").map(Number);if(a<22||(a===22&&b<13)){console.error("Perlu Node 22.13+ pada runtime service");process.exit(1)}'
-run_code "$NODE" --version
-run_service "$NODE" --version
-[[ "$(run_code git rev-parse --show-toplevel)" == "$APP" ]] || fail 'Root Git tidak cocok.'
-[[ "$(run_code git branch --show-current)" == main ]] || fail 'Checkout Proxmox belum berada di main; periksa branch manual dahulu.'
-[[ -z "$(run_code git status --porcelain)" ]] || fail 'Ada perubahan lokal. Simpan/tinjau dulu; skrip tidak menimpa perubahan tersebut.'
-
-printf '\n[1/6] Mengambil referensi main (belum mengubah kode/DB)...\n'
-run_code git fetch origin
-OLD=$(run_code git rev-parse HEAD)
-TARGET=$(run_code git rev-parse origin/main)
-run_code git merge-base --is-ancestor "$OLD" "$TARGET" || fail 'main lokal bukan ancestor origin/main. Tidak melakukan merge/reset paksa.'
-for file in scripts/backup.mjs scripts/preflight.mjs server/security.mjs; do
-  run_code git cat-file -e "$TARGET:$file" || fail 'main belum memuat perbaikan pra-deploy. Merge PR yang benar dahulu.'
-done
-# Helper backup mandiri diambil tanpa checkout/pull; backup tetap mendahului perubahan kode.
-run_code git show "$TARGET:scripts/backup.mjs" >"$TMP/backup.mjs"
-run_code git show "$TARGET:server/security.mjs" >"$TMP/security.mjs"
-chmod 644 "$TMP/backup.mjs" "$TMP/security.mjs"
-# Tolak akun/hash bermasalah sebelum mematikan layanan. Tidak mengganti password.
-run_service "$NODE" --input-type=module - "$DB" "$TMP/security.mjs" <<'NODE_ACCOUNTS'
-import {DatabaseSync} from 'node:sqlite';
-import {pathToFileURL} from 'node:url';
-const {FACTORY_PASSWORD,verifyPassword,validStoredPasswordHash}=await import(pathToFileURL(process.argv[3]));
-const db=new DatabaseSync(process.argv[2],{readOnly:true});
-try{const users=db.prepare('SELECT role,password_hash FROM users').all();
-if(users.some(u=>!validStoredPasswordHash(u.password_hash)))throw Error('Ada hash akun tidak valid; periksa/rotasi secara lokal dahulu.');
-const factory=users.filter(u=>verifyPassword(FACTORY_PASSWORD,u.password_hash)).length;
-if(factory)throw Error(`${factory} akun masih berpassword pabrik (termasuk akun demo sisa). Rotasi secara lokal dahulu; akun pribadi tidak direset.`);
-if(!users.some(u=>u.role==='admin'&&!verifyPassword(FACTORY_PASSWORD,u.password_hash)))throw Error('Belum ada admin pribadi yang valid.');
-console.log('Akun/hash lolos pemeriksaan awal; password dan identitas tidak diubah.');}finally{db.close();}
-NODE_ACCOUNTS
-install -d -o root -g root -m 700 "$BACKUP_BASE"
-BACKUP=$(mktemp -d "$BACKUP_BASE/update-$(date +%Y%m%d-%H%M%S).XXXXXXXX")
-printf '%s\n' "$OLD" >"$BACKUP/commit-before.txt"
-printf '%s\n' "$TARGET" >"$BACKUP/commit-target.txt"
-printf '%s\n' "$DB" >"$BACKUP/database-path.txt"
-systemctl cat "$SERVICE" >"$BACKUP/service-before.txt"
-run_code git archive --format=tar "$OLD" | gzip >"$BACKUP/code-before.tar.gz"
-if [[ -d dist ]]; then tar -czpf "$BACKUP/dist-before.tar.gz" dist; fi
-printf 'Service: %s | User OS: %s | DB: %s\nBackup: %s\n' "$SERVICE" "$SERVICE_USER" "$DB" "$BACKUP"
-
-printf '\n[2/6] Maintenance: menghentikan service dan memeriksa penulis DB...\n'
-STOPPED=1
-systemctl stop "$SERVICE"
-[[ "$(systemctl show "$SERVICE" -p MainPID --value)" == 0 ]] || fail 'PID service masih hidup.'
-# Gagal tertutup bila ada proses lain yang masih membuka DB/WAL/SHM.
-"$NODE" --input-type=module - "$DB" <<'NODE_WRITERS'
-import fs from 'node:fs';
-const wanted=new Set([process.argv[2],process.argv[2]+'-wal',process.argv[2]+'-shm']),found=[];
-for(const pid of fs.readdirSync('/proc').filter(p=>/^\d+$/.test(p))){let fds;try{fds=fs.readdirSync(`/proc/${pid}/fd`);}catch(e){if(e.code==='ENOENT')continue;throw e;}for(const fd of fds){try{if(wanted.has(fs.readlinkSync(`/proc/${pid}/fd/${fd}`)))found.push(pid);}catch(e){if(e.code!=='ENOENT'&&e.code!=='EINVAL')throw e;}}}
-if(found.length)throw Error(`DB masih dibuka PID ${[...new Set(found)].join(', ')}. Hentikan penulis/pembaca lain dahulu.`);
-NODE_WRITERS
-SNAP=$(mktemp -d /tmp/fiberops-snapshot.XXXXXXXX)
-chown "$UID_SERVICE:$GID_SERVICE" "$SNAP"
-run_service "$NODE" "$TMP/backup.mjs" "$DB" "$SNAP/database.db"
-install -o root -g root -m 600 "$SNAP/database.db" "$BACKUP/database.db"
-
-cat >"$TMP/inventory.mjs" <<'NODE_INVENTORY'
-import {DatabaseSync} from 'node:sqlite';
-const db=new DatabaseSync(process.argv[2],{readOnly:true}),out={};
-try{for(const t of ['users','olts','olt_cards','olt_ports','odcs','odps','splitters','splitter_outputs','core_assignments','core_links','odc_feeder_ports','interface_mappings'])if(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(t))out[t]=db.prepare(`SELECT id FROM ${t} ORDER BY id`).all().map(r=>r.id);console.log(JSON.stringify(out));}finally{db.close();}
-NODE_INVENTORY
-chmod 644 "$TMP/inventory.mjs"
-"$NODE" "$TMP/inventory.mjs" "$BACKUP/database.db" >"$BACKUP/inventory-before.json"
-printf 'Snapshot SQLite konsisten tersimpan (termasuk transaksi WAL).\n'
-
-printf '\n[3/6] Memperbarui kode dengan fast-forward dan build dari lockfile...\n'
-[[ "$(run_code git rev-parse HEAD)" == "$OLD" && -z "$(run_code git status --porcelain)" ]] || fail 'Checkout berubah saat maintenance.'
-run_code git merge --ff-only "$TARGET"
-run_code npm ci --include=dev
-run_code npm run build
-
-printf '\n[4/6] Preflight DB sebelum startup (tidak mereset akun/inventaris)...\n'
-run_service "$NODE" scripts/preflight.mjs "$DB" | tee "$BACKUP/preflight-before.log"
-if grep -q '^CEK   ' "$BACKUP/preflight-before.log"; then
-  printf '\nAda peringatan di atas. Jika perlu koreksi fisik/mapping, jangan lanjut.\n'
-  read -r -p 'Setelah membaca peringatan, ketik LANJUT untuk startup: ' ANSWER </dev/tty
-  [[ "$ANSWER" == LANJUT ]] || fail 'Startup ditunda atas pilihan operator.'
-fi
-
-printf '\n[5/6] Menyalakan service dan memeriksa health...\n'
-systemctl start "$SERVICE"
-curl --fail --silent --show-error --retry 15 --retry-delay 1 --retry-connrefused --retry-max-time 45 --max-time 3 "$HEALTH" >"$BACKUP/health.json"
-systemctl is-active --quiet "$SERVICE" || fail 'Service tidak aktif setelah startup.'
-"$NODE" -e 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));if(d.ok!==true||d.service!=="fiberops-arena-api")process.exit(1)' "$BACKUP/health.json"
-
-printf '\n[6/6] Preflight ulang dan pemeriksaan ID inventaris...\n'
-run_service "$NODE" scripts/preflight.mjs "$DB" | tee "$BACKUP/preflight-after.log"
-run_service "$NODE" "$TMP/inventory.mjs" "$DB" >"$BACKUP/inventory-after.json"
-"$NODE" --input-type=module - "$BACKUP/inventory-before.json" "$BACKUP/inventory-after.json" <<'NODE_COMPARE'
-import fs from 'node:fs';
-const [before,after]=process.argv.slice(2).map(p=>JSON.parse(fs.readFileSync(p,'utf8')));
-for(const [table,ids] of Object.entries(before)){const current=new Set(after[table]||[]);if(ids.some(id=>!current.has(id)))throw Error(`Ada ID lama yang tidak ditemukan pada ${table}; tunda penggunaan dan periksa backup.`);}
-console.log('Semua ID akun/inventaris sebelum update masih ditemukan. Ini bukan validasi kabel atau seluruh nilai field.');
-NODE_COMPARE
-systemctl status "$SERVICE" --no-pager --lines=8
-STOPPED=0
-printf '\nUPDATE SELESAI. Backup privat: %s\n' "$BACKUP"
-printf 'Hard-refresh Ctrl+Shift+R, login dengan akun pribadi, lalu cek inventaris/jalur serta PDF/CSV.\n'
-printf 'Salin backup ke storage lain. Jangan unggah database, file konfigurasi, atau kredensial ke chat.\n'
-FIBEROPS_UPDATE
-bash "$_update_file"
+  APP=${FIBEROPS_APP_DIR:-/opt/fiberops}
+  cd "$APP"
+  test -d .git || { echo 'TUNDA: checkout .git tidak ditemukan.' >&2; exit 1; }
+  OWNER=$(getent passwd "$(stat -c %u .git)" | cut -d: -f1)
+  test -n "$OWNER" || { echo 'TUNDA: pemilik checkout tidak ditemukan.' >&2; exit 1; }
+  as_owner() { runuser -u "$OWNER" -- git "$@"; }
+  as_owner fetch origin
+  TARGET=$(as_owner rev-parse --verify 'origin/main^{commit}')
+  LAUNCH=$(mktemp -d /tmp/fiberops-existing-launch.XXXXXXXX)
+  trap 'rm -rf -- "$LAUNCH"' EXIT
+  for FILE in update-existing.sh check-existing-update.mjs; do
+    if ! as_owner show "$TARGET:scripts/$FILE" >"$LAUNCH/$FILE"; then
+      echo 'TUNDA: main belum memuat helper existing; merge PR pendukung dahulu. Service/DB belum diubah.' >&2
+      exit 1
+    fi
+  done
+  bash -n "$LAUNCH/update-existing.sh"
+  FIBEROPS_EXPECTED_TARGET="$TARGET" bash "$LAUNCH/update-existing.sh"
 )
 ```
+<!-- existing-update-launcher:end -->
 
-## Sesudah selesai
+Bila path/unit berbeda, **jangan menebak**. Setelah memastikan instalasinya, variabel yang didukung adalah `FIBEROPS_APP_DIR`, `FIBEROPS_SERVICE`, dan `FIBEROPS_BACKUP_DIR` (default `/var/backups/fiberops/existing`, harus di luar checkout/DB). Direktori backup yang sudah ada harus root:root-0700; jika tidak, pilih subdirektori privat baru. Updater tidak diam-diam mengubah izin direktori existing. Bootstrap dan helper menggunakan variabel yang sama; environment aplikasi tetap diambil dari service, bukan dari shell operator.
 
-- Pastikan ada pesan **`UPDATE SELESAI`**, bukan hanya build berhasil.
-- Buka alamat aplikasi yang biasa dipakai, tekan **Ctrl+Shift+R**, lalu login memakai akun/password pribadi yang sama. Upgrade keamanan dapat mengeluarkan sesi lama sekali; ini bukan penghapusan user.
-- Bandingkan inventaris, shelf/slot C300/C320, sampel interface→core→receiver/splitter→ODP, akses operator/reader, serta PDF/CSV. Health dan ID yang tetap ada tidak membuktikan semua nilai field atau kabel sudah benar.
-- Script mencetak lokasi seperti **`/var/backups/fiberops/update-...`**. Isinya snapshot SQLite konsisten termasuk transaksi WAL, revision lama/tujuan, arsip kode tracked, `dist` lama bila tersedia, unit service, log dan daftar ID. Direktori privat 0700, snapshot DB 0600. Simpan salinan backup ke storage lain; jangan unggah DB, konfigurasi, atau isinya ke chat.
+Jika ada baris `CEK`, baca dahulu. Ketik **`LANJUT` hanya bila memahami peringatannya**. Jawaban lain atau tidak adanya terminal interaktif akan menunda. Jangan meneruskan bila fisik/kapasitas/data belum cocok. ODP tanpa splitter ditolak pada jalur pelestarian karena startup aplikasi existing bisa menambahkan 1:8; tidak diisi otomatis oleh updater ini.
 
-## Jika berhenti / gagal
+## 3. Kapan dianggap selesai?
 
-- **Sebelum maintenance:** layanan lama belum diminta berhenti. Contoh: main belum memuat helper, Git kotor/divergen, mode bukan production, akun demo berpassword pabrik masih ada, atau runtime tidak didukung.
-- **Setelah maintenance dimulai:** script mencoba menghentikan service dan meninggalkannya berhenti. Ini sengaja untuk mencegah penggunaan kode/data yang belum lolos pemeriksaan. Snapshot DB hanya sah jika pembuatan snapshot berhasil; direktori backup dapat sudah ada sebelum snapshot selesai.
-- **Tidak ada rollback otomatis.** Jangan menjalankan restart berulang, menghapus DB/WAL/volume, atau `git reset --hard`. Kirim hanya pesan error relevan, bukan file backup/environment/password, agar pemulihan pasangan kode + DB dapat disesuaikan dengan kondisi sebenarnya. Panduan pemulihan tersedia di [DEPLOY-PROXMOX.md](DEPLOY-PROXMOX.md).
+Tunggu **`UPDATE EXISTING SELESAI`**, bukan hanya build selesai. Updater memeriksa:
 
-## Batas pengujian
+1. Backup SQLite `VACUUM INTO` konsisten (termasuk transaksi WAL committed), kode/dist lama, unit dan commit sebelum/target. Folder backup root-0700 dan DB backup root-0600; DB existing tidak di-chown/chmod.
+2. Semua kolom lama, nilai/baris/ID eksplisit, hash akun, field/tabel tambahan dan penghitung ID lama identik sebelum login; tabel/kolom baru diperbolehkan. `sessions` dan `security_migrations` dikecualikan secara eksplisit, bukan seluruh tabel akun.
+3. Probe startup pada salinan dengan user/group/mode/environment service yang sama; hanya path DB, bind loopback dan port probe yang diganti. Tidak memakai DB asli untuk percobaan migrasi.
+4. `/healthz`, PID/runtime, path DB, UID/GID, mode dan variabel `ARENA_*`/Node tetap sesuai setelah service berjalan; manifest dan preflight diulang pada DB existing.
 
-Sumber script: [scripts/update-native.sh](scripts/update-native.sh). `bash -n` dan **15 skenario fixture sementara** lulus: jalur normal, mode development, DynamicUser, perubahan lokal, branch salah, helper belum merge, backup gagal, password pabrik, build gagal, startup gagal, ID lama hilang, DB dibuka proses lain, serta peringatan disetujui/ditolak/tanpa terminal. Fixture memakai API/SQLite dan perpindahan UID Linux nyata, tetapi **Git/npm/systemctl dimock**; ini bukan eksekusi pada Proxmox Anda. Password pribadi dengan hash legacy juga diuji tetap dapat login setelah konfirmasi peringatan.
+Setelah itu, **periksa manual sebelum operator kembali input**:
 
-Script **tidak mengubah unit/environment, konfigurasi HTTPS/proxy/firewall atau inventaris fisik**, dan tidak menjanjikan deployment pasti berhasil pada semua konfigurasi. Jika pemeriksaan menolak setup, jangan menonaktifkan pengamannya; sesuaikan panduan berdasarkan pesan yang muncul.
+- `systemctl status fiberops.service --no-pager` dan `curl --fail http://127.0.0.1:8080/healthz` sesuai port aktual.
+- Login memakai akun/password yang sama; cocokkan role, jumlah **terakhir sebelum update** (bukan selalu angka contoh 1/6/80/62/2), lalu buka beberapa OLT/card/port, ODC/ODP, core, notes, feeder dan receiver yang sudah diinput.
+- Cek GPS/layer jalur yang memang Anda simpan. Tidak ada permintaan mengunggah ulang, mengarang GPS, atau mengimpor data contoh.
+- Simpan path backup/commit yang tercetak. Migrasi sesi mungkin meminta login ulang; hash legacy bisa berubah sesudah login valid, tetapi password pengguna tetap sama.
+
+Jangan menganggap peringatan keamanan sudah selesai hanya karena pelestarian data lulus. Hardening akun/jaringan adalah pekerjaan terpisah yang perlu keputusan operator.
+
+## 4. Bila `TUNDA` / gagal
+
+**Sebelum maintenance:** service belum diminta berhenti; kode, akun dan DB belum diperbarui. `fetch` boleh sudah memperbarui ref Git. Jangan memaksa lewat `reset --hard`, seed, ganti volume, atau mengganti password agar uji lewat.
+
+**Sesudah maintenance dimulai:** updater mencoba menghentikan service dan **tidak melakukan rollback otomatis**. Konfirmasi `systemctl status`; bila stop gagal, anggap masih ada proses aktif dan jangan menyalin DB. Backup bisa belum lengkap bila kegagalan terjadi pada snapshot. Baca pesan/log privat dan pastikan `database.db`, manifest serta arsip kode/dist benar-benar tersedia sebelum memilih pemulihan.
+
+Untuk pemulihan, hentikan semua penulis DB, simpan keadaan gagal secara privat, lalu uji **pasangan kode lama + DB backup lama** pada salinan/clone terlebih dahulu. Pulihkan melalui backup Proxmox yang sudah diuji atau konsep [restore/rollback](DEPLOY-PROXMOX.md#d-backup-berkala--restorerollback) setelah memeriksa path/unit/ownership dan pasangan backup. Backup updater ini root-privat: jangan menyalin contoh pembacaan backup sebagai `fiberops` secara mentah atau membuka izin backup; gunakan root atau salinan staging privat dengan ownership yang tepat. Jangan menimpa DB aktif, mengembalikan kode saja setelah migrasi, atau mencampur WAL/SHM lama dengan DB lain. Jangan lanjut input sampai pemulihan diverifikasi.
+
+Backup sebelum update tidak memuat input setelah timestamp backup. Restore backup lama dapat membuang input yang dibuat sesudahnya; itulah sebabnya operator harus tetap berhenti input selama maintenance dan verifikasi. Uji otomatis menguji rollback **pada salinan**, bukan menjanjikan rollback Proxmox otomatis.
+
+## Jalur lain: instalasi baru / produksi ketat
+
+[DEPLOY-PROXMOX.md](DEPLOY-PROXMOX.md) dan [`scripts/update-native.sh`](scripts/update-native.sh) tetap tersedia untuk produksi ketat dengan akun nonpabrik. **Jangan dicampur** ke jalur existing di atas hanya untuk memperbarui kode. Kedua updater berbagi lock agar tidak berjalan bersamaan. Prosedur di sini tidak menjalankan CLI pembuatan akun/rotasi password dan tidak mengubah pengaman login aplikasi.
