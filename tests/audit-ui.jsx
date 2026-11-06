@@ -136,7 +136,11 @@ export async function run({ request, admin, reader, fixtures: [A, B], hardware: 
       await mount("/odp"); await waitFor(() => row(A.p.name)); click(row(A.p.name)); await waitFor(() => captured && core(3));
       click(row(B.p.name)); await waitFor(() => core(3)?.title.includes("Reserved") && !core(3).disabled); hold.release(); await delay(80);
       assert.ok(core(3).title.includes("Reserved")); click(core(3)); await waitFor(() => field("Catatan")?.value === "Catatan-B");
-      click(row(A.p.name)); await waitFor(() => !host.querySelector(".modal-overlay"));
+      // Latar dialog tidak dapat diklik pengguna. Percobaan programatik tidak
+      // boleh mengganti pilihan/draft; perubahan URL (mis. Back) tetap harus
+      // membuang modal dan respons milik perangkat sebelumnya.
+      click(row(A.p.name)); await delay(30); assert.ok(host.querySelector(".modal-overlay")); assert.equal(field("Catatan").value, "Catatan-B");
+      navigate(`/odp?odp=${A.p.id}`); await waitFor(() => !host.querySelector(".modal-overlay") && core(3)?.title.includes("Rusak") && !core(3).disabled);
     });
     await check("reload sesudah simpan port tidak menimpa card/port OLT yang baru dipilih", async () => {
       const hold = gate(); let armed = false, captured = false;

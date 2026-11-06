@@ -34,3 +34,6 @@ data/
 
 # Artefak uji cache/race jalur impor
 .uji-routes/
+
+# Artefak uji navigasi daftar ODC/ODP
+.uji-navigation/

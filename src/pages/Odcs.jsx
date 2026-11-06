@@ -1,5 +1,7 @@
 import CoordinateFields from "../components/CoordinateFields.jsx";
 import { coordinateForm } from "../lib/coordinates.js";
+import { useDeviceEditorNavigation } from "../lib/use-device-editor-navigation.js";
+import DeviceEditorHeader from "../components/DeviceEditorHeader.jsx";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { interfaceLabel } from "../lib/interfaces.js";
@@ -89,6 +91,7 @@ export default function Odcs() {
   }
 
   const selected = odcs.find((d) => d.id === selectedId);
+  const navigation = useDeviceEditorNavigation({ selectedId: selected?.id, onSelect: setSelectedId, blocked: !!modal || (canWrite && params.get("edit") === "1") });
   useEffect(() => {
     if (params.get("edit") !== "1" || !selected || !canWrite) return;
     setForm({ ...coordinateForm(selected), name: selected.name, olt_id: selected.olt_id, location: selected.location || "",
@@ -123,7 +126,7 @@ export default function Odcs() {
 
   return (
     <div>
-      <PageHeader title="Manajemen ODC" desc="Optical Distribution Cabinet — klik baris untuk mengelola core.">
+      <PageHeader title="Manajemen ODC" desc="Optical Distribution Cabinet — klik nama/baris untuk langsung ke area input core, interface, dan splitter.">
         {canWrite && (
           <button
             className="btn btn-primary"
@@ -137,7 +140,7 @@ export default function Odcs() {
         )}
       </PageHeader>
 
-      <div className="mb-3 flex flex-wrap items-center gap-3">
+      <div ref={navigation.listRef} role="region" aria-label="Daftar ODC" tabIndex={-1} className="mb-3 flex scroll-mt-16 flex-wrap items-center gap-3 focus:outline-none">
         <SearchBox
           value={query}
           onChange={setQuery}
@@ -146,6 +149,11 @@ export default function Odcs() {
         />
         {query && (
           <span className="text-xs text-mut">{shownOdcs.length} dari {odcs.length} ODC</span>
+        )}
+        {selected && (
+          <button type="button" className="btn text-xs" aria-label={`Ke area input ODC ${selected.name}`} onClick={() => navigation.open(selected.id)}>
+            Ke area input ODC
+          </button>
         )}
       </div>
 
@@ -167,12 +175,22 @@ export default function Odcs() {
             {shownOdcs.map((d) => (
               <tr
                 key={d.id}
+                data-device-row={d.id}
                 className={`cursor-pointer border-b border-line-soft last:border-0 hover:bg-panel2 ${d.id === selectedId ? "bg-panel2" : ""}`}
-                onClick={() => setSelectedId(d.id === selectedId ? null : d.id)}
+                onClick={() => navigation.open(d.id)}
               >
                 <td className="td font-medium">
-                  <span className="mr-2 inline-block text-emerald-400"><Boxes size={14} /></span>
-                  {d.name}
+                  <button
+                    type="button"
+                    ref={d.id === selectedId ? navigation.rowRef : undefined}
+                    aria-label={`Buka area input ODC ${d.name}`}
+                    aria-current={d.id === selectedId ? "true" : undefined}
+                    className="inline-flex scroll-mt-16 items-center gap-2 rounded text-left text-acc hover:underline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-acc"
+                    onClick={(event) => { event.stopPropagation(); navigation.open(d.id); }}
+                  >
+                    <span className="shrink-0 text-emerald-400"><Boxes size={14} /></span>
+                    {d.name}
+                  </button>
                 </td>
                 <td className="td text-mut">
                   {d.olt_name}
@@ -236,26 +254,31 @@ export default function Odcs() {
         </table>
       </Card>
 
-      {selected && <div className="mt-6"><FeederInterfaceManager reloadKey={networkVersion} key={`${selected.id}:${selected.cable_type}:${feederOf(selected.id).map((f) => f.port_id).join(",")}`} odcId={selected.id} cableType={selected.cable_type} /></div>}
-
       {selected && (
-        <Card className="mt-6">
-          <CoreManager
-            key={`${selected.id}:${selected.cable_type}`}
-            reloadKey={networkVersion}
-            onChanged={networkChanged}
-            source="olt_to_odc"
-            parentId={selected.id}
-            cableType={selected.cable_type}
-            title={`Core OLT → ${selected.name}`}
-          />
-        </Card>
-      )}
-
-      {selected && (
-        <Card className="mt-6">
-          <SplitterManager key={`${selected.id}:${selected.cable_type}`} onChanged={networkChanged} parentType="odc" parentId={selected.id} title={`Splitter di ${selected.name}`} />
-        </Card>
+        <section className="mt-6 min-h-[calc(100dvh-4rem)]" data-device-editor="odc" aria-labelledby="odc-input-title">
+          <DeviceEditorHeader kind="ODC" device={selected} parent={`OLT induk: ${selected.olt_name || "—"}`} canWrite={canWrite} navigation={navigation} />
+          <div ref={navigation.firstRef} role="region" aria-label={`Interface feeder ${selected.name}`} tabIndex={-1} className="scroll-mt-16 focus:outline-none">
+            <FeederInterfaceManager reloadKey={networkVersion} key={`${selected.id}:${selected.cable_type}:${feederOf(selected.id).map((f) => f.port_id).join(",")}`} odcId={selected.id} cableType={selected.cable_type} />
+          </div>
+          <div ref={navigation.coreRef} role="region" aria-label={`Core ODC ${selected.name}`} tabIndex={-1} className="mt-6 scroll-mt-16 focus:outline-none">
+            <Card>
+              <CoreManager
+                key={`${selected.id}:${selected.cable_type}`}
+                reloadKey={networkVersion}
+                onChanged={networkChanged}
+                source="olt_to_odc"
+                parentId={selected.id}
+                cableType={selected.cable_type}
+                title={`Core OLT → ${selected.name}`}
+              />
+            </Card>
+          </div>
+          <div ref={navigation.splitterRef} role="region" aria-label={`Splitter ODC ${selected.name}`} tabIndex={-1} className="mt-6 scroll-mt-16 focus:outline-none">
+            <Card>
+              <SplitterManager key={`${selected.id}:${selected.cable_type}`} onChanged={networkChanged} parentType="odc" parentId={selected.id} title={`Splitter di ${selected.name}`} />
+            </Card>
+          </div>
+        </section>
       )}
 
       <Modal busy={saving} open={!!modal} title={modal?.mode === "add" ? "Tambah ODC" : "Edit ODC"} onClose={() => { if (!saving) setModal(null); }}>
