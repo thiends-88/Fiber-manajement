@@ -73,6 +73,7 @@ Setelah itu, **periksa manual sebelum operator kembali input**:
 
 - `systemctl status fiberops.service --no-pager` dan `curl --fail http://127.0.0.1:8080/healthz` sesuai port aktual.
 - Login memakai akun/password yang sama; cocokkan role, jumlah **terakhir sebelum update** (bukan selalu angka contoh 1/6/80/62/2), lalu buka beberapa OLT/card/port, ODC/ODP, core, notes, feeder dan receiver yang sudah diinput.
+- Di daftar ODC **dan** ODP, klik nama/baris pertama dan salah satu perangkat di akhir daftar: harus langsung membuka area input perangkat yang benar. Coba tombol **Core**, **Interface feeder / Asal interface**, **Splitter**, dan **Kembali ke daftar** pada desktop/HP. Klik ulang tidak menghapus pilihan atau menyimpan data. Bila UI masih lama, hard-refresh (Ctrl+F5). Navigasi baru ini ikut PR #11, sehingga harus sudah di-merge bersama helper sebelum update.
 - Cek GPS/layer jalur yang memang Anda simpan. Tidak ada permintaan mengunggah ulang, mengarang GPS, atau mengimpor data contoh.
 - Simpan path backup/commit yang tercetak. Migrasi sesi mungkin meminta login ulang; hash legacy bisa berubah sesudah login valid, tetapi password pengguna tetap sama.
 

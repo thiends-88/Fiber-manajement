@@ -444,6 +444,7 @@ Backend membatasi **30 percobaan login/10 menit/alamat klien**, termasuk login b
 - [ ] Sampel satu jalur C300 dan C320 ditelusuri dari interface → core feeder → splitter/cascade → ODC anak/ODP; receiver/labelnya sesuai fisik. Data belum diketahui tetap **Belum dipetakan**.
 - [ ] Port **aktif** adalah status manual; **terpakai** adalah mapping eksplisit yang valid, sekali per port. Keduanya dapat tumpang tindih, bukan penjumlahan atau deteksi OLT langsung.
 - [ ] Pencarian/filter, edit yang disengaja, pembatalan form, desktop/mobile dan tiga laporan lama tetap bekerja.
+- [ ] Klik nama/baris ODC **dan** ODP langsung ke area input ID yang dipilih, termasuk baris akhir daftar; shortcut Core/interface/splitter dan kembali ke daftar bekerja pada desktop/HP tanpa mengubah inventaris.
 - [ ] CSV terunduh sesuai filter; **Lihat PDF** benar-benar menampilkan halaman/canvas, bukan hanya modal; file PDF dapat diunduh.
 - [ ] HTTPS/cookie Secure dan origin proxy benar; port backend tidak terbuka untuk publik; health/log tidak mengandung error baru.
 

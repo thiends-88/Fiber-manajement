@@ -151,6 +151,25 @@ memakai bootstrap admin tanpa menambah inventaris fiktif.
 **Panduan teknisi, contoh ZTE, penyiapan HSGQ, dan cakupan model kabel:**
 [PANDUAN-INTERFACE.md](PANDUAN-INTERFACE.md).
 
+## Langsung ke input ODC / ODP
+
+Untuk daftar perangkat yang panjang, **klik nama atau baris ODC/ODP**: tampilan
+langsung berpindah ke area input perangkat itu, tanpa menggulir daftar manual.
+Nama/induk perangkat tetap terlihat agar input tidak tertukar.
+
+- Gunakan tombol **Core**, **Interface feeder / Asal interface**, atau **Splitter**
+  untuk menuju bagian yang dibutuhkan.
+- **Kembali ke daftar ODC/ODP** membawa fokus ke perangkat yang sama; filter
+  pencarian tetap dipertahankan. **Ke area input ODC/ODP** membuka kembali panel.
+- Klik perangkat yang sama tidak menutup pilihan atau memuat ulang data.
+  Keyboard **Enter/Space**, URL pilihan, Back/Forward dan tampilan HP didukung.
+- Membuka area input hanya navigasi, **bukan menyimpan/mengubah inventaris**.
+  Form, ID, hak akses dan data lama tetap dipakai; peran pembaca tetap mode baca.
+
+Fitur ini ditambahkan pada **PR #11**, bukan PR #10. Gunakan setelah perubahan
+sudah di-merge dan instalasi diperbarui; hasil uji/batas jaminan tercatat di
+[laporan update dan navigasi](UJI-UPDATE-EXISTING-2026-11-06.md).
+
 ## Tampilan (mode + warna)
 
 Tampilan diatur dari **tombol di pojok kanan atas** (tersedia juga di halaman
@@ -253,12 +272,14 @@ npm run test:interfaces # penamaan, sumber jalur, API baru, persistensi, migrasi
 npm run test:interfaces:ui # alur pencatatan interface → ODC → mapping → ODP
 npm run test:audit    # 47 skenario: sesi, pengamanan sambungan, race UI
 npm run test:dashboard # 31 skenario API/UI: per OLT/card, hitungan, port bawaan, refresh
+npm run test:navigation # 28 cek DOM: pilih ODC/ODP langsung ke input; termasuk npm test
 npm run test:layout   # server tetap jalan hanya dengan file yang disalin Dockerfile
 npm run test:predeploy # 57 pemeriksaan keamanan, restart, bootstrap, backup WAL, preflight
 npm run test:regression # 46 regresi: otorisasi tertunda, simpan atomik, dependency
 npm run test:map      # 193 pemeriksaan: peta/GPS/KMZ + impor/store/API/worker/cache jalur
 npm run test:routes   # 77 pemeriksaan jalur saja (bagian dari test:map/npm test)
 # Opt-in: Chromium lokal terpasang; tidak mengunduh browser otomatis:
+CHROMIUM_EXECUTABLE=/usr/bin/chromium npm run test:navigation:browser # 35 cek nyata desktop/HP, no-write dan pelestarian data
 CHROMIUM_EXECUTABLE=/usr/bin/chromium npm run test:browser # 20 skenario browser produksi
 CHROMIUM_EXECUTABLE=/usr/bin/chromium npm run test:map:browser # 29 skenario Leaflet/KMZ/GPS/layar penuh
 CHROMIUM_EXECUTABLE=/usr/bin/chromium npm run test:routes:browser # 22 skenario impor/Canvas/worker/mobile
