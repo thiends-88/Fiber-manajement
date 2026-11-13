@@ -151,6 +151,25 @@ memakai bootstrap admin tanpa menambah inventaris fiktif.
 **Panduan teknisi, contoh ZTE, penyiapan HSGQ, dan cakupan model kabel:**
 [PANDUAN-INTERFACE.md](PANDUAN-INTERFACE.md).
 
+## Langsung ke input ODC / ODP
+
+Untuk daftar perangkat yang panjang, **klik nama atau baris ODC/ODP**: tampilan
+langsung berpindah ke area input perangkat itu, tanpa menggulir daftar manual.
+Nama/induk perangkat tetap terlihat agar input tidak tertukar.
+
+- Gunakan tombol **Core**, **Interface feeder / Asal interface**, atau **Splitter**
+  untuk menuju bagian yang dibutuhkan.
+- **Kembali ke daftar ODC/ODP** membawa fokus ke perangkat yang sama; filter
+  pencarian tetap dipertahankan. **Ke area input ODC/ODP** membuka kembali panel.
+- Klik perangkat yang sama tidak menutup pilihan atau memuat ulang data.
+  Keyboard **Enter/Space**, URL pilihan, Back/Forward dan tampilan HP didukung.
+- Membuka area input hanya navigasi, **bukan menyimpan/mengubah inventaris**.
+  Form, ID, hak akses dan data lama tetap dipakai; peran pembaca tetap mode baca.
+
+Fitur ini ditambahkan pada **PR #11**, bukan PR #10. Gunakan setelah perubahan
+sudah di-merge dan instalasi diperbarui; hasil uji/batas jaminan tercatat di
+[laporan update dan navigasi](UJI-UPDATE-EXISTING-2026-11-06.md).
+
 ## Tampilan (mode + warna)
 
 Tampilan diatur dari **tombol di pojok kanan atas** (tersedia juga di halaman
@@ -200,10 +219,19 @@ npm run build
 node scripts/preflight.mjs /path/database-anda/fiberops.db
 ```
 
-Ikuti **[DEPLOY-PROXMOX.md](DEPLOY-PROXMOX.md)** untuk bootstrap/rotasi password
-melalui stdin, systemd, HTTPS/origin, migrasi ownership volume Docker, backup
-konsisten, update dan rollback. **Jangan update hanya dengan `git pull` lalu
-restart**, jangan menghapus DB agar login berhasil, dan jangan mengganti volume.
+**Update instalasi existing tanpa mengganti akun/password atau mereset input:**
+ikuti **[PERINTAH-UPDATE-PROXMOX.md](PERINTAH-UPDATE-PROXMOX.md)**. Jalur ini
+mempertahankan unit/mode/path DB, mencadangkan data, menguji migrasi pada salinan,
+dan memeriksa seluruh nilai/ID lama. Helper baru harus sudah masuk `main` terlebih
+dahulu. Bukti sampel dan batas jaminan:
+**[UJI-UPDATE-EXISTING-2026-11-06.md](UJI-UPDATE-EXISTING-2026-11-06.md)**.
+
+Untuk **instalasi baru atau hardening produksi**, ikuti
+**[DEPLOY-PROXMOX.md](DEPLOY-PROXMOX.md)**: bootstrap/rotasi password melalui stdin,
+systemd, HTTPS/origin, ownership Docker, backup dan rollback. Hardening ini
+terpisah dari pembaruan kode existing, bukan syarat mengubah akun secara otomatis.
+**Jangan update hanya dengan `git pull` lalu restart**, jangan menghapus DB agar
+login berhasil, dan jangan mengganti volume.
 Setelah upgrade keamanan, hard-refresh sebelum login ulang; sesi lama dicabut
 sekali untuk menutup risiko token yang pernah masuk URL/log. Tunggu PR/release
 perubahan disetujui dan di-merge; panduan ini tidak menyatakan semua perubahan
@@ -244,18 +272,23 @@ npm run test:interfaces # penamaan, sumber jalur, API baru, persistensi, migrasi
 npm run test:interfaces:ui # alur pencatatan interface → ODC → mapping → ODP
 npm run test:audit    # 47 skenario: sesi, pengamanan sambungan, race UI
 npm run test:dashboard # 31 skenario API/UI: per OLT/card, hitungan, port bawaan, refresh
+npm run test:navigation # 28 cek DOM: pilih ODC/ODP langsung ke input; termasuk npm test
 npm run test:layout   # server tetap jalan hanya dengan file yang disalin Dockerfile
 npm run test:predeploy # 57 pemeriksaan keamanan, restart, bootstrap, backup WAL, preflight
 npm run test:regression # 46 regresi: otorisasi tertunda, simpan atomik, dependency
 npm run test:map      # 193 pemeriksaan: peta/GPS/KMZ + impor/store/API/worker/cache jalur
 npm run test:routes   # 77 pemeriksaan jalur saja (bagian dari test:map/npm test)
 # Opt-in: Chromium lokal terpasang; tidak mengunduh browser otomatis:
+CHROMIUM_EXECUTABLE=/usr/bin/chromium npm run test:navigation:browser # 35 cek nyata desktop/HP, no-write dan pelestarian data
 CHROMIUM_EXECUTABLE=/usr/bin/chromium npm run test:browser # 20 skenario browser produksi
 CHROMIUM_EXECUTABLE=/usr/bin/chromium npm run test:map:browser # 29 skenario Leaflet/KMZ/GPS/layar penuh
 CHROMIUM_EXECUTABLE=/usr/bin/chromium npm run test:routes:browser # 22 skenario impor/Canvas/worker/mobile
 npm run test:render   # semua halaman ter-render (butuh server demo jalan)
 # Opt-in, hanya lingkungan uji Linux dengan sudo -n; Git/npm/systemctl dimock:
 npm run test:update-native # 15 skenario updater dengan SQLite/API nyata
+npm run test:preservation  # 13 unit manifest read-only, termasuk hash/BigInt/sequence
+# Opt-in, Linux + sudo -n/root; Git/SQLite/API/UID nyata, systemctl dimock:
+npm run test:update-existing # 27 skenario upgrade, 35 cek integrasi + 13 unit; npm nyata pada legacy
 ```
 
 Yang diperiksa `npm run test:api`: login/logout & token, hak akses per peran

@@ -1,5 +1,7 @@
 import CoordinateFields from "../components/CoordinateFields.jsx";
 import { coordinateForm } from "../lib/coordinates.js";
+import { useDeviceEditorNavigation } from "../lib/use-device-editor-navigation.js";
+import DeviceEditorHeader from "../components/DeviceEditorHeader.jsx";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Network, Pencil, Plus, Trash2 } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
@@ -75,13 +77,14 @@ export default function Odps() {
   }
 
   const selected = odps.find((d) => d.id === selectedId);
+  const navigation = useDeviceEditorNavigation({ selectedId: selected?.id, onSelect: setSelectedId, blocked: !!modal });
   const shownOdps = odps.filter((d) =>
     matchesQuery(query, d.name, d.odc_name, d.location, getCableInfo(d.cable_type)?.label ?? d.cable_type),
   );
 
   return (
     <div>
-      <PageHeader title="Manajemen ODP" desc="Optical Distribution Point — klik baris untuk mengelola core.">
+      <PageHeader title="Manajemen ODP" desc="Optical Distribution Point — klik nama/baris untuk langsung ke area input core, interface, dan splitter.">
         {canWrite && (
           <button
             className="btn btn-primary"
@@ -95,7 +98,7 @@ export default function Odps() {
         )}
       </PageHeader>
 
-      <div className="mb-3 flex flex-wrap items-center gap-3">
+      <div ref={navigation.listRef} role="region" aria-label="Daftar ODP" tabIndex={-1} className="mb-3 flex scroll-mt-16 flex-wrap items-center gap-3 focus:outline-none">
         <SearchBox
           value={query}
           onChange={setQuery}
@@ -104,6 +107,11 @@ export default function Odps() {
         />
         {query && (
           <span className="text-xs text-mut">{shownOdps.length} dari {odps.length} ODP</span>
+        )}
+        {selected && (
+          <button type="button" className="btn text-xs" aria-label={`Ke area input ODP ${selected.name}`} onClick={() => navigation.open(selected.id)}>
+            Ke area input ODP
+          </button>
         )}
       </div>
 
@@ -123,12 +131,22 @@ export default function Odps() {
             {shownOdps.map((d) => (
               <tr
                 key={d.id}
+                data-device-row={d.id}
                 className={`cursor-pointer border-b border-line-soft last:border-0 hover:bg-panel2 ${d.id === selectedId ? "bg-panel2" : ""}`}
-                onClick={() => setSelectedId(d.id === selectedId ? null : d.id)}
+                onClick={() => navigation.open(d.id)}
               >
                 <td className="td font-medium">
-                  <span className="mr-2 inline-block text-amber-400"><Network size={14} /></span>
-                  {d.name}
+                  <button
+                    type="button"
+                    ref={d.id === selectedId ? navigation.rowRef : undefined}
+                    aria-label={`Buka area input ODP ${d.name}`}
+                    aria-current={d.id === selectedId ? "true" : undefined}
+                    className="inline-flex scroll-mt-16 items-center gap-2 rounded text-left text-acc hover:underline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-acc"
+                    onClick={(event) => { event.stopPropagation(); navigation.open(d.id); }}
+                  >
+                    <span className="shrink-0 text-amber-400"><Network size={14} /></span>
+                    {d.name}
+                  </button>
                 </td>
                 <td className="td text-mut">{d.odc_name}</td>
                 <td className="td text-mut">{getCableInfo(d.cable_type)?.label ?? d.cable_type}</td>
@@ -166,26 +184,31 @@ export default function Odps() {
         </table>
       </Card>
 
-      {selected && <OdpInterfaceOrigins reloadKey={networkVersion} key={selected.id} odpId={selected.id} odpName={selected.name} />}
-
       {selected && (
-        <Card className="mt-6">
-          <CoreManager
-            key={`${selected.id}:${selected.cable_type}`}
-            reloadKey={networkVersion}
-            onChanged={networkChanged}
-            source="odc_to_odp"
-            parentId={selected.id}
-            cableType={selected.cable_type}
-            title={`Core Power ${selected.name}`}
-          />
-        </Card>
-      )}
-
-      {selected && (
-        <Card className="mt-6">
-          <SplitterManager key={`${selected.id}:${selected.cable_type}`} onChanged={networkChanged} parentType="odp" parentId={selected.id} title={`Splitter di ${selected.name}`} />
-        </Card>
+        <section className="mt-6 min-h-[calc(100dvh-4rem)]" data-device-editor="odp" aria-labelledby="odp-input-title">
+          <DeviceEditorHeader kind="ODP" device={selected} parent={`ODC induk: ${selected.odc_name || "—"}`} canWrite={canWrite} navigation={navigation} />
+          <div ref={navigation.firstRef} role="region" aria-label={`Asal interface ${selected.name}`} tabIndex={-1} className="scroll-mt-16 focus:outline-none">
+            <OdpInterfaceOrigins reloadKey={networkVersion} key={selected.id} odpId={selected.id} odpName={selected.name} />
+          </div>
+          <div ref={navigation.coreRef} role="region" aria-label={`Core ODP ${selected.name}`} tabIndex={-1} className="mt-6 scroll-mt-16 focus:outline-none">
+            <Card>
+              <CoreManager
+                key={`${selected.id}:${selected.cable_type}`}
+                reloadKey={networkVersion}
+                onChanged={networkChanged}
+                source="odc_to_odp"
+                parentId={selected.id}
+                cableType={selected.cable_type}
+                title={`Core Power ${selected.name}`}
+              />
+            </Card>
+          </div>
+          <div ref={navigation.splitterRef} role="region" aria-label={`Splitter ODP ${selected.name}`} tabIndex={-1} className="mt-6 scroll-mt-16 focus:outline-none">
+            <Card>
+              <SplitterManager key={`${selected.id}:${selected.cable_type}`} onChanged={networkChanged} parentType="odp" parentId={selected.id} title={`Splitter di ${selected.name}`} />
+            </Card>
+          </div>
+        </section>
       )}
 
       <Modal busy={saving} open={!!modal} title={modal?.mode === "add" ? "Tambah ODP" : "Edit ODP"} onClose={() => { if (!saving) setModal(null); }}>
