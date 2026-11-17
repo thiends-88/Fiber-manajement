@@ -719,8 +719,8 @@ export default function Peta({ MapCanvasComponent = Canvas }) {
                   impor = garis utuh berwarna
                 </span>
                 <span>
-                  Angka pada grup = jumlah perangkat; klik/perbesar untuk
-                  memisahkan ikon yang berdempet.
+                  Nama tampil di samping ikon. Angka pada grup = jumlah
+                  perangkat; klik/perbesar untuk memisahkan ikon yang berdempet.
                 </span>
               </div>
               <p className="text-xs text-mut">

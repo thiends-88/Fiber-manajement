@@ -104,7 +104,9 @@ lapangan.
 
 11. **Peta Jaringan / KMZ** — peta **citra satelit Esri** untuk seluruh OLT, ODC, dan ODP
     yang memiliki GPS valid, termasuk titik yang belum dipetakan sumbernya. Ikon
-    dibedakan, titik bertumpuk dikelompokkan, tersedia detail/filter, **Tampilkan
+    dibedakan, **nama OLT/ODC/ODP langsung terlihat di samping simbol** tanpa
+    perlu klik/hover. Titik bertumpuk dikelompokkan; nama mengikuti ikon saat grup
+    dibuka/diperbesar. Tersedia detail/filter, **Tampilkan
     Semua Titik**, **Peta layar penuh** (keluar dengan tombol/Esc), dan
     **Unduh KMZ Lengkap** untuk Google Earth. Kolom Lokasi lama
     tetap disimpan; GPS dapat diisi terpisah atau dinonaktifkan tanpa menghapus

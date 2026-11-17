@@ -200,6 +200,7 @@ export async function run() {
         for (const key of ["olt-1", "odc-1", "odp-1"])
           assert.ok(host.querySelector(`[data-marker="${key}"]`));
         assert.ok(text().includes("Belum ada koordinat (4)"));
+        assert.ok(text().includes("Nama tampil di samping ikon."));
         assert.equal(
           host.querySelector("[data-canvas-lines]").dataset.canvasLines,
           "0",

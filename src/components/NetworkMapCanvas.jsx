@@ -179,7 +179,7 @@ export default function NetworkMapCanvas({
 
   useEffect(() => {
     if (!engine) return;
-    const { L, clusters } = engine;
+    const { L, map, clusters } = engine;
     clusters.clearLayers();
     markers.current.clear();
     const popupContainers = new Set();
@@ -197,6 +197,26 @@ export default function NetworkMapCanvas({
             popupAnchor: [0, -16],
             className: "network-map-marker",
           }),
+        },
+      );
+      // Label permanen mengikuti marker yang terlihat; cluster otomatis
+      // menyembunyikan nama anggotanya sampai grup dibuka/diperbesar.
+      marker.bindTooltip(
+        () => {
+          const label = textElement(
+            "span",
+            node.record?.name || `${MAP_TYPES[node.kind].label} belum bernama`,
+          );
+          label.dataset.mapDeviceName = node.key;
+          return label;
+        },
+        {
+          permanent: true,
+          direction: "auto",
+          offset: [18, 0],
+          opacity: 1,
+          interactive: false,
+          className: `network-map-device-label network-map-device-label-${node.kind}`,
         },
       );
       let content;
@@ -228,7 +248,16 @@ export default function NetworkMapCanvas({
       return marker;
     });
     clusters.addLayers(layers);
+    // Reposisi hanya label yang terbuka setelah pan/resize (termasuk layar penuh),
+    // agar arah otomatis dan tinggi nama yang membungkus tetap sejajar ikonnya.
+    const positionLabels = () => {
+      for (const marker of layers)
+        if (marker.isTooltipOpen())
+          marker.getTooltip().setLatLng(marker.getLatLng());
+    };
+    map.on("moveend", positionLabels);
     return () => {
+      map.off("moveend", positionLabels);
       clusters.clearLayers();
       markers.current.clear();
       for (const content of popupContainers) popupCallback.current?.(null, content);
