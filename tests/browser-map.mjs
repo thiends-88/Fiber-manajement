@@ -204,9 +204,9 @@ async function selectList(page, kind, id) {
   });
   if ((await summary.locator("..").getAttribute("open")) === null)
     await summary.click();
-  await page
-    .getByRole("button", { name: `Detail ${kind} #${id}`, exact: true })
-    .click();
+  // Pilih nama baris untuk fokus/inspeksi sidebar. Tombol Detail ODP kini
+  // sengaja membuka modal sambungan, sehingga bukan lagi shortcut seleksi.
+  await page.locator(`[data-device-key="${kind.toLowerCase()}-${id}"]`).getByRole("button").first().click();
   await page
     .locator(`[data-selected-device="${kind.toLowerCase()}-${id}"]`)
     .waitFor();
@@ -347,6 +347,8 @@ try {
     role: "user",
   });
   const f = await mapLiveFixture(request);
+  await request("POST", "/api/cores", { source: "odc_to_odp", odp_id: f.Q2.id, core: 7, status: "used", destination: "PELANGGAN-UJI-DETAIL", notes: "Core power UJI detail peta" });
+  await request("POST", "/api/cores", { source: "odc_to_odp", odp_id: f.Q2.id, core: 2, status: "reserved", notes: "Core masuk langsung UJI" });
   const executablePath =
     process.env.CHROMIUM_EXECUTABLE ||
     [
@@ -674,8 +676,39 @@ try {
         .click();
       await page.locator(".network-map-fullpage").waitFor({ state: "hidden" });
       await page.locator(`[data-selected-device="odp-${f.Q2.id}"]`).waitFor();
+      const dialog = page.getByRole("dialog", { name: "Detail sambungan ODP", exact: true });
+      await dialog.locator(`[data-odp-connection-detail="${f.Q2.id}"]`).waitFor();
+      assert.match(await dialog.innerText(), /Core power UJI detail peta/);
+      assert.match(await dialog.locator('[data-odp-power-core="7"]').innerText(), /Biru.*Tube 2/s);
+      assert.equal(await dialog.locator("input,select,textarea,form").count(), 0);
+      assert.equal(await page.evaluate(() => document.documentElement.style.overflow), "");
+      await dialog.getByRole("button", { name: "Tutup", exact: true }).click();
+      await dialog.waitFor({ state: "hidden" });
+      assert.equal(await page.evaluate(() => document.body.style.overflow), "");
     },
   );
+  await check("detail ODP: semua jalur dibedakan, mapping tak lengkap tidak dipalsukan, refresh hanya GET", async () => {
+    await selectList(page, "ODP", f.Q2.id);
+    const before = requests.length;
+    await page.getByRole("button", { name: "Lihat detail sambungan ODP", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Detail sambungan ODP", exact: true });
+    await dialog.locator(`[data-odp-connection-detail="${f.Q2.id}"]`).waitFor();
+    for (const route of await dialog.locator("[data-odp-route]").all()) {
+      if ((await route.getAttribute("open")) === null) await route.locator("summary").click();
+    }
+    assert.equal(await dialog.locator('[data-odp-route="mapped"]').count(), 1);
+    assert.ok(await dialog.locator('[data-odp-route="partial"]').count() >= 1);
+    assert.match(await dialog.innerText(), /GPON 1\/2\/1/);
+    assert.match(await dialog.innerText(), /SPL-PETA-CASCADE/);
+    assert.match(await dialog.innerText(), /Kabel langsung/);
+    assert.match(await dialog.innerText(), /tidak ditebak|belum dipetakan/);
+    assert.equal(await dialog.locator('img[src="x"],svg[onload],script').count(), 0);
+    await dialog.getByRole("button", { name: "Muat ulang detail", exact: true }).click();
+    await dialog.locator(`[data-odp-connection-detail="${f.Q2.id}"]`).waitFor();
+    assert.ok(requests.slice(before).every(r => r.method() === "GET"));
+    await page.keyboard.press("Escape");
+    await dialog.waitFor({ state: "hidden" });
+  });
   await check(
     "filter induk adalah inventaris, pencarian kosong tidak menambah titik default",
     async () => {
@@ -1372,6 +1405,31 @@ try {
       await page.setViewportSize({ width: 1440, height: 1000 });
     },
   );
+  await check("detail ODP 390/320px tetap di viewport, keyboard terkurung dan Escape kembali ke peta", async () => {
+    for (const width of [390, 320]) {
+      await page.setViewportSize({ width, height: 844 });
+      await toMap(page, 12);
+      await selectList(page, "ODP", f.Q2.id);
+      await page.getByRole("button", { name: "Lihat detail sambungan ODP", exact: true }).click();
+      const dialog = page.getByRole("dialog", { name: "Detail sambungan ODP", exact: true });
+      await dialog.locator(`[data-odp-connection-detail="${f.Q2.id}"]`).waitFor();
+      const summary = dialog.locator('[aria-label="Ringkasan sambungan ODP"]');
+      assert.match(await summary.innerText(), /GPON 1\/2\/1/);
+      assert.match(await summary.innerText(), /Core 7 · Biru · Tube 2/);
+      assert.equal(await dialog.locator('[data-odp-route][open]').first().getAttribute("data-odp-route"), "mapped");
+      const box = await dialog.boundingBox();
+      assert.ok(box.x >= 0 && box.x + box.width <= width + 1);
+      assert.ok(await dialog.evaluate(el => el.scrollWidth <= el.clientWidth + 1));
+      const controls = dialog.locator('button,a[href]');
+      await controls.last().focus(); await page.keyboard.press("Tab");
+      assert.ok(await page.evaluate(() => !!document.activeElement.closest('[aria-label]') || !!document.activeElement.closest('[role="dialog"]')));
+      assert.ok(await dialog.evaluate(el => el.contains(document.activeElement)));
+      await page.screenshot({ path: path.join(artifacts, `detail-odp-${width}.png`), fullPage: false });
+      await page.keyboard.press("Escape"); await dialog.waitFor({ state: "hidden" });
+      assert.equal(await page.evaluate(() => document.body.style.overflow), "");
+    }
+    await page.setViewportSize({ width: 1440, height: 1000 });
+  });
   await check(
     "peran pembaca tidak melihat form GPS, tetap dapat KMZ; API menolak tulis",
     async () => {
@@ -1396,6 +1454,14 @@ try {
         await reader.getByRole("button", { name: "GPS", exact: true }).count(),
         0,
       );
+      await selectList(reader, "ODP", f.Q2.id);
+      await reader.getByRole("button", { name: "Lihat detail sambungan ODP", exact: true }).click();
+      const detailDialog = reader.getByRole("dialog", { name: "Detail sambungan ODP", exact: true });
+      await detailDialog.locator(`[data-odp-connection-detail="${f.Q2.id}"]`).waitFor();
+      assert.match(await detailDialog.innerText(), /Core power UJI detail peta/);
+      assert.equal(await detailDialog.locator("input,select,textarea,form").count(), 0);
+      await detailDialog.getByRole("button", { name: "Tutup", exact: true }).click();
+      await detailDialog.waitFor({ state: "hidden" });
       const status = await reader.evaluate(
         async (id) =>
           (

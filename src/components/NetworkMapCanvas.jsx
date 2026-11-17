@@ -77,14 +77,17 @@ export default function NetworkMapCanvas({
   fitRevision,
   basemap,
   onSelect,
+  onShowDetail,
 }) {
   const viewport = useRef(null),
     container = useRef(null),
     markers = useRef(new Map()),
     callback = useRef(onSelect),
+    detailCallback = useRef(onShowDetail),
     routeCallback = useRef(onSelectRoute),
     routeLayers = useRef(new Map());
   callback.current = onSelect;
+  detailCallback.current = onShowDetail;
   routeCallback.current = onSelectRoute;
   const [engine, setEngine] = useState(null),
     [error, setError] = useState(""),
@@ -194,7 +197,7 @@ export default function NetworkMapCanvas({
         () =>
           pointPopup(node, (key) => {
             viewport.current?.close();
-            callback.current(key);
+            (detailCallback.current || callback.current)(key);
           }),
         {
           minWidth: 190,

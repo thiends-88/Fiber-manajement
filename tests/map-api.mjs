@@ -432,6 +432,40 @@ try {
       assert.equal(after.created_at, before.created_at);
     },
   );
+  await check("detail ODP memakai snapshot konsisten dan core terpilih saja; GET tidak menulis DB", async () => {
+    const core = await call("POST", "/api/cores", { source: "odc_to_odp", odp_id: odp.id, core: 7, status: "used", destination: "Tujuan UJI detail", notes: "Catatan power ODP UJI" });
+    await call("POST", "/api/cores", { source: "olt_to_odc", odc_id: odc.id, core: 5, status: "reserved", notes: "Bukan core power ODP" });
+    sql(db => {
+      db.exec("ALTER TABLE core_assignments ADD COLUMN power_dbm REAL");
+      db.prepare("UPDATE core_assignments SET power_dbm=-17.5 WHERE id=?").run(core.id);
+    });
+    const before = digest(snapshot());
+    const { response, data, text } = await request("GET", `/api/map-data?odp_id=${odp.id}`);
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get("cache-control"), /no-store/);
+    assert.equal(data.odpDetail.odpId, odp.id);
+    assert.ok(Number.isFinite(Date.parse(data.odpDetail.readAt)));
+    assert.equal(data.odpDetail.cores.length, 1);
+    assert.equal(data.odpDetail.cores[0].id, core.id);
+    assert.equal(data.odpDetail.cores[0].notes, "Catatan power ODP UJI");
+    assert.ok(data.odpDetail.cores.every(c => c.odp_id === odp.id && c.source === "odc_to_odp"));
+    assert.ok(data.splitters.every(s => Array.isArray(s.outputs)));
+    assert.ok(!/password_hash|power_dbm|Bukan core power ODP/.test(text));
+    assert.ok(!text.includes(ownerEmail));
+    assert.equal(digest(snapshot()), before);
+    assert.equal(sql(db => db.prepare("SELECT power_dbm FROM core_assignments WHERE id=?").get(core.id).power_dbm), -17.5);
+  });
+  await check("detail ODP menolak ID rusak/ganda/hilang dan transaksi gagal tidak merusak snapshot berikutnya", async () => {
+    const before = digest(snapshot());
+    for (const query of ["0", "-1", "01", "1.5", "abc", "", "9007199254740992", `${odp.id}&odp_id=${odp.id}`]) await call("GET", `/api/map-data?odp_id=${query}`, undefined, 400);
+    await call("GET", "/api/map-data?odp_id=99999999", undefined, 404);
+    await call("GET", `/api/map-data?odp_id=${odp.id}`, undefined, 401, null);
+    await call("GET", `/api/map-data?odp_id=${odp.id}&token=${encodeURIComponent(token)}`, undefined, 401, null);
+    const normal = await call("GET", "/api/map-data");
+    assert.equal(normal.odpDetail, undefined);
+    assert.equal(normal.cores, undefined);
+    assert.equal(digest(snapshot()), before);
+  });
   const operatorSession = await login(
       "operator-map@test.local",
       "MapOperator123!",
@@ -445,6 +479,10 @@ try {
           (await call("GET", "/api/map-data", undefined, 200, auth)).version,
           1,
         );
+      for (const auth of [token, operatorSession.token, readerSession.token]) {
+        const detail = await call("GET", `/api/map-data?odp_id=${odp.id}`, undefined, 200, auth);
+        assert.equal(detail.odpDetail.odpId, odp.id);
+      }
       for (const [table, row] of [
         ["olts", olt],
         ["odcs", odc],

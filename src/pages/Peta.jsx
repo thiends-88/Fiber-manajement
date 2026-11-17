@@ -20,6 +20,7 @@ import {
   MAP_NOTICE,
 } from "../lib/network-map.js";
 import CoordinateFields from "../components/CoordinateFields.jsx";
+import { validateMapSnapshot } from "../lib/map-snapshot.js";
 import CableRoutesPanel, {
   ImportedRouteDetail,
 } from "../components/CableRoutesPanel.jsx";
@@ -36,34 +37,8 @@ import {
 import "../map.css";
 
 const Canvas = lazy(() => import("../components/NetworkMapCanvas.jsx"));
+const OdpConnectionDetail = lazy(() => import("../components/OdpConnectionDetail.jsx"));
 const EMPTY_FILTERS = { oltId: "", odcId: "", kind: "", query: "" };
-const SNAPSHOT_KEYS = [
-  "olts",
-  "odcs",
-  "odps",
-  "ports",
-  "feederPorts",
-  "interfaceMappings",
-  "links",
-  "splitters",
-];
-function validateSnapshot(data) {
-  const row = (item) =>
-    item && typeof item === "object" && !Array.isArray(item);
-  if (
-    data?.version !== 1 ||
-    !SNAPSHOT_KEYS.every(
-      (key) => Array.isArray(data[key]) && data[key].every(row),
-    ) ||
-    !data.splitters.every(
-      (s) => Array.isArray(s.outputs) && s.outputs.every(row),
-    )
-  )
-    throw new Error(
-      "Snapshot peta belum lengkap/valid. Periksa versi server lalu muat ulang; ekspor tidak memakai data setengah lengkap.",
-    );
-  return data;
-}
 class MapBoundary extends Component {
   state = { error: false };
   static getDerivedStateFromError() {
@@ -73,8 +48,7 @@ class MapBoundary extends Component {
     return this.state.error ? (
       <Card>
         <p role="alert">
-          Kanvas peta belum dapat dimuat. Daftar titik dan ekspor KMZ tetap
-          tersedia.
+          {this.props.message || "Kanvas peta belum dapat dimuat. Daftar titik dan ekspor KMZ tetap tersedia."}
         </p>
         <button className="btn mt-3" onClick={() => window.location.reload()}>
           Muat ulang halaman
@@ -85,7 +59,7 @@ class MapBoundary extends Component {
     );
   }
 }
-function DeviceList({ nodes, name, onSelect, onEdit, canWrite }) {
+function DeviceList({ nodes, name, onSelect, onShowDetail, onEdit, canWrite }) {
   const [page, setPage] = useState(0),
     size = 50;
   useEffect(() => setPage(0), [nodes]);
@@ -123,7 +97,7 @@ function DeviceList({ nodes, name, onSelect, onEdit, canWrite }) {
             <div className="flex flex-wrap gap-2">
               <button
                 className="btn text-xs"
-                onClick={() => onSelect(node.key, true)}
+                onClick={() => onShowDetail(node.key)}
                 aria-label={`Detail ${MAP_TYPES[node.kind].label} #${node.id}`}
               >
                 Detail
@@ -173,7 +147,7 @@ function DeviceList({ nodes, name, onSelect, onEdit, canWrite }) {
     </>
   );
 }
-function Detail({ node, model, onEdit, onSelect, canWrite }) {
+function Detail({ node, model, onEdit, onSelect, onShowDetail, canWrite }) {
   if (!node)
     return (
       <Card>
@@ -242,6 +216,14 @@ function Detail({ node, model, onEdit, onSelect, canWrite }) {
             </div>
           )}
         </dl>
+        {node.kind === "odp" && (
+          <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3">
+            <p className="mb-2 text-xs text-mut">Lihat asal interface OLT, jalur ODC/splitter, core masuk dan core power ODP yang tercatat.</p>
+            <button className="btn text-xs" onClick={() => onShowDetail(node.key)}>
+              Lihat detail sambungan ODP
+            </button>
+          </div>
+        )}
         <div className="flex flex-wrap gap-2">
           <button
             className="btn text-xs"
@@ -326,6 +308,7 @@ export default function Peta({ MapCanvasComponent = Canvas }) {
   const [selected, setSelected] = useState(null),
     [focus, setFocus] = useState(null),
     [fitRevision, setFitRevision] = useState(0);
+  const [detailKey, setDetailKey] = useState(null);
   const [edit, setEdit] = useState(null),
     [gpsForm, setGpsForm] = useState({}),
     [saving, setSaving] = useState(false),
@@ -346,7 +329,7 @@ export default function Peta({ MapCanvasComponent = Canvas }) {
     setData(null);
     setLoadedAt(null);
     try {
-      const snapshot = validateSnapshot(await api("/api/map-data"));
+      const snapshot = validateMapSnapshot(await api("/api/map-data"));
       if (!mounted.current || request !== generation.current) return false;
       setData(snapshot);
       setLoadedAt(new Date().toISOString());
@@ -386,6 +369,7 @@ export default function Peta({ MapCanvasComponent = Canvas }) {
     ) {
       setSelected(null);
       setFocus(null);
+      setDetailKey(null);
     }
   }, [view, selected, data, loading]);
   const select = useCallback((key, reveal = false) => {
@@ -398,6 +382,13 @@ export default function Peta({ MapCanvasComponent = Canvas }) {
         behavior: "auto",
       });
   }, []);
+  function showDetail(key) {
+    if (edit || saveBusy.current) return;
+    select(key);
+    if (model.byKey.get(key)?.kind === "odp") setDetailKey(key);
+    else mapSection.current?.scrollIntoView?.({ block: "start", behavior: "auto" });
+  }
+  const detailNode = model.byKey.get(detailKey);
   function editGps(node) {
     if (!canWrite || saveBusy.current) return;
     setEdit(node);
@@ -698,6 +689,7 @@ export default function Peta({ MapCanvasComponent = Canvas }) {
                     fitRevision={fitRevision}
                     basemap={basemap}
                     onSelect={select}
+                    onShowDetail={showDetail}
                   />
                 </Suspense>
               </MapBoundary>
@@ -738,6 +730,7 @@ export default function Peta({ MapCanvasComponent = Canvas }) {
                 canWrite={canWrite}
                 onEdit={editGps}
                 onSelect={select}
+                onShowDetail={showDetail}
               />
             )}
           </div>
@@ -805,6 +798,7 @@ export default function Peta({ MapCanvasComponent = Canvas }) {
               nodes={view.missing}
               name="belum ada koordinat"
               onSelect={select}
+              onShowDetail={showDetail}
               onEdit={editGps}
               canWrite={canWrite}
             />
@@ -818,6 +812,7 @@ export default function Peta({ MapCanvasComponent = Canvas }) {
                 nodes={view.points}
                 name="titik valid"
                 onSelect={select}
+                onShowDetail={showDetail}
                 onEdit={editGps}
                 canWrite={canWrite}
               />
@@ -847,6 +842,13 @@ export default function Peta({ MapCanvasComponent = Canvas }) {
           )}
         </div>
       )}
+      <Modal open={!!detailNode} wide title="Detail sambungan ODP" onClose={() => setDetailKey(null)}>
+        {detailNode && <MapBoundary key={detailNode.id} message="Panel sambungan ODP belum dapat dimuat. Periksa koneksi lalu muat ulang halaman.">
+          <Suspense fallback={<p role="status">Memuat panel sambungan ODP…</p>}>
+            <OdpConnectionDetail key={detailNode.id} odpId={detailNode.id} />
+          </Suspense>
+        </MapBoundary>}
+      </Modal>
       <Modal
         open={!!edit}
         busy={saving}

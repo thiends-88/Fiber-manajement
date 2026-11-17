@@ -347,9 +347,7 @@ export async function run() {
       "pembukaan GPS manual memuat nilai tersimpan; menutup tanpa save tidak menulis",
       async () => {
         click(
-          host.querySelector(
-            '[data-selected-device="odp-2"] button:last-of-type',
-          ),
+          button("Atur GPS"),
         );
         await wait(dialog, "GPS dialog belum muncul");
         assert.equal(input("Sumber koordinat peta", dialog()).value, "manual");
@@ -368,9 +366,7 @@ export async function run() {
           "Detail ODP belum muncul",
         );
         click(
-          host.querySelector(
-            '[data-selected-device="odp-1"] button:last-of-type',
-          ),
+          button("Atur GPS"),
         );
         await wait(dialog, "Dialog ODP belum tampil");
         await fill(input("Sumber koordinat peta", dialog()), "none");
@@ -401,9 +397,7 @@ export async function run() {
           "Detail OLT belum tampil",
         );
         click(
-          host.querySelector(
-            '[data-selected-device="olt-1"] button:last-of-type',
-          ),
+          button("Atur GPS"),
         );
         await wait(dialog, "Dialog GPS OLT belum tampil");
         await fill(input("Latitude (lintang)", dialog()), "-0.88");
@@ -442,9 +436,7 @@ export async function run() {
       "save gagal mempertahankan nilai/form, membuka kunci dan dapat dicoba ulang",
       async () => {
         click(
-          host.querySelector(
-            '[data-selected-device="olt-1"] button:last-of-type',
-          ),
+          button("Atur GPS"),
         );
         await wait(dialog, "Dialog belum tampil");
         await fill(input("Latitude (lintang)", dialog()), "-0.89");
