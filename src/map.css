@@ -93,6 +93,59 @@
 .network-map-popup li {
   margin: 5px 0;
 }
+/* Popup ODP cukup nama, warna core power, dan interface — ODC asal. */
+.network-map-odp-popup {
+  width: min(238px, calc(100vw - 92px));
+}
+.odp-popup-name {
+  display: block;
+  padding-right: 5px;
+  font-size: 14px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.odp-popup-muted {
+  color: var(--color-mut);
+  font-size: 11px;
+}
+.odp-popup-cores {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 9px 0;
+}
+.odp-popup-core {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 7px;
+  border: 1px solid var(--color-line);
+  border-radius: 99px;
+  background: var(--color-panel2);
+  font-size: 11px;
+  font-weight: 600;
+}
+.odp-popup-core-dot {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  border: 1px solid #64748b88;
+  border-radius: 50%;
+}
+.odp-popup-sources {
+  border-top: 1px solid var(--color-line);
+  padding-top: 7px;
+  font-weight: 600;
+}
+.network-map-popup .odp-popup-sources p {
+  margin: 0 0 3px;
+}
+.network-map-popup .odp-popup-warning {
+  margin-bottom: 0;
+  color: #d97706;
+  font-size: 11px;
+}
 .network-map-shell .leaflet-bar a {
   background-color: var(--color-panel);
   color: var(--color-ink);

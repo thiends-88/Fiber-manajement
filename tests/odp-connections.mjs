@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { buildOdpConnections, describeCore } from "../src/lib/odp-connections.js";
+import { buildOdpConnections, describeCore, summarizeOdpConnections } from "../src/lib/odp-connections.js";
 import { validateMapSnapshot, validateOdpSnapshot } from "../src/lib/map-snapshot.js";
 import { odpConnectionFixture, odpDetailSnapshot } from "./fixtures/odp-connections.mjs";
 let passed = 0;
@@ -150,5 +150,54 @@ check("kontrak snapshot menolak ID tertukar, payload rusak, dan versi API tidak 
     assert.throws(() => validateOdpSnapshot(value, 101));
   }
   assert.equal(validateMapSnapshot(odpDetailSnapshot()).version, 1);
+});
+check("popup ringkas: core ODP sendiri, interface singkat dan ODC terakhir pada jalur sah", () => {
+  const summary = summarizeOdpConnections(result());
+  assert.deepEqual(summary.cores.map(c => c.number), [7]);
+  assert.equal(summary.cores[0].color, "Biru"); assert.equal(summary.cores[0].tube, 2);
+  assert.equal(summary.sources[0].interface, "1/2/1"); assert.equal(summary.sources[0].odcName, "ODC-UJI-ANAK");
+  assert.equal(summary.sources[0].oltName, "OLT-UJI-C300");
+});
+check("popup PON HSGQ dan nama manual tidak dipaksa menjadi interface ZTE", () => {
+  assert.equal(summarizeOdpConnections(result(() => {}, 404)).sources[0].interface, "PON 3");
+  const summary = summarizeOdpConnections(result(d => { d.olts[0].interface_mode = "custom"; d.ports[0].interface_name = "EPON0/1"; }));
+  assert.equal(summary.sources[0].interface, "EPON0/1");
+});
+check("popup tanpa sambungan tidak mengambil ODC inventaris sebagai asal", () => {
+  const summary = summarizeOdpConnections(result(() => {}, 303));
+  assert.equal(summary.cores.length, 0); assert.equal(summary.sources[0].odcName, undefined);
+  assert.equal(summary.sources[0].interface, "Interface / ODC asal belum dipetakan");
+});
+check("popup mapping hilang tetap menyebut ODC eksplisit tanpa mengarang interface", () => {
+  const summary = summarizeOdpConnections(result(d => { d.interfaceMappings = []; }));
+  assert.equal(summary.sources[0].interface, "Interface belum dipetakan");
+  assert.equal(summary.sources[0].odcName, "ODC-UJI-ANAK");
+});
+check("popup mapping/receiver konflik tidak memilih salah satu sumber", () => {
+  const summary = summarizeOdpConnections(result(d => { d.splitters[0].outputs.push({ id: 99, port: 4, target_type: "odc", target_odc_id: 20, target_odc_splitter_id: 3 }); }));
+  assert.equal(summary.sources.length, 1); assert.equal(summary.sources[0].interface, "Asal perlu verifikasi");
+  assert.equal(summary.sources[0].odcName, undefined);
+});
+check("popup memadatkan pasangan sumber identik berdasarkan ID tanpa mengubah rincian jalur", () => {
+  const detail = result(d => { d.splitters[2].outputs.push({ id: 99, port: 4, target_type: "odp", target_odp_id: 101 }); });
+  const before = JSON.stringify(detail), summary = summarizeOdpConnections(detail);
+  assert.equal(summary.sources.length, 1); assert.equal(detail.routes.length, 2); assert.equal(JSON.stringify(detail), before);
+});
+check("popup beberapa sumber tetap mempertahankan interface/ODC masing-masing", () => {
+  const summary = summarizeOdpConnections(result(d => { d.splitters.push({ id: 60, odp_id: 505, name: "SPL-ALT", input_core: 1, ratio: "1:8", outputs: [{ id: 601, port: 2, target_type: "odp", target_odp_id: 101 }] }); }));
+  assert.equal(summary.sources.length, 2);
+  assert.deepEqual(summary.sources.map(s => `${s.interface} — ${s.odcName}`).sort(), ["1/2/1 — ODC-UJI-ANAK", "1/3/1 — ODC-UJI-PUSAT"]);
+});
+check("popup sumber terpetakan tidak menyembunyikan adanya sambungan lain yang belum lengkap", () => {
+  const summary = summarizeOdpConnections(result(d => { d.links.push({ id: 99, odc_id: 20, odc_core: 3, odp_id: 101, odp_core: 1 }); }));
+  assert.equal(summary.sources.length, 1); assert.equal(summary.sources[0].interface, "1/2/1");
+  assert.match(summary.notice, /Sebagian sambungan belum dipetakan/);
+});
+check("popup core cadangan/rusak tidak dianggap manual terpakai, pemakaian nyata terdeteksi tetap terbaca", () => {
+  const detail = result(() => {}, 202), summary = summarizeOdpConnections(detail);
+  assert.equal(summary.cores.length, 1); assert.equal(summary.cores[0].records[0].status, "damaged");
+  assert.ok(summary.cores[0].usages.length);
+  detail.powerCores[0].usages = [];
+  assert.equal(summarizeOdpConnections(detail).cores.length, 0);
 });
 console.log(`\nDETAIL ODP LOGIKA: ${passed} pemeriksaan lulus.`);

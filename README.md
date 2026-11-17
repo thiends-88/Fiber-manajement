@@ -116,12 +116,13 @@ lapangan.
     dimuat sesuai kebutuhan, geometri terpisah dari dashboard, jalur memakai
     Canvas dan batas ukuran untuk menjaga akses ringan. Zoom hingga **level 22**
     memakai pembesaran citra sumber, dengan fallback tile induk yang terbatas
-    bila detail tidak tersedia. **Lihat detail** pada ODP langsung membuka panel
-    baca-saja: ringkasan OLT/interface asal, urutan ODC/splitter/output atau kabel
-    langsung, serta core power (warna/tube, status, tujuan, catatan). Data yang belum
-    dipetakan/konflik diberi penanda, bukan ditebak dari induk atau GPS. Panel
-    dimuat hanya saat dibuka; core power bukan pengukuran dBm. Citra dapat dimatikan
-    untuk menghemat kuota. Lihat [panduan peta/GPS/KMZ dan impor jalur](PANDUAN-PETA-KMZ.md).
+    bila detail tidak tersedia. **Klik ikon ODP** langsung menampilkan popup
+    sederhana: **nama ODP · bulatan warna core power · interface — ODC asal**,
+    misalnya `1/2/1 — ODC0001`. Tidak perlu membuka modal atau keluar layar penuh.
+    Rincian jalur, status dan catatan tetap opsional melalui sidebar/daftar. Asal
+    belum dipetakan/konflik ditandai, bukan ditebak dari induk atau GPS. Data popup
+    dimuat hanya saat dibuka, baca-saja; core power bukan pengukuran dBm. Citra dapat
+    dimatikan untuk menghemat kuota. Lihat [panduan peta/GPS/KMZ dan impor jalur](PANDUAN-PETA-KMZ.md).
 
 **Database lokal:** SQLite bawaan Node (`node:sqlite`), data utama di
 `data/fiberops.db` dengan jurnal WAL/SHM. Tidak memakai Supabase/database eksternal.
@@ -281,12 +282,12 @@ npm run test:layout   # server tetap jalan hanya dengan file yang disalin Docker
 npm run test:predeploy # 57 pemeriksaan keamanan, restart, bootstrap, backup WAL, preflight
 npm run test:regression # 46 regresi: otorisasi tertunda, simpan atomik, dependency
 npm run test:map      # peta/GPS/KMZ, detail sambungan ODP + impor/store/API/worker/cache jalur
-npm run test:odp-detail # 34 logika/kontrak + 15 UI: modal ODP, asal interface, core, race, baca-saja
+npm run test:odp-detail # 43 logika/kontrak + 26 UI: popup ringkas/rincian ODP, core, sumber, race, baca-saja
 npm run test:routes   # 77 pemeriksaan jalur saja (bagian dari test:map/npm test)
 # Opt-in: Chromium lokal terpasang; tidak mengunduh browser otomatis:
 CHROMIUM_EXECUTABLE=/usr/bin/chromium npm run test:navigation:browser # 35 cek nyata desktop/HP, no-write dan pelestarian data
 CHROMIUM_EXECUTABLE=/usr/bin/chromium npm run test:browser # 20 skenario browser produksi
-CHROMIUM_EXECUTABLE=/usr/bin/chromium npm run test:map:browser # 31 skenario Leaflet/KMZ/GPS/layar penuh/detail ODP
+CHROMIUM_EXECUTABLE=/usr/bin/chromium npm run test:map:browser # 32 skenario Leaflet/KMZ/GPS/layar penuh/popup ringkas ODP
 CHROMIUM_EXECUTABLE=/usr/bin/chromium npm run test:routes:browser # 22 skenario impor/Canvas/worker/mobile
 npm run test:render   # semua halaman ter-render (butuh server demo jalan)
 # Opt-in, hanya lingkungan uji Linux dengan sudo -n; Git/npm/systemctl dimock:

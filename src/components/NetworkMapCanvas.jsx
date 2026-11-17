@@ -38,6 +38,8 @@ function textElement(tag, text, className = "") {
 }
 function pointPopup(node, onSelect) {
   const content = textElement("div", "", "network-map-popup");
+  // Isi ODP dirender sebagai portal React ketika popup benar-benar terbuka.
+  if (node.kind === "odp") { content.classList.add("network-map-odp-popup"); return content; }
   content.append(
     textElement("strong", node.name),
     textElement(
@@ -78,16 +80,19 @@ export default function NetworkMapCanvas({
   basemap,
   onSelect,
   onShowDetail,
+  onOdpPopupChange,
 }) {
   const viewport = useRef(null),
     container = useRef(null),
     markers = useRef(new Map()),
     callback = useRef(onSelect),
     detailCallback = useRef(onShowDetail),
+    popupCallback = useRef(onOdpPopupChange),
     routeCallback = useRef(onSelectRoute),
     routeLayers = useRef(new Map());
   callback.current = onSelect;
   detailCallback.current = onShowDetail;
+  popupCallback.current = onOdpPopupChange;
   routeCallback.current = onSelectRoute;
   const [engine, setEngine] = useState(null),
     [error, setError] = useState(""),
@@ -177,6 +182,7 @@ export default function NetworkMapCanvas({
     const { L, clusters } = engine;
     clusters.clearLayers();
     markers.current.clear();
+    const popupContainers = new Set();
     const layers = points.map((node) => {
       const marker = L.marker(
         [node.coordinates.latitude, node.coordinates.longitude],
@@ -193,18 +199,30 @@ export default function NetworkMapCanvas({
           }),
         },
       );
-      marker.bindPopup(
-        () =>
-          pointPopup(node, (key) => {
+      let content;
+      const popupContent = () => {
+        if (!content) {
+          content = pointPopup(node, (key) => {
             viewport.current?.close();
             (detailCallback.current || callback.current)(key);
-          }),
-        {
-          minWidth: 190,
-          maxWidth: 310,
-          autoPan: true,
-        },
-      );
+          });
+          if (node.kind === "odp") popupContainers.add(content);
+        }
+        return content;
+      };
+      marker.bindPopup(popupContent, {
+        minWidth: 180,
+        maxWidth: node.kind === "odp" ? 260 : 310,
+        autoPan: true,
+        autoPanPadding: [18, 18],
+      });
+      if (node.kind === "odp") {
+        marker.on("popupopen", () => popupCallback.current?.({
+          node, container: popupContent(),
+          onResize: () => { if (marker.isPopupOpen()) marker.getPopup().update(); },
+        }));
+        marker.on("popupclose", () => popupCallback.current?.(null, content));
+      }
       marker.on("click", () => callback.current(node.key));
       markers.current.set(node.key, marker);
       return marker;
@@ -213,6 +231,7 @@ export default function NetworkMapCanvas({
     return () => {
       clusters.clearLayers();
       markers.current.clear();
+      for (const content of popupContainers) popupCallback.current?.(null, content);
     };
   }, [engine, points]);
 

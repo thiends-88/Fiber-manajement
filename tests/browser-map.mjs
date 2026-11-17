@@ -497,6 +497,7 @@ try {
           .count(),
         0,
       );
+      await page.locator(`[data-odp-popup="${f.Q2.id}"][aria-busy="false"]`).waitFor();
       assert.equal(await page.evaluate(() => window.__mapXss), undefined);
       const popupText = await page
         .locator(".leaflet-popup-content")
@@ -659,31 +660,25 @@ try {
     },
   );
   await check(
-    "popup perangkat tetap terbaca tanpa ID internal; Lihat detail keluar dari layar penuh",
+    "klik ikon ODP langsung menampilkan nama, warna core dan interface — ODC tanpa modal/keluar fullscreen",
     async () => {
-      await page
-        .getByRole("button", { name: "Peta layar penuh", exact: true })
-        .click();
+      const closePopup = page.locator(".leaflet-popup-close-button");
+      if (await closePopup.count()) await closePopup.click();
+      await page.getByRole("button", { name: "Peta layar penuh", exact: true }).click();
+      const before = requests.length;
       await page.getByTitle(`ODP · ${f.Q2.name}`, { exact: true }).click();
-      const popup = page
-        .locator(".leaflet-popup-content")
-        .filter({ hasText: f.Q2.name });
+      const popup = page.locator(`[data-odp-popup="${f.Q2.id}"][aria-busy="false"]`);
       await popup.waitFor();
-      assert.doesNotMatch(await popup.innerText(), /(?:OLT|ODC|ODP) #\d+/);
-      assert.ok((await popup.boundingBox()).width >= 180);
-      await popup
-        .getByRole("button", { name: "Lihat detail", exact: true })
-        .click();
-      await page.locator(".network-map-fullpage").waitFor({ state: "hidden" });
-      await page.locator(`[data-selected-device="odp-${f.Q2.id}"]`).waitFor();
-      const dialog = page.getByRole("dialog", { name: "Detail sambungan ODP", exact: true });
-      await dialog.locator(`[data-odp-connection-detail="${f.Q2.id}"]`).waitFor();
-      assert.match(await dialog.innerText(), /Core power UJI detail peta/);
-      assert.match(await dialog.locator('[data-odp-power-core="7"]').innerText(), /Biru.*Tube 2/s);
-      assert.equal(await dialog.locator("input,select,textarea,form").count(), 0);
-      assert.equal(await page.evaluate(() => document.documentElement.style.overflow), "");
-      await dialog.getByRole("button", { name: "Tutup", exact: true }).click();
-      await dialog.waitFor({ state: "hidden" });
+      assert.match(await popup.innerText(), /1\/2\/1 — ODC-PETA-ROOT/);
+      assert.ok(await popup.getByRole("img", { name: /Core 7 · Biru · Tube 2/ }).isVisible());
+      assert.doesNotMatch(await popup.innerText(), /(?:OLT|ODC|ODP) #\d+|Core power UJI detail peta|<svg/);
+      assert.equal(await popup.getByRole("button", { name: "Lihat detail", exact: true }).count(), 0);
+      assert.equal(await page.getByRole("dialog", { name: "Detail sambungan ODP", exact: true }).count(), 0);
+      assert.equal(await page.locator(".network-map-fullpage").count(), 1);
+      assert.equal(requests.slice(before).filter(r => r.url().includes(`map-data?odp_id=${f.Q2.id}`)).length, 1);
+      assert.ok(requests.slice(before).every(r => r.method() === "GET"));
+      await page.screenshot({ path: path.join(artifacts, "popup-odp-desktop.png"), fullPage: false });
+      await page.getByRole("button", { name: "Keluar layar penuh", exact: true }).click();
       assert.equal(await page.evaluate(() => document.body.style.overflow), "");
     },
   );
@@ -1405,6 +1400,28 @@ try {
       await page.setViewportSize({ width: 1440, height: 1000 });
     },
   );
+  await check("popup ODP sederhana muat pada 390/320px dan tetap di dalam peta layar penuh", async () => {
+    for (const width of [390, 320]) {
+      await page.setViewportSize({ width, height: 844 });
+      await toMap(page, 12);
+      await selectList(page, "ODP", f.Q2.id);
+      await page.locator(`[data-odp-popup="${f.Q2.id}"][aria-busy="false"]`).waitFor();
+      await page.locator(".leaflet-popup-close-button").click();
+      await page.getByRole("button", { name: "Peta layar penuh", exact: true }).click();
+      await page.getByTitle(`ODP · ${f.Q2.name}`, { exact: true }).click();
+      const popup = page.locator(`[data-odp-popup="${f.Q2.id}"][aria-busy="false"]`);
+      await popup.waitFor();
+      assert.match(await popup.innerText(), /1\/2\/1 — ODC-PETA-ROOT/);
+      assert.ok(await popup.getByRole("img", { name: /Core 7 · Biru · Tube 2/ }).isVisible());
+      const box = await popup.boundingBox();
+      assert.ok(box.x >= -1 && box.x + box.width <= width + 1, JSON.stringify(box));
+      assert.ok(await popup.evaluate(el => el.scrollWidth <= el.clientWidth + 1));
+      assert.equal(await page.getByRole("dialog", { name: "Detail sambungan ODP", exact: true }).count(), 0);
+      await page.screenshot({ path: path.join(artifacts, `popup-odp-${width}.png`), fullPage: false });
+      await page.getByRole("button", { name: "Keluar layar penuh", exact: true }).click();
+    }
+    await page.setViewportSize({ width: 1440, height: 1000 });
+  });
   await check("detail ODP 390/320px tetap di viewport, keyboard terkurung dan Escape kembali ke peta", async () => {
     for (const width of [390, 320]) {
       await page.setViewportSize({ width, height: 844 });
@@ -1455,6 +1472,10 @@ try {
         0,
       );
       await selectList(reader, "ODP", f.Q2.id);
+      const popup = reader.locator(`[data-odp-popup="${f.Q2.id}"][aria-busy="false"]`);
+      await popup.waitFor();
+      assert.match(await popup.innerText(), /1\/2\/1 — ODC-PETA-ROOT/);
+      assert.ok(await popup.getByRole("img", { name: /Core 7 · Biru · Tube 2/ }).isVisible());
       await reader.getByRole("button", { name: "Lihat detail sambungan ODP", exact: true }).click();
       const detailDialog = reader.getByRole("dialog", { name: "Detail sambungan ODP", exact: true });
       await detailDialog.locator(`[data-odp-connection-detail="${f.Q2.id}"]`).waitFor();

@@ -1,15 +1,24 @@
 import assert from "node:assert/strict";
+import { useRef } from "react";
 import { createRoot } from "react-dom/client";
+import { setMemToken } from "../src/lib/api.js";
 import { MemoryRouter } from "react-router-dom";
 import { AuthProvider, useAuth } from "../src/lib/auth.jsx";
 import Peta from "../src/pages/Peta.jsx";
 import { odpDetailSnapshot } from "./fixtures/odp-connections.mjs";
 
 function FakeCanvas(props) {
+  const slot = useRef(null);
   return <div data-map-stub>{props.points.map(node => <div key={node.key}>
     <button data-marker={node.key} onClick={() => props.onSelect(node.key)}>{node.name}</button>
-    <button data-popup-detail={node.key} onClick={() => props.onShowDetail(node.key)}>Lihat detail</button>
-  </div>)}</div>;
+    {node.kind === "odp" && <button data-open-odp={node.id} onClick={() => {
+      props.onSelect(node.key);
+      props.onOdpPopupChange({ node, container: slot.current, onResize() {} });
+    }}>Buka popup {node.name}</button>}
+  </div>)}
+    <div data-popup-slot ref={slot} />
+    <button data-close-odp onClick={() => props.onOdpPopupChange(null, slot.current)}>Tutup popup</button>
+  </div>;
 }
 function Page() { const { user, status } = useAuth(); return status === "ready" && user ? <Peta MapCanvasComponent={FakeCanvas} /> : null; }
 export async function run() {
@@ -56,15 +65,23 @@ export async function run() {
     root.render(<MemoryRouter><AuthProvider><Page /></AuthProvider></MemoryRouter>);
     await wait(() => host.querySelector("[data-map-stub]"), "Peta belum siap");
   }
-  async function open(id = 101, from = "popup") {
-    click(from === "popup" ? host.querySelector(`[data-popup-detail="odp-${id}"]`) : host.querySelector(`[aria-label="Detail ODP #${id}"]`));
+  async function open(id = 101) {
+    click(host.querySelector(`[aria-label="Detail ODP #${id}"]`));
     await wait(() => dialog(), "Modal detail belum terbuka");
     if (!failure && !wrongId && !invalid && pending !== id) await wait(() => detail()?.dataset.odpConnectionDetail === String(id), "Data detail belum tampil");
   }
   async function close() { click(dialog().querySelector('[aria-label="Tutup"]')); await wait(() => !dialog(), "Modal belum ditutup"); }
+  const popup = () => host.querySelector('[data-odp-popup]');
+  const popupText = () => popup()?.textContent || "";
+  async function openPopup(id = 101) {
+    click(host.querySelector(`[data-open-odp="${id}"]`));
+    await wait(() => popup()?.dataset.odpPopup === String(id), "Popup ringkas belum terbuka");
+    if (pending !== id) await wait(() => popup().getAttribute("aria-busy") === "false", "Popup masih loading");
+  }
+  async function closePopup() { click(host.querySelector("[data-close-odp]")); await wait(() => !popup(), "Popup belum ditutup"); }
   try {
     await mount();
-    await check("peta dan klik marker tidak memuat core/detail atau mengirim sembilan GET tambahan", async () => {
+    await check("peta dan seleksi inventaris tanpa membuka popup tidak memuat core/detail tambahan", async () => {
       assert.equal(calls.filter(c => c.route.includes("?odp_id=")).length, 0);
       click(host.querySelector('[data-marker="odp-101"]'));
       await wait(() => host.querySelector('[data-selected-device="odp-101"]'), "Pemilihan marker");
@@ -103,7 +120,7 @@ export async function run() {
       assert.equal(dialog().querySelectorAll('[data-odp-route="mapped"]').length, 2);
       await close(); currentSnapshot = null;
     });
-    await check("Lihat detail popup memakai ID: nama sama tidak menampilkan core/OLT ODP lain", async () => {
+    await check("rincian daftar memakai ID: nama sama tidak menampilkan core/OLT ODP lain", async () => {
       await open(202);
       assert.match(text(), /OLT-UJI-C320/); assert.match(text(), /GPON 1\/1\/1/); assert.match(text(), /Catatan core B sintetis/);
       assert.doesNotMatch(text(), /Catatan core A sintetis|PELANGGAN-UJI-A|GPON 1\/2\/1/);
@@ -155,6 +172,89 @@ export async function run() {
     await check("nama/catatan berisi HTML tetap teks, tidak dieksekusi", async () => {
       currentSnapshot = odpDetailSnapshot(); currentSnapshot.odps.find(p => p.id === 101).name = '<img src=x onerror="alert(1)">'; currentSnapshot.odpDetail.cores[0].notes = '<script>alert(2)</script>';
       await open(); assert.match(text(), /<script>/); assert.match(text(), /<img/); assert.equal(dialog().querySelectorAll("script,img[src=x]").length, 0); await close();
+    });
+    await mount();
+    await check("popup ikon langsung berisi nama, bulatan core dan interface — ODC, bukan modal panjang", async () => {
+      assert.equal(calls.filter(c => c.route.includes("?odp_id=")).length, 0);
+      await openPopup();
+      assert.equal(dialog(), null); assert.equal(document.body.style.overflow, "");
+      assert.match(popupText(), /ODP-UJI-NAMA-SAMA/); assert.match(popupText(), /1\/2\/1 — ODC-UJI-ANAK/);
+      const icon = popup().querySelector('[data-odp-popup-core="7"]');
+      assert.match(icon.getAttribute("aria-label"), /Core 7 · Biru · Tube 2/);
+      assert.ok(icon.querySelector("[style]").style.backgroundColor);
+      assert.equal(popup().querySelector('[data-odp-popup-core="3"]'), null);
+      assert.equal(popup().querySelectorAll("input,select,textarea,form,button").length, 0);
+      assert.doesNotMatch(popupText(), /Lokasi A|PELANGGAN-UJI|SPL-UJI|Catatan core/);
+      assert.equal(calls.filter(c => c.route.includes("?odp_id=")).length, 1);
+      await closePopup();
+    });
+    await check("buka ulang popup membaca snapshot baru dan tidak memakai core/interface lama", async () => {
+      currentSnapshot = odpDetailSnapshot(); currentSnapshot.interfaceMappings = [];
+      currentSnapshot.odpDetail.cores[0].status = "idle";
+      currentSnapshot.splitters.find(s => s.odp_id === 101).input_core = null;
+      const before = calls.length; await openPopup();
+      assert.match(popupText(), /Interface belum dipetakan — ODC-UJI-ANAK/);
+      assert.equal(popup().querySelectorAll("[data-odp-popup-core]").length, 0);
+      assert.doesNotMatch(popupText(), /1\/2\/1/); assert.equal(calls.length, before + 1);
+      await closePopup(); currentSnapshot = null;
+    });
+    await check("popup tanpa sambungan/core tidak mengarang sumber dari induk inventaris", async () => {
+      currentSnapshot = odpDetailSnapshot(); currentSnapshot.odpDetail.cores = [];
+      currentSnapshot.links = currentSnapshot.links.filter(l => l.odp_id !== 101);
+      currentSnapshot.splitters = currentSnapshot.splitters.filter(s => s.odp_id !== 101);
+      for (const s of currentSnapshot.splitters) s.outputs = s.outputs.filter(o => o.target_odp_id !== 101);
+      await openPopup();
+      assert.match(popupText(), /Core powerbelum ditandai/);
+      assert.match(popupText(), /Interface \/ ODC asal belum dipetakan/);
+      assert.doesNotMatch(popupText(), /ODC-UJI-ANAK|OLT-UJI-C300|1\/2\/1/);
+      await closePopup(); currentSnapshot = null;
+    });
+    await check("popup gagal bisa retry satu GET, tanpa form atau penulisan inventaris", async () => {
+      failure = 503; await openPopup(); assert.ok(popup().querySelector('[role="alert"]'));
+      assert.equal(popup().querySelectorAll("[data-odp-popup-core],[data-odp-popup-source]").length, 0);
+      failure = null; click([...popup().querySelectorAll("button")].find(b => b.textContent === "Coba lagi"));
+      await wait(() => popupText().includes("1/2/1"), "Retry popup"); await closePopup();
+    });
+    await check("popup 404/identitas tertukar/payload rusak tidak menampilkan asal atau core palsu", async () => {
+      for (const kind of ["404", "id", "payload"]) {
+        failure = kind === "404" ? 404 : null; wrongId = kind === "id"; invalid = kind === "payload";
+        await openPopup(); assert.ok(popup().querySelector('[role="alert"]'));
+        assert.equal(popup().querySelectorAll("[data-odp-popup-core],[data-odp-popup-source]").length, 0);
+        await closePopup();
+      }
+      failure = null; wrongId = false; invalid = false;
+    });
+    await check("popup A ditutup/diganti B tidak menerima respons A yang terlambat", async () => {
+      pending = 101; await openPopup(); await wait(() => holds.length, "Popup A pending"); await closePopup();
+      pending = null; await openPopup(202); holds.splice(0).forEach(resolve => resolve()); await delay(60);
+      assert.match(popupText(), /1\/1\/1 — ODC-UJI-C320/); assert.doesNotMatch(popupText(), /1\/2\/1|C7/);
+      assert.equal(popup().dataset.odpPopup, "202"); await closePopup();
+    });
+    await check("tutup popup saat loading membatalkan tampilan terlambat tanpa mengunci halaman", async () => {
+      pending = 101; await openPopup(); await wait(() => holds.length, "Popup pending kedua"); await closePopup();
+      holds.splice(0).forEach(resolve => resolve()); pending = null; await delay(50);
+      assert.equal(popup(), null); assert.equal(document.body.style.overflow, "");
+    });
+    for (const nextRole of ["operator", "user"]) await check(`${nextRole}: popup tetap ringkas dan baca-saja`, async () => {
+      await mount(nextRole); await openPopup();
+      assert.match(popupText(), /1\/2\/1 — ODC-UJI-ANAK/);
+      assert.equal(popup().querySelectorAll("input,select,textarea,form").length, 0);
+      assert.ok(calls.every(c => c.method === "GET")); await closePopup();
+    });
+    await check("popup merender nama ODP/interface/ODC berisi HTML sebagai teks aman", async () => {
+      currentSnapshot = odpDetailSnapshot();
+      currentSnapshot.odps.find(p => p.id === 101).name = '<img src=x onerror="alert(1)">';
+      currentSnapshot.olts[0].interface_mode = "custom"; currentSnapshot.ports[0].interface_name = '<img src=x onerror="alert(2)">';
+      currentSnapshot.odcs.find(d => d.id === 20).name = '<svg onload="alert(3)">';
+      await openPopup(); assert.match(popupText(), /<img/); assert.match(popupText(), /<svg/);
+      assert.equal(popup().querySelectorAll("img,script,svg[onload]").length, 0);
+      await closePopup(); currentSnapshot = null;
+    });
+    await check("sesi berubah ketika popup pending tidak menampilkan respons sesi lama", async () => {
+      pending = 101; await openPopup(); await wait(() => holds.length, "Popup sesi lama");
+      setMemToken("fixture-other-session"); holds.splice(0).forEach(resolve => resolve()); await delay(50);
+      assert.equal(popup().querySelectorAll("[data-odp-popup-source],[data-odp-popup-core]").length, 0);
+      await closePopup(); pending = null; setMemToken(null);
     });
     assert.equal(errors.length, 0, errors.join("\n"));
     console.log(`\nDETAIL ODP UI: ${passed} pemeriksaan lulus.`);

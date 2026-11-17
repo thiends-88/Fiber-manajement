@@ -207,3 +207,35 @@ export function buildOdpConnections(data = {}, odpId) {
   for (const p of powers.values()) if (p.records.length > 1) warnings.push(`Ada beberapa catatan untuk core ODP ${p.number}; verifikasi statusnya.`);
   return { odp, inventoryOdc, inventoryOlt, routes, powerCores: [...powers.values()].sort((a, b) => a.number - b.number), localSplitters, warnings: [...new Set(warnings)], truncated };
 }
+
+// Ringkasan popup: core kabel ODP sendiri dan pasangan interface/ODC terakhir
+// pada jalur sah. Induk inventaris tidak dipakai sebagai sumber pengganti.
+export function summarizeOdpConnections(detail) {
+  const sources = new Map();
+  const mapped = detail.routes.filter(route => route.status === "mapped");
+  const needsReview = detail.truncated || detail.routes.some(route => route.status === "review");
+  for (const route of mapped) {
+    const odc = route.steps.findLast(step => step.kind === "odc");
+    if (!odc) continue;
+    const port = route.port;
+    const label = /^GPON \d+\/\d+\/\d+$/.test(port.interface_label) ? port.interface_code : port.interface_label;
+    const key = `${route.olt.id}:${port.id}:${odc.id}`;
+    sources.set(key, { key, interface: label, odcName: odc.label, oltName: route.olt.name });
+  }
+  if (!sources.size && !needsReview) {
+    for (const route of detail.routes.filter(route => route.status === "partial")) {
+      const odc = route.steps.findLast(step => step.kind === "odc");
+      if (odc) sources.set(`unmapped-${odc.id}`, { key: `unmapped-${odc.id}`, interface: "Interface belum dipetakan", odcName: odc.label });
+    }
+  }
+  if (!sources.size) sources.set("unknown", { key: "unknown", interface: needsReview ? "Asal perlu verifikasi" : "Interface / ODC asal belum dipetakan" });
+  const notice = mapped.length && detail.routes.some(route => route.status !== "mapped")
+    ? needsReview ? "Ada sambungan perlu verifikasi." : "Sebagian sambungan belum dipetakan."
+    : detail.truncated ? "Penelusuran dibatasi; periksa Mapping Core." : "";
+  return {
+    name: detail.odp.name,
+    cores: detail.powerCores.filter(core => core.usages.length || core.records.some(record => record.status === "used")),
+    sources: [...sources.values()],
+    notice,
+  };
+}

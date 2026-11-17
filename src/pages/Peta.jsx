@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
 import { Download, LocateFixed, MapPin, Pencil, RefreshCw } from "lucide-react";
 import { api, getSessionVersion } from "../lib/api.js";
@@ -38,6 +39,7 @@ import "../map.css";
 
 const Canvas = lazy(() => import("../components/NetworkMapCanvas.jsx"));
 const OdpConnectionDetail = lazy(() => import("../components/OdpConnectionDetail.jsx"));
+const OdpMapPopup = lazy(() => import("../components/OdpMapPopup.jsx"));
 const EMPTY_FILTERS = { oltId: "", odcId: "", kind: "", query: "" };
 class MapBoundary extends Component {
   state = { error: false };
@@ -309,6 +311,10 @@ export default function Peta({ MapCanvasComponent = Canvas }) {
     [focus, setFocus] = useState(null),
     [fitRevision, setFitRevision] = useState(0);
   const [detailKey, setDetailKey] = useState(null);
+  const [odpPopup, setOdpPopup] = useState(null);
+  const onOdpPopupChange = useCallback((next, closedContainer) => {
+    setOdpPopup(current => next || (current?.container === closedContainer ? null : current));
+  }, []);
   const [edit, setEdit] = useState(null),
     [gpsForm, setGpsForm] = useState({}),
     [saving, setSaving] = useState(false),
@@ -328,6 +334,7 @@ export default function Peta({ MapCanvasComponent = Canvas }) {
     setError("");
     setData(null);
     setLoadedAt(null);
+    setOdpPopup(null);
     try {
       const snapshot = validateMapSnapshot(await api("/api/map-data"));
       if (!mounted.current || request !== generation.current) return false;
@@ -384,9 +391,12 @@ export default function Peta({ MapCanvasComponent = Canvas }) {
   }, []);
   function showDetail(key) {
     if (edit || saveBusy.current) return;
-    select(key);
-    if (model.byKey.get(key)?.kind === "odp") setDetailKey(key);
-    else mapSection.current?.scrollIntoView?.({ block: "start", behavior: "auto" });
+    if (model.byKey.get(key)?.kind === "odp") {
+      setSelectedRouteId(null); setSelected(key); setDetailKey(key);
+    } else {
+      select(key);
+      mapSection.current?.scrollIntoView?.({ block: "start", behavior: "auto" });
+    }
   }
   const detailNode = model.byKey.get(detailKey);
   function editGps(node) {
@@ -690,6 +700,7 @@ export default function Peta({ MapCanvasComponent = Canvas }) {
                     basemap={basemap}
                     onSelect={select}
                     onShowDetail={showDetail}
+                    onOdpPopupChange={onOdpPopupChange}
                   />
                 </Suspense>
               </MapBoundary>
@@ -841,6 +852,13 @@ export default function Peta({ MapCanvasComponent = Canvas }) {
             </Card>
           )}
         </div>
+      )}
+      {odpPopup && createPortal(
+        <MapBoundary message="Popup sambungan belum dapat dimuat. Muat ulang halaman untuk mencoba lagi.">
+          <Suspense fallback={<><strong>{odpPopup.node.name}</strong><p role="status">Memuat sambungan…</p></>}>
+            <OdpMapPopup key={odpPopup.node.id} node={odpPopup.node} onResize={odpPopup.onResize} />
+          </Suspense>
+        </MapBoundary>, odpPopup.container,
       )}
       <Modal open={!!detailNode} wide title="Detail sambungan ODP" onClose={() => setDetailKey(null)}>
         {detailNode && <MapBoundary key={detailNode.id} message="Panel sambungan ODP belum dapat dimuat. Periksa koneksi lalu muat ulang halaman.">
