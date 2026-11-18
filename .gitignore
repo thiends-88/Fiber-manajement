@@ -37,3 +37,6 @@ data/
 
 # Artefak uji navigasi daftar ODC/ODP
 .uji-navigation/
+
+# Artefak uji modal sambungan ODP dari peta
+.uji-odp-detail/

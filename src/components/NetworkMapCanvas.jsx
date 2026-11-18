@@ -38,6 +38,8 @@ function textElement(tag, text, className = "") {
 }
 function pointPopup(node, onSelect) {
   const content = textElement("div", "", "network-map-popup");
+  // Isi ODP dirender sebagai portal React ketika popup benar-benar terbuka.
+  if (node.kind === "odp") { content.classList.add("network-map-odp-popup"); return content; }
   content.append(
     textElement("strong", node.name),
     textElement(
@@ -77,14 +79,20 @@ export default function NetworkMapCanvas({
   fitRevision,
   basemap,
   onSelect,
+  onShowDetail,
+  onOdpPopupChange,
 }) {
   const viewport = useRef(null),
     container = useRef(null),
     markers = useRef(new Map()),
     callback = useRef(onSelect),
+    detailCallback = useRef(onShowDetail),
+    popupCallback = useRef(onOdpPopupChange),
     routeCallback = useRef(onSelectRoute),
     routeLayers = useRef(new Map());
   callback.current = onSelect;
+  detailCallback.current = onShowDetail;
+  popupCallback.current = onOdpPopupChange;
   routeCallback.current = onSelectRoute;
   const [engine, setEngine] = useState(null),
     [error, setError] = useState(""),
@@ -171,9 +179,10 @@ export default function NetworkMapCanvas({
 
   useEffect(() => {
     if (!engine) return;
-    const { L, clusters } = engine;
+    const { L, map, clusters } = engine;
     clusters.clearLayers();
     markers.current.clear();
+    const popupContainers = new Set();
     const layers = points.map((node) => {
       const marker = L.marker(
         [node.coordinates.latitude, node.coordinates.longitude],
@@ -190,26 +199,68 @@ export default function NetworkMapCanvas({
           }),
         },
       );
-      marker.bindPopup(
-        () =>
-          pointPopup(node, (key) => {
-            viewport.current?.close();
-            callback.current(key);
-          }),
+      // Label permanen mengikuti marker yang terlihat; cluster otomatis
+      // menyembunyikan nama anggotanya sampai grup dibuka/diperbesar.
+      marker.bindTooltip(
+        () => {
+          const label = textElement(
+            "span",
+            node.record?.name || `${MAP_TYPES[node.kind].label} belum bernama`,
+          );
+          label.dataset.mapDeviceName = node.key;
+          return label;
+        },
         {
-          minWidth: 190,
-          maxWidth: 310,
-          autoPan: true,
+          permanent: true,
+          direction: "auto",
+          offset: [18, 0],
+          opacity: 1,
+          interactive: false,
+          className: `network-map-device-label network-map-device-label-${node.kind}`,
         },
       );
+      let content;
+      const popupContent = () => {
+        if (!content) {
+          content = pointPopup(node, (key) => {
+            viewport.current?.close();
+            (detailCallback.current || callback.current)(key);
+          });
+          if (node.kind === "odp") popupContainers.add(content);
+        }
+        return content;
+      };
+      marker.bindPopup(popupContent, {
+        minWidth: 180,
+        maxWidth: node.kind === "odp" ? 260 : 310,
+        autoPan: true,
+        autoPanPadding: [18, 18],
+      });
+      if (node.kind === "odp") {
+        marker.on("popupopen", () => popupCallback.current?.({
+          node, container: popupContent(),
+          onResize: () => { if (marker.isPopupOpen()) marker.getPopup().update(); },
+        }));
+        marker.on("popupclose", () => popupCallback.current?.(null, content));
+      }
       marker.on("click", () => callback.current(node.key));
       markers.current.set(node.key, marker);
       return marker;
     });
     clusters.addLayers(layers);
+    // Reposisi hanya label yang terbuka setelah pan/resize (termasuk layar penuh),
+    // agar arah otomatis dan tinggi nama yang membungkus tetap sejajar ikonnya.
+    const positionLabels = () => {
+      for (const marker of layers)
+        if (marker.isTooltipOpen())
+          marker.getTooltip().setLatLng(marker.getLatLng());
+    };
+    map.on("moveend", positionLabels);
     return () => {
+      map.off("moveend", positionLabels);
       clusters.clearLayers();
       markers.current.clear();
+      for (const content of popupContainers) popupCallback.current?.(null, content);
     };
   }, [engine, points]);
 

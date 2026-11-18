@@ -7,8 +7,8 @@ Menu **Peta Jaringan / KMZ** (`/peta`) menyatukan titik OLT, ODC, ODP dan **jalu
 ## Cara menggunakan
 
 1. Buka **Peta Jaringan / KMZ**. Angka atas menunjukkan jumlah perangkat bertitik dibanding seluruh inventaris untuk masing-masing jenis.
-2. Ikon **OLT biru/bulat**, **ODC jingga/kabinet**, dan **ODP hijau/belah ketupat**. Angka pada lingkaran adalah jumlah perangkat yang dikelompokkan. Klik/perbesar grup untuk memisahkan ikon; beberapa ID pada koordinat sama tetap merupakan perangkat berbeda.
-3. Klik ikon atau **Detail** pada daftar. Popup dan judul detail memakai **nama perangkat yang tercatat** (misalnya `ODP-0006`), bukan label ID internal seperti `ODP #10`. ID relasi tetap digunakan di belakang layar; tidak ada perubahan ID, nama, GPS atau mapping. Detail tetap berisi GPS, lokasi asli, induk inventaris, catatan, serta bukti sambungan. **Buka OLT/ODC/ODP** menuju perangkat yang tepat; tautan ODP kini mendukung `?odp=ID`.
+2. Ikon **OLT biru/bulat**, **ODC jingga/kabinet**, dan **ODP hijau/belah ketupat**, dengan **nama perangkat tercatat selalu terlihat di samping simbol** tanpa klik/hover. Label mengikuti tema, tetap tampil saat peta digeser/diperbesar atau layar penuh, dan nama panjang membungkus agar lebih mudah dibaca di HP. Angka pada lingkaran adalah jumlah perangkat yang dikelompokkan; nama anggota baru muncul bersama ikonnya setelah grup dibuka/diperbesar agar tidak menumpuk saat ikhtisar. Beberapa ID pada koordinat sama tetap merupakan perangkat berbeda. Nama memakai snapshot peta yang sudah dibaca, tanpa request detail/core per perangkat atau penulisan inventaris.
+3. **Klik ikon ODP:** popup langsung menampilkan **nama ODP**, **bulatan warna core power yang dipakai**, lalu **interface — ODC asal** (contoh `1/2/1 — ODC0001`). Tidak perlu membuka modal panjang. GPS, lokasi, induk inventaris dan catatan lengkap tetap di sidebar; **Detail** pada daftar / **Lihat detail sambungan ODP** pada sidebar adalah rincian opsional. Popup dan judul memakai nama perangkat tercatat, bukan label ID internal seperti `ODP #10`. **Buka OLT/ODC/ODP** tetap menuju perangkat yang tepat; ID/nama/GPS/mapping tidak diubah.
 4. Filter **OLT induk inventaris**, **ODC induk inventaris**, jenis, atau nama/lokasi. Filter induk **bukan** pernyataan sumber fisik. Sebuah kabinet anak/bersama boleh menerima sumber dari jalur lain.
 5. **Tampilkan Semua Titik** membersihkan semua filter dan menyesuaikan tampilan ke seluruh titik valid. Setelah perubahan inventaris/pemetaan oleh orang lain, tekan **Muat ulang peta**. Waktu data dibaca terlihat di atas kanvas; peta/ekspor memakai satu snapshot, bukan monitoring langsung.
 6. Panel **Jalur kabel impor** menyediakan **Impor jalur kabel**, centang tampil/sembunyi per kumpulan, **Fokus**, **Fokus semua jalur**, serta **Telusuri segmen**. Detail menampilkan nama, ID segmen, sumber berkas, folder dan catatan asli; nama sama tidak digabung.
@@ -22,7 +22,44 @@ Klik **Peta layar penuh** di sudut kanan bawah peta. Peta akan memenuhi viewport
 
 - Pan/zoom, titik, jalur, popup dan pilihan peta dasar tetap dipertahankan; tidak ada pembuatan ulang peta atau pengambilan geometri ulang hanya karena ukuran berubah. Tile citra untuk bagian viewport yang baru tetap dapat dimuat.
 - Gunakan **Keluar layar penuh** di kanan atas atau tombol **Esc** untuk kembali. Guliran halaman dan fokus keyboard dipulihkan; Tab tetap berada pada kontrol peta selama mode aktif.
-- **Lihat detail / Detail jalur** pada popup mengembalikan peta ke tampilan biasa agar panel detail dapat dibaca. Membuka layar penuh tidak mengubah filter, inventaris, koordinat, jalur tersimpan atau isi KMZ.
+- Klik ikon ODP tetap membuka popup singkat **di dalam peta layar penuh**, tanpa keluar dari mode ini atau membuka modal. **Lihat detail** pada popup OLT/ODC dan **Detail jalur** tetap kembali ke tampilan biasa untuk membuka panel terkait. Layar penuh tidak mengubah filter, inventaris, koordinat, jalur tersimpan atau isi KMZ.
+
+## Popup ODP sederhana
+
+Cukup klik ikon ODP pada peta. Tampilan normal hanya berisi:
+
+```text
+ODP-0026
+Core power  ● C7
+1/2/1 — ODC0001
+```
+
+Bulatan mengikuti **warna core kabel ODP sendiri**, bukan warna feeder ODC. Nomor core tetap tertulis agar tidak bergantung pada warna saja; arahkan pointer ke ikon atau gunakan pembaca layar untuk nama warna, tube, dan keterangan apakah statusnya tercatat terpakai atau terdeteksi dari sambungan. Core idle/cadangan/rusak yang tidak memiliki pemakaian terdeteksi tidak ikut sebagai core terpakai. Tidak ada penulisan ulang status manual.
+
+Baris sumber memakai **interface dan ODC terakhir pada jalur tersimpan yang sah**, bukan sekadar ODC induk inventaris. Nama OLT tersedia pada keterangan baris sumber. Untuk HSGQ tampil `PON 3`, dan nama interface manual tetap mengikuti input. Beberapa pasangan sumber yang berbeda tetap ditampilkan; pasangan interface/ODC identik dipadatkan berdasarkan ID, bukan kesamaan nama. Rincian jalur asli tidak digabung/diubah.
+
+Belum ada mapping? Popup menulis **Interface belum dipetakan** atau **Interface / ODC asal belum dipetakan**. Konflik diberi **Asal perlu verifikasi**; jika hanya sebagian jalur lengkap, ada catatan singkat. Tidak menebak asal dari nama, GPS, induk, warna core, atau garis impor. Core belum diisi juga tidak diberi warna/nomor pengganti.
+
+Popup dan datanya dimuat hanya ketika dibuka, melalui satu snapshot `GET /api/map-data?odp_id=ID` yang sama dengan rincian lanjutan. Buka ulang untuk membaca data baru; tidak ada polling atau fetch semua core saat peta pertama tampil. Respons popup yang sudah ditutup/diganti/sesinya berubah tidak dipasang ke popup lain. Gagal baca menyediakan **Coba lagi** tanpa data lama yang dianggap terbaru. Popup tetap di dalam peta pada mode layar penuh dan ponsel.
+
+### Rincian lanjutan (opsional)
+
+Untuk penelusuran lebih jauh, gunakan **Detail** pada daftar ODP (termasuk yang belum memiliki GPS), atau **Lihat detail sambungan ODP** pada sidebar. Modal **Detail sambungan ODP** tetap tersedia, tetapi bukan langkah wajib untuk membaca nama/core/interface/ODC dari ikon.
+
+- **Ringkasan di atas:** OLT dan interface asal yang berhasil ditelusuri, ODC yang dilewati, core feeder, serta core power terpakai/terdeteksi. Sumber yang belum terkonfirmasi tidak dimasukkan sebagai asal pasti. Jika ada beberapa jalur, rincian tetap terpisah dan jalur terpetakan ditampilkan terlebih dahulu.
+- **Urutan sambungan:** OLT → interface → ODC/core → splitter/rasio/output → ODC penerima/cascade bila tercatat → ODP. Kabel langsung menampilkan nomor core ODC **dan** core ODP yang sebenarnya, bukan menyamakan keduanya. Nama interface mengikuti profil yang tersimpan: C300/C320, PON langsung (misalnya HSGQ), atau nama manual.
+- **Tiga penanda:** **Asal terpetakan**, **Hulu belum lengkap**, dan **Perlu verifikasi**. Mapping hilang, feeder terlepas, receiver/core/output tidak sah, input ganda atau jalur berputar tidak disembunyikan atau dipilih salah satunya secara otomatis. **Terpetakan berarti bukti logis tersimpan, bukan hasil pengukuran atau verifikasi fisik lapangan.**
+- **Core power ODP — kabel ODP sendiri:** nomor, warna dan tube mengikuti tipe kabel ODP itu. Daftar lengkap berisi status tersimpan (termasuk idle/cadangan/rusak), tujuan dan catatan yang diinput. **Terpakai terdeteksi dari sambungan** ditampilkan terpisah; tidak menulis ulang status manual. Splitter lokal dengan input yang tercatat tetap dapat ditampilkan walau hulunya belum lengkap.
+- **Core masuk yang belum diketahui tetap kosong:** output splitter → ODP belum menyimpan nomor core tujuan. Aplikasi tidak mengisinya dengan nomor core feeder, warna yang sama, atau core power lokal. Asal sebuah splitter lokal hanya dapat dilanjutkan melalui core masuk yang benar-benar terikat pada sambungan.
+- **Induk inventaris** tersedia pada bagian lipat terpisah, bukan bukti asal fisik. Nama sama, koordinat berdekatan, serta garis kabel impor juga bukan bukti sambungan. Membuka detail tidak menambah garis skematis pada peta/KMZ.
+
+**Core power adalah penandaan core kabel, bukan nilai daya optik dBm atau estimasi redaman.** Field pengukuran legacy tidak diaktifkan atau dihapus dari DB. Panel tidak melakukan SSH/SNMP atau mengambil pengukuran langsung dari OLT.
+
+Gunakan **Muat ulang detail** setelah input sambungan berubah. Waktu snapshot terlihat di bawah panel; panel bukan monitoring langsung. Setiap pembukaan/refresh membaca satu snapshot konsisten melalui `GET /api/map-data?odp_id=ID`, termasuk core milik ODP terpilih saja, bukan sembilan request inventaris terpisah. Kontrak peta biasa tetap sama. Jika gagal/ODP dihapus, pesan dan tombol coba lagi ditampilkan, bukan asal/core lama yang dianggap terbaru. Respons terlambat setelah panel ditutup/perangkat diganti diabaikan.
+
+Panel dimuat lazy, tanpa dependensi baru atau polling. Penelusuran dibatasi 24 jalur, kedalaman 32 dan 512 kunjungan; batas tercapai diberi catatan untuk melanjutkan pemeriksaan di Mapping Core. **Tutup / Esc** mengembalikan fokus dan guliran halaman. Tombol **Buka input ODP** dan **Buka Mapping Core** menuju halaman lama dengan aturan peran yang sama; membuka panel/tautan tidak menyimpan data. Admin, operator dan pembaca dapat membaca detail sesuai sesi aplikasi.
+
+Fitur detail ini tidak menambah migrasi/tabel, mengganti akun/password, mengimpor berkas privat, mengisi koordinat, atau menulis ulang inventaris/core/mapping yang sudah ada.
 
 ## Mengimpor jalur kabel — tiga langkah
 
@@ -148,14 +185,15 @@ Tetap lakukan backup SQLite dan preflight sebelum update, sesuai [panduan update
 ```bash
 npm ci
 npm run build
-npm test                    # termasuk 193 pemeriksaan peta/GPS/KMZ/jalur
-npm run test:map             # 10 satelit/overzoom/fallback + 106 peta/GPS + 77 parser/store/API/worker/cache jalur
+npm test                    # termasuk peta/GPS/KMZ, detail ODP dan jalur
+npm run test:map             # satelit/fallback, peta/GPS, detail ODP, parser/store/API/worker/cache jalur
+npm run test:odp-detail      # 43 penelusuran/kontrak + 26 UI popup/rincian ODP (bagian dari npm test)
 npm run test:routes          # 38 logika/store/KMZ + 14 HTTP + 12 worker + 13 cache/race
 CHROMIUM_EXECUTABLE=/usr/bin/chromium npm run test:map:browser
 CHROMIUM_EXECUTABLE=/usr/bin/chromium npm run test:routes:browser
 ```
 
-Suite Chromium memakai DB sementara dengan bootstrap admin privat dan **data geografis sintetis khusus tes**. Ia memeriksa Leaflet/clustering sesungguhnya, 29 alur browser, desktop/mobile, zoom 22, fallback citra, tile/plugin gagal, ekspor lengkap/terfilter, sumber/receiver, tiga form inventaris, hak baca, pending/error save, clear/reload, dan ekspor yang selesai setelah logout. Tidak menggunakan DB/akun produksi. Jika server/browser berjalan serentak dengan suite lain, port dapat diatur melalui `UJI_MAP_API_PORT` / `UJI_MAP_BROWSER_PORT`; browser perlu dipasang pada lingkungan pengujian (tidak diunduh otomatis oleh suite).
+Suite Chromium memakai DB sementara dengan bootstrap admin privat dan **data geografis sintetis khusus tes**. Ia memeriksa Leaflet/clustering sesungguhnya, 35 alur browser, desktop/mobile, label nama OLT/ODC/ODP tanpa hover/klik, grup dibuka/ditutup, nama panjang/XSS, filter/clear serta pan/resize tanpa fetch tambahan; zoom 22, fallback citra, tile/plugin gagal, ekspor lengkap/terfilter, sumber/receiver, popup ODP sederhana yang tetap di layar penuh, core/icon/interface/ODC (320/390px dan pembaca), serta rincian opsional dengan refresh GET-only dan fokus/Esc, tiga form inventaris, pending/error save, clear/reload, dan ekspor yang selesai setelah logout. Tidak menggunakan DB/akun produksi. Jika server/browser berjalan serentak dengan suite lain, port dapat diatur melalui `UJI_MAP_API_PORT` / `UJI_MAP_BROWSER_PORT`; browser perlu dipasang pada lingkungan pengujian (tidak diunduh otomatis oleh suite).
 
 Suite browser jalur menambahkan **22 pemeriksaan**: CSV 29 segmen/922 vertex sintetis, KML/KMZ worker nyata, MultiGeometry/warna/folder, pratinjau tanpa write, acknowledgement, simpan/hapus pending, duplikat, XSS/XXE/ZIP/batas berkas, reload/read-only, Canvas nyata, lengkap/terfilter/route-only, error/retry tanpa ekspor parsial, mobile, navigasi saat worker pending dan tidak ada request luar yang tidak diharapkan. Untuk skenario pembatalan, input worker ditahan secara deterministik; alur impor/ekspor normal menjalankan worker sesungguhnya. Port terpisah `UJI_ROUTE_API_PORT` / `UJI_ROUTES_BROWSER_PORT`. Berkas jaringan pengguna tidak disertakan dalam fixture dan tidak diimpor otomatis.
 

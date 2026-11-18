@@ -974,6 +974,14 @@ const server = http.createServer(async (req, res) => {
 
     // Snapshot baca konsisten: titik dan bukti koneksi tidak dicampur dari beberapa request.
     if (p === "/api/map-data" && method === "GET") {
+      // Detail hanya diminta saat pengguna membukanya. Core ODP dipilih pada
+      // transaksi baca yang sama dengan bukti asal, tanpa memuat semua core
+      // pada pembukaan peta biasa dan tanpa migrasi/penulisan inventaris.
+      const detailIds = url.searchParams.getAll("odp_id");
+      const detailId = detailIds.length ? Number(detailIds[0]) : null;
+      if (detailIds.length && (detailIds.length !== 1 || !/^[1-9]\d*$/.test(detailIds[0]) || !Number.isSafeInteger(detailId))) {
+        return send(req, res, 400, { error: "ID ODP detail tidak valid" });
+      }
       db.exec("BEGIN");
       let data;
       try {
@@ -989,6 +997,14 @@ const server = http.createServer(async (req, res) => {
           links: db.prepare("SELECT * FROM core_links ORDER BY id").all(),
           splitters: db.prepare(SPLITTER_SQL + " ORDER BY s.id").all().map(row => ({ ...row, outputs: output.all(row.id) })),
         };
+        if (detailId != null) {
+          if (!data.odps.some(row => row.id === detailId)) throw httpError(404, "ODP tidak ditemukan; muat ulang peta");
+          data.odpDetail = {
+            odpId: detailId,
+            readAt: new Date().toISOString(),
+            cores: db.prepare("SELECT id,source,odc_id,odp_id,core,status,destination,notes FROM core_assignments WHERE source='odc_to_odp' AND odp_id=? ORDER BY core,id").all(detailId),
+          };
+        }
         db.exec("COMMIT");
       } catch (error) { db.exec("ROLLBACK"); throw error; }
       return send(req, res, 200, data);

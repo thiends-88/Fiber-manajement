@@ -198,15 +198,31 @@ async function fullMap(page, points) {
     .click();
   await mapReady(page, points);
 }
+const deviceLabel = (page, kind, id) =>
+  page.locator(`[data-map-device-name="${kind.toLowerCase()}-${id}"]`).locator("..");
+async function labelAligned(page, kind, id) {
+  await page.waitForFunction((key) => {
+    const label = document.querySelector(`[data-map-device-name="${key}"]`)?.parentElement;
+    if (!label) return false;
+    const marker = document.querySelector(`.network-map-marker[aria-describedby="${label.id}"]`);
+    if (!marker) return false;
+    const l = label.getBoundingClientRect(),
+      m = marker.getBoundingClientRect(),
+      c = document.querySelector(".network-map-canvas").getBoundingClientRect();
+    return l.left >= c.left - 1 && l.right <= c.right + 1 &&
+      Math.abs(l.y + l.height / 2 - m.y - m.height / 2) < 2 &&
+      (l.right <= m.left + 1 || l.left >= m.right - 1);
+  }, `${kind}-${id}`);
+}
 async function selectList(page, kind, id) {
   const summary = page.getByText(/^Daftar titik valid \(\d+\)$/, {
     exact: true,
   });
   if ((await summary.locator("..").getAttribute("open")) === null)
     await summary.click();
-  await page
-    .getByRole("button", { name: `Detail ${kind} #${id}`, exact: true })
-    .click();
+  // Pilih nama baris untuk fokus/inspeksi sidebar. Tombol Detail ODP kini
+  // sengaja membuka modal sambungan, sehingga bukan lagi shortcut seleksi.
+  await page.locator(`[data-device-key="${kind.toLowerCase()}-${id}"]`).getByRole("button").first().click();
   await page
     .locator(`[data-selected-device="${kind.toLowerCase()}-${id}"]`)
     .waitFor();
@@ -347,6 +363,8 @@ try {
     role: "user",
   });
   const f = await mapLiveFixture(request);
+  await request("POST", "/api/cores", { source: "odc_to_odp", odp_id: f.Q2.id, core: 7, status: "used", destination: "PELANGGAN-UJI-DETAIL", notes: "Core power UJI detail peta" });
+  await request("POST", "/api/cores", { source: "odc_to_odp", odp_id: f.Q2.id, core: 2, status: "reserved", notes: "Core masuk langsung UJI" });
   const executablePath =
     process.env.CHROMIUM_EXECUTABLE ||
     [
@@ -391,6 +409,8 @@ try {
         .getByRole("link", { name: "Peta Jaringan / KMZ", exact: true })
         .click();
       await mapReady(page, 11);
+      await page.locator(".network-map-device-label").first().waitFor();
+      assert.equal(requests.filter(r => r.url().includes("?odp_id=")).length, 0, "Label nama tidak memuat detail/core");
       await page
         .locator(".network-map-satellite-tile.leaflet-tile-loaded")
         .first()
@@ -479,6 +499,43 @@ try {
       assert.ok(await page.locator(".leaflet-popup-content").isVisible());
     },
   );
+  await check("nama OLT/ODC/ODP terlihat tanpa hover/klik perangkat, satu label per simbol dan tanpa fetch tambahan", async () => {
+    await page.locator(".leaflet-popup-close-button").click();
+    await page.locator(".leaflet-popup").waitFor({ state: "detached" });
+    await page.mouse.move(0, 0);
+    const before = requests.length;
+    for (const [kind, row] of [["olt", f.A], ["odc", f.R], ["odp", f.Q1]]) {
+      const label = deviceLabel(page, kind, row.id);
+      await label.waitFor();
+      assert.equal(await label.innerText(), row.name);
+      assert.match(await label.getAttribute("class"), new RegExp(`network-map-device-label-${kind}`));
+      assert.equal(await label.evaluate(el => getComputedStyle(el).pointerEvents), "none");
+      assert.equal(await label.evaluate(el => {
+        const reference = document.createElement("span");
+        reference.style.cssText = "color:var(--color-ink);background:var(--color-panel)";
+        el.append(reference);
+        const actual = getComputedStyle(el), expected = getComputedStyle(reference);
+        const themed = actual.color === expected.color && actual.backgroundColor === expected.backgroundColor;
+        reference.remove();
+        return themed;
+      }), true, "Nama simbol mengikuti tema, tidak tertimpa CSS Leaflet lazy");
+      const box = await label.boundingBox(), marker = await page.getByTitle(`${kind.toUpperCase()} · ${row.name}`, { exact: true }).boundingBox();
+      assert.ok(box.width > 60 && box.width <= 181);
+      assert.ok(box.height <= 40, "Nama pendek harus mendatar, bukan satu karakter per baris");
+      assert.ok(box.x + box.width <= marker.x + 1 || box.x >= marker.x + marker.width - 1, "Nama tidak menutup simbolnya sendiri");
+    }
+    await page.waitForFunction(() => document.querySelectorAll(".network-map-device-label").length === document.querySelectorAll(".network-map-marker").length);
+    assert.equal(requests.length, before);
+    assert.equal(requests.filter(r => r.url().includes("?odp_id=")).length, 0);
+    await page.screenshot({ path: path.join(artifacts, "nama-perangkat-desktop.png"), fullPage: false });
+    await page.locator(".leaflet-control-zoom-out").click();
+    for (const [kind, row] of [["olt", f.A], ["odc", f.R], ["odp", f.Q1]]) {
+      await page.getByTitle(`${kind.toUpperCase()} · ${row.name}`, { exact: true }).waitFor({ state: "hidden" });
+      await deviceLabel(page, kind, row.id).waitFor({ state: "hidden" });
+    }
+    await page.waitForFunction(() => document.querySelectorAll(".network-map-device-label").length === document.querySelectorAll(".network-map-marker").length);
+    assert.equal(requests.length, before);
+  });
   await check(
     "popup dan detail menampilkan nama/alamat XSS sebagai teks, bukan markup",
     async () => {
@@ -495,6 +552,11 @@ try {
           .count(),
         0,
       );
+      await page.locator(`[data-odp-popup="${f.Q2.id}"][aria-busy="false"]`).waitFor();
+      const label = deviceLabel(page, "odp", f.Q2.id);
+      await label.waitFor();
+      assert.equal(await label.innerText(), f.Q2.name);
+      assert.equal(await label.locator("img,script,svg,iframe").count(), 0);
       assert.equal(await page.evaluate(() => window.__mapXss), undefined);
       const popupText = await page
         .locator(".leaflet-popup-content")
@@ -657,25 +719,50 @@ try {
     },
   );
   await check(
-    "popup perangkat tetap terbaca tanpa ID internal; Lihat detail keluar dari layar penuh",
+    "klik ikon ODP langsung menampilkan nama, warna core dan interface — ODC tanpa modal/keluar fullscreen",
     async () => {
-      await page
-        .getByRole("button", { name: "Peta layar penuh", exact: true })
-        .click();
+      const closePopup = page.locator(".leaflet-popup-close-button");
+      if (await closePopup.count()) await closePopup.click();
+      await page.getByRole("button", { name: "Peta layar penuh", exact: true }).click();
+      const before = requests.length;
       await page.getByTitle(`ODP · ${f.Q2.name}`, { exact: true }).click();
-      const popup = page
-        .locator(".leaflet-popup-content")
-        .filter({ hasText: f.Q2.name });
+      const popup = page.locator(`[data-odp-popup="${f.Q2.id}"][aria-busy="false"]`);
       await popup.waitFor();
-      assert.doesNotMatch(await popup.innerText(), /(?:OLT|ODC|ODP) #\d+/);
-      assert.ok((await popup.boundingBox()).width >= 180);
-      await popup
-        .getByRole("button", { name: "Lihat detail", exact: true })
-        .click();
-      await page.locator(".network-map-fullpage").waitFor({ state: "hidden" });
-      await page.locator(`[data-selected-device="odp-${f.Q2.id}"]`).waitFor();
+      assert.match(await popup.innerText(), /1\/2\/1 — ODC-PETA-ROOT/);
+      assert.ok(await popup.getByRole("img", { name: /Core 7 · Biru · Tube 2/ }).isVisible());
+      assert.doesNotMatch(await popup.innerText(), /(?:OLT|ODC|ODP) #\d+|Core power UJI detail peta|<svg/);
+      assert.equal(await popup.getByRole("button", { name: "Lihat detail", exact: true }).count(), 0);
+      assert.equal(await page.getByRole("dialog", { name: "Detail sambungan ODP", exact: true }).count(), 0);
+      assert.equal(await page.locator(".network-map-fullpage").count(), 1);
+      assert.equal(requests.slice(before).filter(r => r.url().includes(`map-data?odp_id=${f.Q2.id}`)).length, 1);
+      assert.ok(requests.slice(before).every(r => r.method() === "GET"));
+      await page.screenshot({ path: path.join(artifacts, "popup-odp-desktop.png"), fullPage: false });
+      await page.getByRole("button", { name: "Keluar layar penuh", exact: true }).click();
+      assert.equal(await page.evaluate(() => document.body.style.overflow), "");
     },
   );
+  await check("detail ODP: semua jalur dibedakan, mapping tak lengkap tidak dipalsukan, refresh hanya GET", async () => {
+    await selectList(page, "ODP", f.Q2.id);
+    const before = requests.length;
+    await page.getByRole("button", { name: "Lihat detail sambungan ODP", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Detail sambungan ODP", exact: true });
+    await dialog.locator(`[data-odp-connection-detail="${f.Q2.id}"]`).waitFor();
+    for (const route of await dialog.locator("[data-odp-route]").all()) {
+      if ((await route.getAttribute("open")) === null) await route.locator("summary").click();
+    }
+    assert.equal(await dialog.locator('[data-odp-route="mapped"]').count(), 1);
+    assert.ok(await dialog.locator('[data-odp-route="partial"]').count() >= 1);
+    assert.match(await dialog.innerText(), /GPON 1\/2\/1/);
+    assert.match(await dialog.innerText(), /SPL-PETA-CASCADE/);
+    assert.match(await dialog.innerText(), /Kabel langsung/);
+    assert.match(await dialog.innerText(), /tidak ditebak|belum dipetakan/);
+    assert.equal(await dialog.locator('img[src="x"],svg[onload],script').count(), 0);
+    await dialog.getByRole("button", { name: "Muat ulang detail", exact: true }).click();
+    await dialog.locator(`[data-odp-connection-detail="${f.Q2.id}"]`).waitFor();
+    assert.ok(requests.slice(before).every(r => r.method() === "GET"));
+    await page.keyboard.press("Escape");
+    await dialog.waitFor({ state: "hidden" });
+  });
   await check(
     "filter induk adalah inventaris, pencarian kosong tidak menambah titik default",
     async () => {
@@ -683,6 +770,8 @@ try {
         .getByLabel("OLT induk inventaris", { exact: true })
         .selectOption(String(f.B.id));
       await mapReady(page, 2);
+      for (const [kind, id] of [["olt", f.A.id], ["odc", f.R.id], ["odp", f.Q2.id]])
+        await deviceLabel(page, kind, id).waitFor({ state: "hidden" });
       assert.match(
         await page.locator("[data-map-summary]").innerText(),
         /2 titik valid/,
@@ -694,6 +783,8 @@ try {
         })
         .fill("tidak-ada-xyz");
       await mapReady(page, 0);
+      await page.locator(".network-map-device-label").first().waitFor({ state: "hidden" });
+      assert.equal(await page.locator(".network-map-device-label").count(), 0);
       assert.ok(
         await page
           .getByText(
@@ -1372,6 +1463,121 @@ try {
       await page.setViewportSize({ width: 1440, height: 1000 });
     },
   );
+  await check("nama simbol OLT/ODC/ODP tetap terbaca pada 390/320px dan di peta layar penuh", async () => {
+    for (const width of [390, 320]) {
+      await page.setViewportSize({ width, height: 844 });
+      await toMap(page, 12);
+      await selectList(page, "OLT", f.A.id);
+      await page.locator(".leaflet-popup-close-button").click();
+      await page.locator(".leaflet-popup").waitFor({ state: "detached" });
+      await page.mouse.move(0, 0);
+      for (const [kind, row] of [["olt", f.A], ["odc", f.R], ["odp", f.Q1]]) await deviceLabel(page, kind, row.id).waitFor();
+      const before = requests.length;
+      await page.getByRole("button", { name: "Peta layar penuh", exact: true }).click();
+      for (const [kind, row] of [["olt", f.A], ["odc", f.R], ["odp", f.Q1]]) {
+        const label = deviceLabel(page, kind, row.id);
+        await labelAligned(page, kind, row.id);
+        assert.equal(await label.innerText(), row.name);
+        assert.equal(await label.evaluate(el => getComputedStyle(el).pointerEvents), "none");
+        assert.ok(await label.evaluate(el => el.scrollWidth <= el.clientWidth + 1));
+        const box = await label.boundingBox();
+        assert.ok(box.width <= Math.min(180, width * 0.44) + 1);
+        assert.ok(box.x >= -1 && box.x + box.width <= width + 1, JSON.stringify(box));
+      }
+      assert.equal(requests.length, before);
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
+      await page.screenshot({ path: path.join(artifacts, `nama-perangkat-${width}.png`), fullPage: false });
+      await page.getByRole("button", { name: "Keluar layar penuh", exact: true }).click();
+    }
+    await page.setViewportSize({ width: 1440, height: 1000 });
+  });
+  await check("nama panjang aman tetap sejajar setelah pan/resize tanpa fetch data atau menutupi ikon", async () => {
+    await toMap(page, 12);
+    await zoomMaximum(page);
+    await selectList(page, "ODP", f.Q2.id);
+    await page.locator(`[data-odp-popup="${f.Q2.id}"][aria-busy="false"]`).waitFor();
+    await page.locator(".leaflet-popup-close-button").click();
+    await page.getByRole("button", { name: "Peta layar penuh", exact: true }).click();
+    const before = requests.length;
+    for (const width of [1440, 390, 320]) {
+      await page.setViewportSize({ width, height: 844 });
+      await labelAligned(page, "odp", f.Q2.id);
+      const label = deviceLabel(page, "odp", f.Q2.id);
+      assert.equal(await label.innerText(), f.Q2.name);
+      assert.equal(await label.locator("img,script,svg,iframe").count(), 0);
+      assert.ok(await label.evaluate(el => el.scrollWidth <= el.clientWidth + 1));
+      assert.ok((await label.boundingBox()).height < 120);
+      const icon = page.getByTitle(`ODP · ${f.Q2.name}`, { exact: true });
+      const start = await icon.boundingBox();
+      await page.locator(".network-map-canvas").focus();
+      await page.keyboard.press("ArrowRight");
+      await page.locator(".leaflet-pan-anim").waitFor({ state: "detached" });
+      await page.waitForFunction(({ title, x }) => {
+        const marker = [...document.querySelectorAll(".network-map-marker")].find(el => el.title === title);
+        return marker && Math.abs(marker.getBoundingClientRect().x - (x - 80)) < 2;
+      }, { title: `ODP · ${f.Q2.name}`, x: start.x });
+      await labelAligned(page, "odp", f.Q2.id);
+      await page.keyboard.press("ArrowLeft");
+      await page.locator(".leaflet-pan-anim").waitFor({ state: "detached" });
+      await page.waitForFunction(({ title, x }) => {
+        const marker = [...document.querySelectorAll(".network-map-marker")].find(el => el.title === title);
+        return marker && Math.abs(marker.getBoundingClientRect().x - x) < 2;
+      }, { title: `ODP · ${f.Q2.name}`, x: start.x });
+      await labelAligned(page, "odp", f.Q2.id);
+      await page.screenshot({ path: path.join(artifacts, `nama-panjang-${width}.png`), fullPage: false });
+    }
+    assert.equal(requests.length, before);
+    assert.equal(await page.evaluate(() => window.__mapXss), undefined);
+    await page.getByRole("button", { name: "Keluar layar penuh", exact: true }).click();
+    await page.setViewportSize({ width: 1440, height: 1000 });
+  });
+  await check("popup ODP sederhana muat pada 390/320px dan tetap di dalam peta layar penuh", async () => {
+    for (const width of [390, 320]) {
+      await page.setViewportSize({ width, height: 844 });
+      await toMap(page, 12);
+      await selectList(page, "ODP", f.Q2.id);
+      await page.locator(`[data-odp-popup="${f.Q2.id}"][aria-busy="false"]`).waitFor();
+      await page.locator(".leaflet-popup-close-button").click();
+      await page.getByRole("button", { name: "Peta layar penuh", exact: true }).click();
+      await page.getByTitle(`ODP · ${f.Q2.name}`, { exact: true }).click();
+      const popup = page.locator(`[data-odp-popup="${f.Q2.id}"][aria-busy="false"]`);
+      await popup.waitFor();
+      assert.match(await popup.innerText(), /1\/2\/1 — ODC-PETA-ROOT/);
+      assert.ok(await popup.getByRole("img", { name: /Core 7 · Biru · Tube 2/ }).isVisible());
+      const box = await popup.boundingBox();
+      assert.ok(box.x >= -1 && box.x + box.width <= width + 1, JSON.stringify(box));
+      assert.ok(await popup.evaluate(el => el.scrollWidth <= el.clientWidth + 1));
+      assert.equal(await page.getByRole("dialog", { name: "Detail sambungan ODP", exact: true }).count(), 0);
+      await page.screenshot({ path: path.join(artifacts, `popup-odp-${width}.png`), fullPage: false });
+      await page.getByRole("button", { name: "Keluar layar penuh", exact: true }).click();
+    }
+    await page.setViewportSize({ width: 1440, height: 1000 });
+  });
+  await check("detail ODP 390/320px tetap di viewport, keyboard terkurung dan Escape kembali ke peta", async () => {
+    for (const width of [390, 320]) {
+      await page.setViewportSize({ width, height: 844 });
+      await toMap(page, 12);
+      await selectList(page, "ODP", f.Q2.id);
+      await page.getByRole("button", { name: "Lihat detail sambungan ODP", exact: true }).click();
+      const dialog = page.getByRole("dialog", { name: "Detail sambungan ODP", exact: true });
+      await dialog.locator(`[data-odp-connection-detail="${f.Q2.id}"]`).waitFor();
+      const summary = dialog.locator('[aria-label="Ringkasan sambungan ODP"]');
+      assert.match(await summary.innerText(), /GPON 1\/2\/1/);
+      assert.match(await summary.innerText(), /Core 7 · Biru · Tube 2/);
+      assert.equal(await dialog.locator('[data-odp-route][open]').first().getAttribute("data-odp-route"), "mapped");
+      const box = await dialog.boundingBox();
+      assert.ok(box.x >= 0 && box.x + box.width <= width + 1);
+      assert.ok(await dialog.evaluate(el => el.scrollWidth <= el.clientWidth + 1));
+      const controls = dialog.locator('button,a[href]');
+      await controls.last().focus(); await page.keyboard.press("Tab");
+      assert.ok(await page.evaluate(() => !!document.activeElement.closest('[aria-label]') || !!document.activeElement.closest('[role="dialog"]')));
+      assert.ok(await dialog.evaluate(el => el.contains(document.activeElement)));
+      await page.screenshot({ path: path.join(artifacts, `detail-odp-${width}.png`), fullPage: false });
+      await page.keyboard.press("Escape"); await dialog.waitFor({ state: "hidden" });
+      assert.equal(await page.evaluate(() => document.body.style.overflow), "");
+    }
+    await page.setViewportSize({ width: 1440, height: 1000 });
+  });
   await check(
     "peran pembaca tidak melihat form GPS, tetap dapat KMZ; API menolak tulis",
     async () => {
@@ -1396,6 +1602,20 @@ try {
         await reader.getByRole("button", { name: "GPS", exact: true }).count(),
         0,
       );
+      await selectList(reader, "ODP", f.Q2.id);
+      await deviceLabel(reader, "odp", f.Q2.id).waitFor();
+      assert.equal(await deviceLabel(reader, "odp", f.Q2.id).innerText(), f.Q2.name);
+      const popup = reader.locator(`[data-odp-popup="${f.Q2.id}"][aria-busy="false"]`);
+      await popup.waitFor();
+      assert.match(await popup.innerText(), /1\/2\/1 — ODC-PETA-ROOT/);
+      assert.ok(await popup.getByRole("img", { name: /Core 7 · Biru · Tube 2/ }).isVisible());
+      await reader.getByRole("button", { name: "Lihat detail sambungan ODP", exact: true }).click();
+      const detailDialog = reader.getByRole("dialog", { name: "Detail sambungan ODP", exact: true });
+      await detailDialog.locator(`[data-odp-connection-detail="${f.Q2.id}"]`).waitFor();
+      assert.match(await detailDialog.innerText(), /Core power UJI detail peta/);
+      assert.equal(await detailDialog.locator("input,select,textarea,form").count(), 0);
+      await detailDialog.getByRole("button", { name: "Tutup", exact: true }).click();
+      await detailDialog.waitFor({ state: "hidden" });
       const status = await reader.evaluate(
         async (id) =>
           (

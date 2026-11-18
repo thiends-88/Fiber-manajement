@@ -104,7 +104,9 @@ lapangan.
 
 11. **Peta Jaringan / KMZ** — peta **citra satelit Esri** untuk seluruh OLT, ODC, dan ODP
     yang memiliki GPS valid, termasuk titik yang belum dipetakan sumbernya. Ikon
-    dibedakan, titik bertumpuk dikelompokkan, tersedia detail/filter, **Tampilkan
+    dibedakan, **nama OLT/ODC/ODP langsung terlihat di samping simbol** tanpa
+    perlu klik/hover. Titik bertumpuk dikelompokkan; nama mengikuti ikon saat grup
+    dibuka/diperbesar. Tersedia detail/filter, **Tampilkan
     Semua Titik**, **Peta layar penuh** (keluar dengan tombol/Esc), dan
     **Unduh KMZ Lengkap** untuk Google Earth. Kolom Lokasi lama
     tetap disimpan; GPS dapat diisi terpisah atau dinonaktifkan tanpa menghapus
@@ -116,8 +118,13 @@ lapangan.
     dimuat sesuai kebutuhan, geometri terpisah dari dashboard, jalur memakai
     Canvas dan batas ukuran untuk menjaga akses ringan. Zoom hingga **level 22**
     memakai pembesaran citra sumber, dengan fallback tile induk yang terbatas
-    bila detail tidak tersedia. Citra dapat dimatikan untuk menghemat kuota. Lihat
-    [panduan peta/GPS/KMZ dan impor jalur](PANDUAN-PETA-KMZ.md).
+    bila detail tidak tersedia. **Klik ikon ODP** langsung menampilkan popup
+    sederhana: **nama ODP · bulatan warna core power · interface — ODC asal**,
+    misalnya `1/2/1 — ODC0001`. Tidak perlu membuka modal atau keluar layar penuh.
+    Rincian jalur, status dan catatan tetap opsional melalui sidebar/daftar. Asal
+    belum dipetakan/konflik ditandai, bukan ditebak dari induk atau GPS. Data popup
+    dimuat hanya saat dibuka, baca-saja; core power bukan pengukuran dBm. Citra dapat
+    dimatikan untuk menghemat kuota. Lihat [panduan peta/GPS/KMZ dan impor jalur](PANDUAN-PETA-KMZ.md).
 
 **Database lokal:** SQLite bawaan Node (`node:sqlite`), data utama di
 `data/fiberops.db` dengan jurnal WAL/SHM. Tidak memakai Supabase/database eksternal.
@@ -276,12 +283,13 @@ npm run test:navigation # 28 cek DOM: pilih ODC/ODP langsung ke input; termasuk 
 npm run test:layout   # server tetap jalan hanya dengan file yang disalin Dockerfile
 npm run test:predeploy # 57 pemeriksaan keamanan, restart, bootstrap, backup WAL, preflight
 npm run test:regression # 46 regresi: otorisasi tertunda, simpan atomik, dependency
-npm run test:map      # 193 pemeriksaan: peta/GPS/KMZ + impor/store/API/worker/cache jalur
+npm run test:map      # peta/GPS/KMZ, detail sambungan ODP + impor/store/API/worker/cache jalur
+npm run test:odp-detail # 43 logika/kontrak + 26 UI: popup ringkas/rincian ODP, core, sumber, race, baca-saja
 npm run test:routes   # 77 pemeriksaan jalur saja (bagian dari test:map/npm test)
 # Opt-in: Chromium lokal terpasang; tidak mengunduh browser otomatis:
 CHROMIUM_EXECUTABLE=/usr/bin/chromium npm run test:navigation:browser # 35 cek nyata desktop/HP, no-write dan pelestarian data
 CHROMIUM_EXECUTABLE=/usr/bin/chromium npm run test:browser # 20 skenario browser produksi
-CHROMIUM_EXECUTABLE=/usr/bin/chromium npm run test:map:browser # 29 skenario Leaflet/KMZ/GPS/layar penuh
+CHROMIUM_EXECUTABLE=/usr/bin/chromium npm run test:map:browser # 32 skenario Leaflet/KMZ/GPS/layar penuh/popup ringkas ODP
 CHROMIUM_EXECUTABLE=/usr/bin/chromium npm run test:routes:browser # 22 skenario impor/Canvas/worker/mobile
 npm run test:render   # semua halaman ter-render (butuh server demo jalan)
 # Opt-in, hanya lingkungan uji Linux dengan sudo -n; Git/npm/systemctl dimock:
